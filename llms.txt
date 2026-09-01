@@ -1,0 +1,31 @@
+# kk-rpa-monorepo
+
+> 飞书需求文档驱动的独立 RPA 应用框架。浏览器自动化底层已选定 DrissionPage，业务应用不得直接依赖 DrissionPage。
+
+## Start here
+
+- [LLM Wiki 首页](llm-wiki/README.md)
+- [系统上下文与边界](llm-wiki/01-system-context.md)
+- [DrissionPage 浏览器方案](llm-wiki/02-drissionpage-browser-automation.md)
+- [DrissionPage 4.1.1.4 具体文档](llm-wiki/drissionpage/README.md)
+- [BrowserActions 契约](llm-wiki/03-browser-actions-contract.md)
+- [元素、页面与候选元素](llm-wiki/04-elements-and-pages.md)
+- [运行隔离与安全授权](llm-wiki/05-runtime-isolation-and-safety.md)
+- [测试与证据](llm-wiki/06-testing-and-evidence.md)
+- [官方资料索引](llm-wiki/sources.md)
+- [ADR-025：浏览器自动化选用 DrissionPage](llm-wiki/decisions/ADR-025-browser-automation-drissionpage.md)
+
+## Canonical project rules
+
+- [AGENTS.md](AGENTS.md) 是生成、修改、测试、审核和外部写入的最高级仓库规则。
+- [rpa-framework-design.md](docs/rpa-framework-design.md) 是完整架构设计。
+- 同一份需求文档对应一个稳定 app ID、一个独立应用目录和一个程序入口。
+- 业务应用只能通过 `ExecutionContext` 访问浏览器和外部系统。
+- 真实浏览器测试、Preview 和 Live 是不同授权边界；Preview 不等于 Live 授权。
+- 未解决的 `PendingConfirmation` 或 `UnresolvedElement` 阻止审核、提交和推送。
+
+## Documentation policy
+
+- 库和 API 行为以对应官方文档为准；实现前重新核对当前版本。
+- Wiki 记录项目采用方式，不替代 DrissionPage 官方 API 文档。
+- 不在 Wiki、源码、测试或日志中保存真实账号、Cookie、Token、店铺名称或本机路径。

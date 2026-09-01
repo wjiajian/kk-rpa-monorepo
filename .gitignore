@@ -1,0 +1,43 @@
+# macOS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Every package and app owns a local environment; environments are never committed.
+.venv/
+
+# Local secrets and store configuration
+.env
+.env.*
+!.env.example
+apps/*/config/stores.local.toml
+
+# Requirement screenshots and other locally downloaded source assets
+apps/*/requirement/assets/*
+!apps/*/requirement/assets/.gitkeep
+
+# Runtime state and browser data
+apps/*/runs/
+runs/
+profiles/
+browser-profiles/
+logs/
+artifacts/
+checkpoints/
+port-leases/
+locks/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

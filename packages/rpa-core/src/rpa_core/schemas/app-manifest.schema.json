@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "AppCommands": {
+      "additionalProperties": false,
+      "description": "The fixed command surface every independent application exposes.",
+      "properties": {
+        "check": {
+          "const": "rpa-app check",
+          "default": "rpa-app check",
+          "title": "Check",
+          "type": "string"
+        },
+        "doctor": {
+          "const": "rpa-app doctor",
+          "default": "rpa-app doctor",
+          "title": "Doctor",
+          "type": "string"
+        },
+        "live": {
+          "const": "rpa-app run --mode live",
+          "default": "rpa-app run --mode live",
+          "title": "Live",
+          "type": "string"
+        },
+        "preview": {
+          "const": "rpa-app run --mode preview",
+          "default": "rpa-app run --mode preview",
+          "title": "Preview",
+          "type": "string"
+        },
+        "resume": {
+          "const": "rpa-app resume",
+          "default": "rpa-app resume",
+          "title": "Resume",
+          "type": "string"
+        },
+        "test": {
+          "const": "rpa-app test",
+          "default": "rpa-app test",
+          "title": "Test",
+          "type": "string"
+        }
+      },
+      "title": "AppCommands",
+      "type": "object"
+    },
+    "AppStatus": {
+      "description": "Application lifecycle states from ``AGENTS.md``.",
+      "enum": [
+        "draft",
+        "pending_confirmation",
+        "ready_for_test",
+        "test_failed",
+        "ready_for_review",
+        "approved",
+        "ready_for_push"
+      ],
+      "title": "AppStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Machine-readable contents of an application's ``app.toml``.",
+  "properties": {
+    "app_id": {
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "App Id",
+      "type": "string"
+    },
+    "app_slug": {
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "App Slug",
+      "type": "string"
+    },
+    "commands": {
+      "$ref": "#/$defs/AppCommands"
+    },
+    "configuration_schema": {
+      "default": "config/config.schema.json",
+      "minLength": 1,
+      "title": "Configuration Schema",
+      "type": "string"
+    },
+    "entrypoint": {
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_.]*:[a-zA-Z_][a-zA-Z0-9_]*$",
+      "title": "Entrypoint",
+      "type": "string"
+    },
+    "latest_review": {
+      "default": "",
+      "title": "Latest Review",
+      "type": "string"
+    },
+    "name": {
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "python": {
+      "pattern": "^3\\.12(?:\\.[0-9]+)?$",
+      "title": "Python",
+      "type": "string"
+    },
+    "requirement_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Requirement Hash",
+      "type": "string"
+    },
+    "requirement_revision": {
+      "minimum": 0,
+      "title": "Requirement Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/AppStatus",
+      "default": "draft"
+    },
+    "version": {
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "app_id",
+    "app_slug",
+    "name",
+    "version",
+    "entrypoint",
+    "python",
+    "requirement_revision",
+    "requirement_hash"
+  ],
+  "title": "AppManifest",
+  "type": "object"
+}
