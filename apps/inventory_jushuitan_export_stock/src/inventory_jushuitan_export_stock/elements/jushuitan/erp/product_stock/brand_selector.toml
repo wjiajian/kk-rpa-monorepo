@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.product_stock.brand_selector"
+version = "0.1.0"
+name = "商品品牌选择器"
+platform = "jushuitan"
+product = "erp"
+page = "product_stock"
+component = "brand_selector"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-003-select-brand-and-search.png"
+reason = "截图未提供可验证 DOM 定位器。"

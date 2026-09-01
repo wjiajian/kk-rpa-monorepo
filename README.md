@@ -1,6 +1,6 @@
 # kk-rpa-monorepo
 
-飞书 RPA 需求文档驱动的独立应用框架。它把一份需求转换为一个可测试、可审核、可恢复、可独立运行的 RPA 应用，并用公共运行时统一需求一致性、检查点、证据和外部写入门禁。
+飞书 RPA 需求文档驱动的独立应用框架。它把一份需求转换为一个可测试、可审核、可恢复、可独立运行的 Python RPA 应用，并用公共运行时统一需求一致性、指令执行、检查点、证据和外部写入门禁。
 
 ```text
 一份飞书需求文档
@@ -11,181 +11,182 @@
 ```
 
 > [!IMPORTANT]
-> 阶段 1“需求协议和应用骨架”与阶段 2“核心运行闭环”已经完成离线实现与验收；阶段 3 已完成 `BrowserActions` 最小契约、Fake Browser 和首个真实需求的完整程序草稿。该结论仅覆盖脱敏 fixture、Fake 服务和本地产物，不代表 DrissionPage 适配器、真实浏览器、真实外部写入、开发审核或业务验收已经通过。
+> 截至 2026-09-01，仓库中的 `apps/` 为空，尚不存在已生成、已登录、已完成真实 Preview 或通过业务验收的应用。当前完成的是 `rpa-core 0.2.0` 的指令契约、元素/指令源库、应用快照和 V2 门禁实现；不能把公共包测试通过写成自动化程序已经交付。
 
-## 当前范围
+## 当前真实基线
 
-第一批代码面向完全离线的纵向闭环：
+- `rpa-core` 保留 V1 App/Requirement 读取能力，新应用使用 V2；
+- V2 增加 `InstructionSpec`、`Instruction`、`InstructionRegistry` 和类型化 `ExecutionContext.instructions`；
+- 顶层 `elements/`、`instructions/` 只保存真实验证过的源资产；
+- 生成器把实际使用项及其依赖闭包复制到应用，并写入 `catalog.lock.json`；
+- 每次应用校验都会重算副本哈希，拒绝缺失、篡改、未知依赖、循环、路径逃逸、符号链接和硬链接；
+- `PendingConfirmation`、`UnresolvedElement` 和 V2 `UnresolvedInstruction` 都是结构化门禁；
+- 当前无副作用测试基线为 125 项通过；
+- 没有执行 DrissionPage 真实登录、登录后页面操作、下载或外部写入。
+
+为验证“逐步分析元素”的方法，本次只通过 Codex 内置浏览器观察了公开登录页：确认页面标题、URL、无 iframe 以及公开表单控件，未输入凭据、未点击登录，也未检查登录后页面。该观察不是 DrissionPage 集成测试，也不会进入顶层已验证元素库。
+
+## 调用链
 
 ```text
-脱敏假需求
-→ REQUIREMENT_MEMORY.md 与 requirement.spec.json
-→ 独立应用和标准 CLI
-→ Program / Step / ExecutionContext
-→ 文件检查点、失败恢复和 JSONL 事件
-→ Preview 本地产物
-→ 未授权 Live 被拒绝
+Requirement Step
+→ InstructionRegistry
+→ Instruction.execute(ExecutionContext, inputs)
+→ BrowserActions / 其他受控服务
+→ Instruction.verify(result)
+→ Step.verify(result)
+→ Step 检查点
 ```
 
-当前已完成离线验收的内容包括：
+边界含义：
 
-- 版本化的 `app.toml` 与需求协议模型；
-- Memory、Spec、应用清单及需求哈希的一致性门禁；
-- `apps/*/app.toml` 扫描、应用身份冲突检测、架构边界和敏感内容检查；
-- Program、Step、ExecutionContext、状态机、原子文件检查点和 Resume；
-- `run`/`resume` 执行前强制门禁，以及运行身份、目录、服务和证据路径绑定；
-- 同一 `run_id` 的 OS 文件排他锁，符号链接/硬链接逃逸防护；
-- Preview/Live 授权策略、Fake 外部服务和结构化运行事件；
-- 一个不访问浏览器或外部系统的离线订单日报示例；
-- `BrowserActions`、稳定元素身份、SecretValue、下载/证据引用和 Fake Browser；
-- 飞书真实测试需求 revision 107 对应的“聚水潭库存导出”独立应用草稿。
-
-2026-08-31 离线验收基线：
-
-- `rpa-core`：88 项测试通过；
-- `example_offline_order_daily`：27 项测试通过；
-- `inventory_jushuitan_export_stock`：27 项 Fake Browser、配置、授权与无副作用测试通过；
-- `doctor`、`check`：退出码均为 0；
-- Preview：`run_id=first-batch-final-20260831-f1`，生成 1 条金额 `200.00` 的本地预览，`write_executed=false`、`backend_write_calls=0`；
-- Resume：重新验证 `S004` Preview 证据后，跳过已经成功的 `S001`–`S004`；
-- 全新运行和 Resume 的未授权 Live：退出码均为 20；未创建新的 Live 运行目录，也未改变 Preview 检查点。
-
-完整证据边界见[测试与证据](llm-wiki/06-testing-and-evidence.md)。
+- Program 和 Step 负责编排业务流程、重试、恢复和检查点；
+- Instruction 表达可跨应用复用、可独立验证的最小能力；
+- Element 描述目标，不保存实时 DOM 对象；
+- BrowserActions 隔离业务代码与 DrissionPage；
+- 指令只返回声明过的结果，不写 Step 检查点；
+- 应用不得直接导入 DrissionPage 或顶层 `elements` / `instructions`。
 
 ## 仓库结构
 
 ```text
 kk-rpa-monorepo/
-├── AGENTS.md                         # 最高级生成、测试、审核和授权规则
+├── AGENTS.md
 ├── docs/
-│   └── rpa-framework-design.md       # 完整架构设计与实施阶段
-├── llm-wiki/                         # 项目决策与 DrissionPage 本地知识库
+│   ├── rpa-framework-design.md
+│   └── rpa-core-instruction-catalog-implementation-proposal.md
+├── elements/                         # 已验证元素源库
+├── instructions/                     # 已验证 Python 指令源库
 ├── packages/
-│   ├── rpa-core/                     # 协议、门禁、运行时、检查点和证据
-│   ├── rpa-platforms/                # 后续存放经真实验证的平台页面和元素
-│   └── rpa-integrations/             # 后续存放 Excel、飞书和数据库适配器
-└── apps/
-    ├── example_offline_order_daily/          # 离线纵向示例
-    └── inventory_jushuitan_export_stock/     # 真实需求生成的待确认应用草稿
+│   ├── rpa-core/                     # 协议、指令、快照、运行时和门禁
+│   ├── rpa-platforms/                # 兼容保留目录，不再是元素源库
+│   └── rpa-integrations/             # 后续外部系统适配器
+└── apps/                             # 当前为空
 ```
 
-公共能力只放在 `packages/`。业务应用通过本地 path dependency 使用公共包，不复制框架，也不依赖其他应用目录。
+公共框架通过 uv 本地路径依赖引用，不复制到应用。元素和指令采用应用快照，防止顶层库更新静默改变已测试应用。
 
-## 每个应用独立运行
+## 元素库、指令库与快照
 
-每个 `apps/<app_slug>/` 都必须拥有自己的：
+顶层源资产：
 
-- `pyproject.toml`；
-- `uv.lock`；
-- `.python-version`；
-- 本地 `.venv/`；
-- `app.toml`、配置 Schema、需求记忆、源码、测试和生成报告；
+```text
+elements/<platform>/<product>/<page>/<component>.toml
+
+instructions/<platform>/<product>/<capability>/
+├── instruction.toml
+└── instruction.py
+```
+
+应用 V2 快照：
+
+```text
+apps/<app_slug>/
+├── catalog.lock.json
+└── src/<python_package>/
+    ├── elements/
+    └── instructions/
+```
+
+快照规则：
+
+1. 扫描并验证顶层元数据；
+2. 解析 `element:<id>` / `instruction:<id>` 依赖闭包；
+3. 复制到应用包内；
+4. 固定类型、ID、版本、来源、目标、依赖、复制时间和内容哈希；复制时间不参与内容一致性判断；
+5. 运行时只验证应用副本，不读取或自动同步顶层库；
+6. 已有应用升级必须先展示版本、哈希和文件 diff。
+
+缺失能力在应用内生成候选元素和候选指令。候选项允许 `doctor` 和无副作用测试，但阻止正常真实运行、审核和推送；真实验证通过后才能提出回灌顶层库的独立 diff。
+
+## 每个应用独立
+
+新生成的 V2 应用必须至少拥有：
+
+- 自己的 `pyproject.toml`、`uv.lock`、`.python-version` 和本地 `.venv/`；
+- `app.toml`、`catalog.lock.json`、配置 Schema、需求记忆、源码、测试和生成报告；
+- 包内 `elements/` 与 `instructions/` 冻结副本；
 - `rpa-app` 标准命令入口。
 
-根目录不提供供所有应用共用的虚拟环境或锁文件。在目标应用目录内执行：
+标准命令：
 
 ```bash
 uv sync
 uv run rpa-app doctor
 uv run rpa-app check
 uv run rpa-app test
+uv run rpa-app login
+uv run rpa-app verify-candidates
 uv run rpa-app run --mode preview
 uv run rpa-app run --mode live
 uv run rpa-app resume --run-id <run_id> --mode preview
 uv run rpa-app resume --run-id <run_id> --mode live
 ```
 
-命令语义：
+其中 `login` 只管理指定持久化 Profile 的登录态；`verify-candidates` 只在单独授权范围内逐条验证候选能力；二者都不能绕过验证码、人机验证、Preview/Live 或真实浏览器授权。
 
-| 命令 | 责任 |
-| --- | --- |
-| `doctor` | 检查 Python、配置、目录、依赖及声明的本地能力 |
-| `check` | 检查需求一致性、待确认项、元素状态和架构边界 |
-| `test` | 运行无外部副作用测试 |
-| `run --mode preview` | 执行允许的流程，但把业务写入转换为本地预览 |
-| `run --mode live` | 仅在一次性、精确范围授权后执行真实写入 |
-| `resume` | 从失败步骤恢复，同时继续受 Preview/Live 门禁约束 |
+## 逐步元素分析
 
-## 当前离线示例
+在获得明确的真实浏览器授权后，Codex 按需求步骤逐个处理目标：
 
-示例应用位于 [`apps/example_offline_order_daily/`](apps/example_offline_order_daily/)，应用入口为：
+1. 确认 URL、标题、标签页、iframe 和登录状态；
+2. 只分析当前步骤需要的目标；
+3. 优先稳定 ID、`name`、`data-*`、可访问名称和稳定文本；
+4. 必要时使用稳定锚点限定作用域；
+5. 验证匹配数量、可见、可用/可点击和页面身份；
+6. 对拟晋升元素刷新或重新进入页面复核；
+7. 执行一个原子动作并独立验证结果；
+8. 保存脱敏证据，失败时停在当前步骤并生成结构化未解决项。
 
-```text
-example_offline_order_daily.cli:main
-```
+这套设计参考成熟 RPA 产品的元素捕获、属性编辑、锚点、校验、修复和指令复用思路，但采用可审计文件、冻结快照和显式升级，不使用云端静默同步或未经验证的自动修复。
 
-它使用脱敏的本地订单 fixture 演示读取、筛选、汇总和 Fake 飞书写入请求。已验证 Preview 只在当前运行目录生成写入预览，没有有效授权的 Live 会在产生副作用前被拒绝。
+## 安全与授权
 
-```bash
-cd apps/example_offline_order_daily
-uv sync
-uv run rpa-app doctor
-uv run rpa-app check
-uv run rpa-app test
-uv run rpa-app run --mode preview
-```
+- 业务应用只能通过 `ExecutionContext` 使用浏览器和外部服务；
+- 真实浏览器操作必须有应用、账号、站点和步骤范围授权；
+- Preview 允许被授权的读取和下载，但业务写入只生成本地预览；
+- Live 需要另一次、单次、精确范围授权，并在写入后回读验证；
+- 验证码、滑块和短信只检测、留证并转人工，不得绕过；
+- `.env`、`stores.local.toml`、需求截图、Profile 和运行产物不得提交；
+- AI 不得自行将应用标记为 `approved` 或 `ready_for_push`；
+- 默认不建分支、不提交、不推送、不部署。
 
-> [!NOTE]
-> 示例用于证明框架闭环，不是已接入生产平台的 RPA 应用。执行 `live` 不是本轮离线验收的前置条件；本轮需要验证的是未授权 Live 会被安全拒绝。
-
-## 当前测试需求应用
-
-[`apps/inventory_jushuitan_export_stock/`](apps/inventory_jushuitan_export_stock/) 由飞书需求 revision `107` 生成，包含登录、商品库存导航、品牌筛选、导出和返回文件路径的完整六步程序。Fake Browser 已验证完整流程与检查点恢复，凭据和真实品牌不会进入日志或检查点。
-
-该应用仍有 2 个开放的 `PendingConfirmation`；14 个元素记录中有 4 个登录页候选元素已经内置浏览器检查并解析，另有 10 个开放的 `UnresolvedElement`。BrowserManager 已绑定标准 CLI、本地店铺配置、独立 Profile 和精确到 run/account 的 Preview 授权；当前 `check`、`run`、`resume` 和 `live` 仍先被需求门禁拒绝，且未创建运行目录。当前状态不是“DrissionPage 真实流程测试通过”。
-
-## 安全与授权边界
-
-- 业务应用只能通过 `ExecutionContext` 访问浏览器、Excel、飞书、数据库、日志、凭据和检查点。
-- `apps/` 禁止直接导入 DrissionPage 或外部系统底层 SDK，也禁止调用 `page.ele(...).click()` 绕过包装器。
-- `run` 和 `resume` 在创建运行目录前自动执行需求、清单、架构和敏感信息门禁，不能依赖人工先运行 `check`。
-- 运行目录必须精确绑定为当前应用的 `runs/<run_id>`；同一运行全程持有 OS 排他锁，路径型服务及 checkpoint/event 必须绑定同一运行身份。
-- 步骤成功条件验证通过后才能原子写入检查点。
-- Preview 只是写入策略，不等于获得真实浏览器操作授权。
-- Live 授权必须限定应用、运行、账号、步骤、目标、数据范围、预计数量和有效期，并在适配器产生副作用前再次校验。
-- 未解决的 `PendingConfirmation` 或 `UnresolvedElement` 会阻止审核、提交和推送。
-- AI 不得自行把应用标记为 `approved` 或 `ready_for_push`。
-- `.env`、`stores.local.toml`、需求截图、浏览器 Profile、运行日志、检查点和预览产物不得提交。
-- 验证码、滑块和短信只允许检测、留证并转人工处理，不得绕过。
-
-第一批排他锁使用 POSIX `flock`；当前 macOS 验收通过。在不支持该能力的平台上运行时会 fail-closed。进入 Windows 运行机部署前，必须实现并测试等价的进程退出自动释放锁，不能关闭排他门禁规避兼容性问题。
-
-完整规则见 [`AGENTS.md`](AGENTS.md)、[运行隔离与安全授权](llm-wiki/05-runtime-isolation-and-safety.md)和[测试与证据](llm-wiki/06-testing-and-evidence.md)。
-
-## DrissionPage 与 LLM Wiki
-
-浏览器自动化底层已经选定 [DrissionPage](https://drissionpage.cn/browser_control/intro)，但业务应用不会直接接触其 Chromium、Tab、Element 或下载任务对象。后续统一调用链为：
+证据结论必须始终区分：
 
 ```text
-业务应用
-→ ExecutionContext.browser
-→ BrowserActions
-→ DrissionBrowserActions
-→ DrissionPage
+框架代码完成
+≠ 无副作用测试通过
+≠ 公开页面观察完成
+≠ DrissionPage 真实 Preview 通过
+≠ Live 写入验证通过
+≠ 开发审核通过
+≠ 业务验收通过
 ```
 
-项目知识入口：
+## 文档入口
 
+- [生成、测试和授权规则](AGENTS.md)
+- [完整框架设计](docs/rpa-framework-design.md)
+- [本轮实施方案](docs/rpa-core-instruction-catalog-implementation-proposal.md)
 - [LLM Wiki 首页](llm-wiki/README.md)
 - [系统上下文与边界](llm-wiki/01-system-context.md)
-- [DrissionPage 浏览器自动化方案](llm-wiki/02-drissionpage-browser-automation.md)
-- [DrissionPage 4.1.1.4 具体文档](llm-wiki/drissionpage/README.md)
 - [BrowserActions 契约](llm-wiki/03-browser-actions-contract.md)
 - [元素、页面与候选元素](llm-wiki/04-elements-and-pages.md)
-- [运行隔离与安全授权](llm-wiki/05-runtime-isolation-and-safety.md)
 - [测试与证据](llm-wiki/06-testing-and-evidence.md)
+- [指令、元素分析与应用快照](llm-wiki/07-instructions-and-snapshots.md)
 - [ADR-025：浏览器自动化选用 DrissionPage](llm-wiki/decisions/ADR-025-browser-automation-drissionpage.md)
-- [完整架构设计](docs/rpa-framework-design.md)
+- [ADR-026：元素与指令使用应用快照](llm-wiki/decisions/ADR-026-application-catalog-snapshots.md)
 
-涉及 DrissionPage、uv、飞书 API 或其他 SDK/CLI 的实现，必须先核对当前官方文档，不能仅凭 Wiki 示例或历史记忆推断接口。
+涉及 DrissionPage、uv、飞书 API 或其他库、SDK、CLI 时，实施前必须重新核对当前官方文档。
 
-## 下一阶段
+## 下一阶段边界
 
-阶段 1+2 的离线验收已经完成，阶段 3 已具备公共契约、Fake Browser、DrissionPage 4.1.1.4 动作适配器、BrowserManager 和当前应用 CLI 绑定。下一步继续内部页面元素实现：
+核心指令与快照补丁完成后，生成第一个业务应用仍需要：
 
-1. 用户在内置浏览器完成登录后，自主检查登录成功标识和库存内部页面元素；
-2. 逐项关闭测试应用的待确认项；
-3. 在明确授权下运行 DrissionPage Preview，验证下载、截图、失败证据及恢复；
-4. 通过端到端验证后，再把稳定候选元素迁移到 `rpa-platforms` 并回归受影响应用。
+1. 实际飞书需求文档 URL 和最新 revision；
+2. 应用 ID/目录冲突检查；
+3. 需求 Memory、V2 Spec 和候选项草稿；
+4. 开发人员确认应用生成范围；
+5. 真实候选验证前，再提供账号别名、持久化 Profile、允许操作的步骤和单次授权。
 
-当前动作适配器已经通过 Fake Tab 测试，但尚未与真实 Chromium 集成，也没有执行 DrissionPage 登录或库存下载。真实 Excel、飞书、数据库和告警写入仍属于阶段 4，尚未测试；调度中心和业务看板继续后置。
+在这些输入与授权到位前，仓库不会凭公开登录页推断登录后元素，也不会生成一个冒充已完成的业务应用。

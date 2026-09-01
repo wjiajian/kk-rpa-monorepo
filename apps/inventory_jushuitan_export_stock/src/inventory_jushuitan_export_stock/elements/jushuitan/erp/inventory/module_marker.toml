@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.inventory.module_marker"
+version = "0.1.0"
+name = "库存模块已打开标识"
+platform = "jushuitan"
+product = "erp"
+page = "inventory_module"
+component = "module_marker"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-002-open-product-stock.png"
+reason = "未授权访问登录后页面，成功标识待补抓。"

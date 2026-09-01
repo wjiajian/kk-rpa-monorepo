@@ -256,6 +256,7 @@ def _compare_manifest(
     issues: list[str],
 ) -> None:
     comparisons = {
+        "schema_version": (manifest.schema_version, requirement.schema_version),
         "app_id": (manifest.app_id, requirement.application.app_id),
         "app_slug": (manifest.app_slug, requirement.application.app_slug),
         "name": (manifest.name, requirement.application.name),

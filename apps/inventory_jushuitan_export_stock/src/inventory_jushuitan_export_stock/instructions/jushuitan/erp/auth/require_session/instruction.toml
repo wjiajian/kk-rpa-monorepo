@@ -1,0 +1,10 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.auth.require_session"
+version = "0.1.0"
+name = "验证登录态"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:RequireSession"
+dependencies = ["element:jushuitan.erp.shell.authenticated_marker"]

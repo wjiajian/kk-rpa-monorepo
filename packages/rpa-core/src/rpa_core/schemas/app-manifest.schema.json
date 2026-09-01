@@ -22,6 +22,19 @@
           "title": "Live",
           "type": "string"
         },
+        "login": {
+          "anyOf": [
+            {
+              "const": "rpa-app login",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Login"
+        },
         "preview": {
           "const": "rpa-app run --mode preview",
           "default": "rpa-app run --mode preview",
@@ -39,6 +52,19 @@
           "default": "rpa-app test",
           "title": "Test",
           "type": "string"
+        },
+        "verify_candidates": {
+          "anyOf": [
+            {
+              "const": "rpa-app verify-candidates",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verify Candidates"
         }
       },
       "title": "AppCommands",
@@ -71,6 +97,18 @@
       "pattern": "^[a-z][a-z0-9_]*$",
       "title": "App Slug",
       "type": "string"
+    },
+    "catalog_lock": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Catalog Lock"
     },
     "commands": {
       "$ref": "#/$defs/AppCommands"
@@ -112,8 +150,11 @@
       "type": "integer"
     },
     "schema_version": {
-      "const": 1,
       "default": 1,
+      "enum": [
+        1,
+        2
+      ],
       "title": "Schema Version",
       "type": "integer"
     },

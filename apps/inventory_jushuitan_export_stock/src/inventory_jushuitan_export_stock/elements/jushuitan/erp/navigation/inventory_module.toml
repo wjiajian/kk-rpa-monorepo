@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.navigation.inventory_module"
+version = "0.1.0"
+name = "库存模块入口"
+platform = "jushuitan"
+product = "erp"
+page = "authenticated_shell"
+component = "inventory_module"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-002-open-product-stock.png"
+reason = "截图仅说明业务位置，不能提供稳定定位器。"

@@ -8,9 +8,18 @@ from .browser_manager import (
     BrowserSession,
     PortLeasePool,
 )
+from .catalog import (
+    CatalogIndex,
+    CatalogLock,
+    CatalogRef,
+    discover_catalog,
+    snapshot_catalog,
+    verify_catalog_snapshot,
+)
 from .drission_browser import DrissionBrowserActions
+from .instructions import Instruction, InstructionRegistry, InstructionSpec
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 __all__ = [
     "BrowserActions",
@@ -18,9 +27,18 @@ __all__ = [
     "BrowserLifecyclePolicy",
     "BrowserManager",
     "BrowserSession",
+    "CatalogIndex",
+    "CatalogLock",
+    "CatalogRef",
     "DrissionBrowserActions",
     "ElementSpec",
     "FakeBrowserActions",
+    "Instruction",
+    "InstructionRegistry",
+    "InstructionSpec",
     "PortLeasePool",
     "__version__",
+    "discover_catalog",
+    "snapshot_catalog",
+    "verify_catalog_snapshot",
 ]

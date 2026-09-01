@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.inventory.search"
+version = "0.1.0"
+name = "搜索商品库存"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:SearchInventory"
+dependencies = [
+  "element:jushuitan.erp.product_stock.search_button",
+  "element:jushuitan.erp.product_stock.filter_applied_marker",
+]

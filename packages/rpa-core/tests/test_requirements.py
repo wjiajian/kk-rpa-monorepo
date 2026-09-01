@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from rpa_core.contracts import AppManifest, RequirementSpec
 from rpa_core.requirements import (
@@ -235,6 +236,30 @@ def test_consistency_gate_rejects_open_blocking_items(tmp_path: Path) -> None:
 
     with pytest.raises(RequirementConsistencyError, match="PC-001"):
         validate_requirement_consistency(memory_path, spec_path)
+
+
+def test_v2_requirement_rejects_unknown_and_orphan_instruction_blockers() -> None:
+    unknown = _requirement_document()
+    unknown["schema_version"] = 2
+    unknown["steps"][0]["unresolved_instruction_ids"] = ["UI-MISSING"]  # type: ignore[index]
+
+    with pytest.raises(ValidationError, match="unknown unresolved instructions"):
+        RequirementSpec.model_validate(unknown)
+
+    orphan = _requirement_document()
+    orphan["schema_version"] = 2
+    orphan["unresolved_instructions"] = [
+        {
+            "id": "UI-ORPHAN",
+            "requirement_step": "load_fixture",
+            "platform": "example",
+            "capability": "load fixture",
+            "reason": "not available in the verified catalog",
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="is not linked from its step"):
+        RequirementSpec.model_validate(orphan)
 
 
 def test_json_loader_rejects_duplicate_keys(tmp_path: Path) -> None:

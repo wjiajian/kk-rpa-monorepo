@@ -19,7 +19,7 @@
 
 生产适配器必须调用 `ElementSpec.require_locator()`；Fake 可以在 locator 尚未补抓时使用稳定 ID，从而验证完整流程而不伪造 CSS/XPath。应用通过 `ExecutionContext.browser` 获取该能力。
 
-首个需求应用已完成 CLI 绑定，Preview 授权必须精确匹配 `app_id + run_id + account_id + mode`，门禁或授权失败时不会创建运行目录或启动浏览器。真实 Chromium 集成验证尚未完成；协议扩展还缺少 `find`、`find_all`、文本读取、标签页、iframe 上下文和统一动作事件。以下仍是目标协议，而不是已经全部交付的接口。
+当前 `apps/` 为空，没有应用级 CLI 绑定或 Preview 运行证据。公共授权契约要求未来 Preview 精确匹配 `app_id + run_id + account_id + mode`，但只有生成应用并完成相应测试后才能报告该门禁的应用级结果。真实 Chromium 集成验证尚未完成；协议扩展还缺少 `find`、`find_all`、文本读取、标签页、iframe 上下文和统一动作事件。以下仍是目标协议，而不是已经全部交付的接口。
 
 ## 目标协议
 

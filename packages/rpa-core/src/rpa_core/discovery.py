@@ -10,10 +10,23 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from .contracts import AppManifest, AppStatus
+from .catalog import (
+    CatalogItemStatus,
+    CatalogKind,
+    CatalogSourceType,
+    load_catalog_lock,
+    verify_catalog_snapshot,
+)
+from .contracts import (
+    AppManifest,
+    AppStatus,
+    InstructionResolutionStatus,
+    RequirementSpec,
+)
 from .requirements import (
     RequirementConsistencyError,
     load_app_manifest,
+    load_requirement_spec,
     validate_requirement_consistency,
 )
 
@@ -27,6 +40,11 @@ STANDARD_COMMANDS = {
     "resume": "rpa-app resume",
 }
 
+V2_STANDARD_COMMANDS = {
+    "login": "rpa-app login",
+    "verify_candidates": "rpa-app verify-candidates",
+}
+
 FORBIDDEN_APP_IMPORTS = {
     "drissionpage",
     "lark_oapi",
@@ -36,6 +54,8 @@ FORBIDDEN_APP_IMPORTS = {
     "pymysql",
     "sqlalchemy",
 }
+
+FORBIDDEN_ROOT_CATALOG_IMPORTS = {"elements", "instructions"}
 
 SENSITIVE_PATH_PARTS = {
     ".pytest_cache",
@@ -288,13 +308,23 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                     f"missing required source file: src/{root_package}/{filename}",
                     path,
                 )
-        candidate_elements = source_package / "candidate_elements"
-        if not candidate_elements.is_dir():
-            report.add(
-                "APP_CANDIDATE_ELEMENTS_DIRECTORY_MISSING",
-                "missing application candidate_elements directory",
-                candidate_elements,
-            )
+        if manifest.schema_version == 1:
+            candidate_elements = source_package / "candidate_elements"
+            if not candidate_elements.is_dir():
+                report.add(
+                    "APP_CANDIDATE_ELEMENTS_DIRECTORY_MISSING",
+                    "missing application candidate_elements directory",
+                    candidate_elements,
+                )
+        else:
+            for catalog_directory in ("elements", "instructions"):
+                path = source_package / catalog_directory
+                if not path.is_dir():
+                    report.add(
+                        "APP_CATALOG_DIRECTORY_MISSING",
+                        f"missing application snapshot directory: {catalog_directory}",
+                        path,
+                    )
 
     command_data = manifest.commands.model_dump(mode="python")
     for name, expected in STANDARD_COMMANDS.items():
@@ -304,6 +334,27 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                 f"command {name!r} must equal {expected!r}",
                 manifest_path,
             )
+    if manifest.schema_version == 2:
+        for name, expected in V2_STANDARD_COMMANDS.items():
+            if command_data.get(name) != expected:
+                report.add(
+                    "APP_STANDARD_COMMAND_INVALID",
+                    f"command {name!r} must equal {expected!r}",
+                    manifest_path,
+                )
+
+        lock_path = app_dir / (manifest.catalog_lock or "catalog.lock.json")
+        if not lock_path.is_file():
+            report.add(
+                "APP_CATALOG_LOCK_MISSING",
+                f"missing catalog lock: {manifest.catalog_lock}",
+                lock_path,
+            )
+        else:
+            try:
+                verify_catalog_snapshot(app_dir, lock_path)
+            except Exception as exc:
+                report.add("APP_CATALOG_SNAPSHOT_INVALID", str(exc), lock_path)
 
     _validate_pyproject(app_dir, manifest, report)
     _validate_requirement_pair(app_dir, manifest, report)
@@ -388,6 +439,15 @@ def scan_application_architecture(app_dir: Path) -> list[ValidationIssue]:
                                 node.lineno,
                             )
                         )
+                    if imported.lower() in FORBIDDEN_ROOT_CATALOG_IMPORTS:
+                        issues.append(
+                            ValidationIssue(
+                                "APP_RUNTIME_SOURCE_CATALOG_IMPORT",
+                                "applications must import their package-local catalog snapshot",
+                                str(path),
+                                node.lineno,
+                            )
+                        )
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported = node.module.split(".", 1)[0]
                 if imported.lower() in FORBIDDEN_APP_IMPORTS:
@@ -395,6 +455,18 @@ def scan_application_architecture(app_dir: Path) -> list[ValidationIssue]:
                         ValidationIssue(
                             "APP_FORBIDDEN_IMPORT",
                             f"business applications may not import {node.module!r}",
+                            str(path),
+                            node.lineno,
+                        )
+                    )
+                if (
+                    node.level == 0
+                    and imported.lower() in FORBIDDEN_ROOT_CATALOG_IMPORTS
+                ):
+                    issues.append(
+                        ValidationIssue(
+                            "APP_RUNTIME_SOURCE_CATALOG_IMPORT",
+                            "applications must import their package-local catalog snapshot",
                             str(path),
                             node.lineno,
                         )
@@ -548,6 +620,13 @@ def _validate_requirement_pair(
     if not memory_path.is_file() or not spec_path.is_file():
         return
     try:
+        requirement = load_requirement_spec(spec_path)
+    except Exception as exc:
+        report.add("REQUIREMENT_INVALID", str(exc), spec_path)
+        requirement = None
+    if requirement is not None and requirement.schema_version == 2:
+        _validate_v2_catalog_references(app_dir, manifest, requirement, report)
+    try:
         validate_requirement_consistency(memory_path, spec_path, manifest=manifest)
     except RequirementConsistencyError as exc:
         for difference in exc.diffs:
@@ -566,6 +645,7 @@ def _validate_requirement_pair(
                 blocker_ids = [item.strip() for item in issue[len(prefix) :].split(",")]
                 pending_ids = [item for item in blocker_ids if item.startswith("PC-")]
                 element_ids = [item for item in blocker_ids if item.startswith("UE-")]
+                instruction_ids = [item for item in blocker_ids if item.startswith("UI-")]
                 if pending_ids:
                     report.add(
                         "PENDING_CONFIRMATION_OPEN",
@@ -576,6 +656,12 @@ def _validate_requirement_pair(
                     report.add(
                         "UNRESOLVED_ELEMENT_OPEN",
                         f"open UnresolvedElement IDs: {', '.join(element_ids)}",
+                        memory_path,
+                    )
+                if instruction_ids:
+                    report.add(
+                        "UNRESOLVED_INSTRUCTION_OPEN",
+                        f"open UnresolvedInstruction IDs: {', '.join(instruction_ids)}",
                         memory_path,
                     )
                 continue
@@ -594,6 +680,136 @@ def _validate_requirement_pair(
     except Exception as exc:
         report.add("REQUIREMENT_INVALID", str(exc), memory_path)
         return
+
+
+def _validate_v2_catalog_references(
+    app_dir: Path,
+    manifest: AppManifest,
+    requirement: RequirementSpec,
+    report: ValidationReport,
+) -> None:
+    if manifest.schema_version != 2:
+        report.add(
+            "APP_REQUIREMENT_SCHEMA_MISMATCH",
+            "V2 requirement requires a V2 app manifest",
+            app_dir / "app.toml",
+        )
+        return
+    lock_path = app_dir / (manifest.catalog_lock or "catalog.lock.json")
+    if not lock_path.is_file():
+        return
+    try:
+        lock = load_catalog_lock(lock_path)
+    except Exception as exc:
+        report.add("APP_CATALOG_LOCK_INVALID", str(exc), lock_path)
+        return
+    by_identity = {(item.kind, item.id): item for item in lock.items}
+
+    for step in requirement.steps:
+        for instruction_id in step.instruction_refs:
+            if (CatalogKind.INSTRUCTION, instruction_id) not in by_identity:
+                report.add(
+                    "APP_INSTRUCTION_SNAPSHOT_MISSING",
+                    f"step {step.id!r} references instruction absent from snapshot: "
+                    f"{instruction_id}",
+                    lock_path,
+                )
+        for element_id in step.element_refs:
+            if (CatalogKind.ELEMENT, element_id) not in by_identity:
+                report.add(
+                    "APP_ELEMENT_SNAPSHOT_MISSING",
+                    f"step {step.id!r} references element absent from snapshot: {element_id}",
+                    lock_path,
+                )
+
+    for item in requirement.unresolved_instructions:
+        if item.status is not InstructionResolutionStatus.CANDIDATE:
+            continue
+        implementation = _application_relative_path(
+            app_dir,
+            item.candidate_implementation or "",
+            report,
+            code="APP_CANDIDATE_INSTRUCTION_MISSING",
+        )
+        fake_test = _application_relative_path(
+            app_dir,
+            item.fake_test_ref or "",
+            report,
+            code="APP_CANDIDATE_INSTRUCTION_TEST_MISSING",
+        )
+        if implementation is not None and not implementation.is_file():
+            report.add(
+                "APP_CANDIDATE_INSTRUCTION_MISSING",
+                f"candidate implementation does not exist: {item.candidate_implementation}",
+                implementation,
+            )
+        if fake_test is not None and not fake_test.is_file():
+            report.add(
+                "APP_CANDIDATE_INSTRUCTION_TEST_MISSING",
+                f"candidate fake test does not exist: {item.fake_test_ref}",
+                fake_test,
+            )
+        lock_item = by_identity.get(
+            (CatalogKind.INSTRUCTION, item.candidate_instruction_ref or "")
+        )
+        if lock_item is None:
+            report.add(
+                "APP_CANDIDATE_INSTRUCTION_LOCK_MISSING",
+                f"candidate instruction is absent from catalog lock: "
+                f"{item.candidate_instruction_ref}",
+                lock_path,
+            )
+            continue
+        if (
+            lock_item.source_type is not CatalogSourceType.APPLICATION_CANDIDATE
+            or lock_item.status is not CatalogItemStatus.CANDIDATE
+        ):
+            report.add(
+                "APP_CANDIDATE_INSTRUCTION_LOCK_INVALID",
+                "candidate instruction lock entry must use application_candidate/candidate",
+                lock_path,
+            )
+        if implementation is not None:
+            locked_target = _application_relative_path(
+                app_dir,
+                lock_item.target_path,
+                report,
+                code="APP_CANDIDATE_INSTRUCTION_LOCK_INVALID",
+            )
+            if locked_target is not None:
+                implementation_resolved = implementation.resolve(strict=False)
+                target_resolved = locked_target.resolve(strict=False)
+                if not (
+                    implementation_resolved == target_resolved
+                    or target_resolved in implementation_resolved.parents
+                ):
+                    report.add(
+                        "APP_CANDIDATE_INSTRUCTION_LOCK_INVALID",
+                        "candidate implementation is outside its locked target",
+                        implementation,
+                    )
+
+
+def _application_relative_path(
+    app_dir: Path,
+    relative: str,
+    report: ValidationReport,
+    *,
+    code: str,
+) -> Path | None:
+    if not relative:
+        report.add(code, "candidate artifact path is empty", app_dir)
+        return None
+    path = app_dir / relative
+    try:
+        path.resolve(strict=False).relative_to(app_dir.resolve())
+    except ValueError:
+        report.add(code, f"candidate artifact escapes application: {relative}", path)
+        return None
+    if path.is_symlink():
+        report.add(code, f"candidate artifact must not be a symbolic link: {relative}", path)
+        return None
+    return path
 
 
 def _validate_review_state(

@@ -36,6 +36,8 @@
 repository/
 ├── AGENTS.md
 ├── docs/
+├── elements/
+├── instructions/
 ├── packages/
 │   ├── rpa-core/
 │   ├── rpa-platforms/
@@ -46,11 +48,13 @@ repository/
 
 公共能力职责：
 
-- `packages/rpa-core/`：Program、Step、ExecutionContext、检查点、运行时、浏览器操作包装、日志、证据、审核门禁；
-- `packages/rpa-platforms/`：淘系、京东、拼多多等平台的页面和元素库；
+- `elements/`：经过真实页面验证的元素源库，按平台、产品、页面和组件组织；
+- `instructions/`：经过真实验证的 Python 指令源库，按平台、产品和能力组织；
+- `packages/rpa-core/`：Program、Step、Instruction、ExecutionContext、快照锁、检查点、运行时、浏览器操作包装、日志、证据、审核门禁；
+- `packages/rpa-platforms/`：兼容保留目录，不再作为元素或指令源库；
 - `packages/rpa-integrations/`：Excel、飞书多维表格、飞书机器人、数据库等集成。
 
-应用通过本地路径引用公共包的最新代码，不复制公共框架。公共包发生变化时，必须测试所有受影响应用。
+应用通过本地路径引用公共框架和集成包，不复制 `rpa-core`。实际使用的元素、指令及其依赖必须复制到应用包内并由 `catalog.lock.json` 固定；运行时不得读取顶层源库。公共包发生变化时，必须测试所有受影响应用。
 
 ## 4. 应用必须独立
 
@@ -78,6 +82,7 @@ apps/<app_slug>/
 ├── .gitignore
 ├── README.md
 ├── GENERATION_REPORT.md
+├── catalog.lock.json
 ├── requirement/
 │   ├── REQUIREMENT_MEMORY.md
 │   ├── requirement.spec.json
@@ -94,12 +99,15 @@ apps/<app_slug>/
 │       ├── steps.py
 │       ├── models.py
 │       ├── validators.py
-│       └── candidate_elements/
+│       ├── elements/
+│       └── instructions/
 ├── tests/
 └── reviews/
 ```
 
 `.venv/`、`.env`、`stores.local.toml` 和 `requirement/assets/` 不得提交 Git。
+
+V1 应用继续按原契约读取和验证；所有新生成应用使用 V2 结构。应用内 `elements/` 和 `instructions/` 同时容纳已验证快照与应用候选项，二者都必须进入 `catalog.lock.json`。
 
 ## 5. 应用身份
 
@@ -132,8 +140,9 @@ AI 根据需求自动生成：
 - 程序入口；
 - 需求文档 revision 和需求哈希；
 - 配置 Schema 路径；
+- V2 `catalog.lock.json` 路径；
 - 当前状态；
-- 标准命令；
+- 标准命令；V2 还必须声明 `login` 和 `verify-candidates`；
 - 最近一次有效审核记录引用。
 
 `app.toml` 不得包含真实店铺、账号、凭据、Cookie、Token 或本机路径。
@@ -210,7 +219,8 @@ requirement/requirement.spec.json
 - 输入、输出和成功条件；
 - 条件、循环和重试要求；
 - 待确认项及处理结论；
-- 元素解析状态；
+- 元素与指令解析状态；
+- 应用快照版本、哈希和候选验证状态；
 - 需求变更历史；
 - 对应程序版本和测试状态。
 
@@ -226,7 +236,7 @@ requirement/requirement.spec.json
 - 有序步骤；
 - 每步动作、输入、输出和成功条件；
 - 条件、循环、恢复和重试要求；
-- 元素引用或未解析元素；
+- 元素引用、指令引用、未解析元素或未解析指令；
 - 输出目标及写入模式；
 - 待确认项；
 - 测试和授权要求。
@@ -312,39 +322,75 @@ AI 必须编写完整业务流程。信息不足时使用结构化对象，不�
 
 未解决元素必须放进完整步骤流程，不能编造 XPath/CSS，也不能删除该步骤。
 
-任何未解决的 `PendingConfirmation` 或 `UnresolvedElement` 都阻止审核通过、提交和推送。
+### 12.3 `UnresolvedInstruction`
 
-## 13. 元素补抓和公共库
+顶层指令库没有可复用能力时，至少记录：
 
-新元素采用：
+- 稳定 `UI-*` ID 和对应需求步骤；
+- 平台、能力名称和缺失原因；
+- 候选指令引用、应用内实现路径和 Fake 测试引用；
+- Fake 测试状态、真实测试状态和真实证据；
+- 当前状态：`unresolved`、`candidate` 或 `resolved`；
+- 是否阻止离线测试、真实运行、审核和推送。
+
+`candidate` 必须有应用内实现、Fake 测试引用和 `catalog.lock.json` 候选条目。只有稳定指令引用、真实测试通过且存在证据时才能标记 `resolved`。
+
+任何未解决的 `PendingConfirmation`、`UnresolvedElement` 或 `UnresolvedInstruction` 都阻止审核通过、提交和推送。候选项可以不阻止 `doctor` 和无副作用测试，但必须阻止正常真实 `run`。
+
+## 13. 元素、指令和应用快照
+
+顶层源库使用：
 
 ```text
-应用内候选元素
-→ 开发人员授权真实测试
-→ 验证定位唯一性、显示、可点击和刷新稳定性
-→ 端到端流程通过
-→ 迁移到 packages/rpa-platforms/
-→ 应用改为引用公共元素
-→ 运行受影响应用回归测试
+elements/<platform>/<product>/<page>/<component>.toml
+
+instructions/<platform>/<product>/<capability>/
+├── instruction.toml
+└── instruction.py
 ```
 
-测试前候选元素放在应用自己的 `candidate_elements/`。测试无误后才能并入公共库。
+顶层库只保存真实验证过的稳定资产。公共元素只保存定位描述和验证元数据，不保存实时 DOM、店铺配置或业务凭据；公共指令通过 `ExecutionContext` 调用受控服务，不得直接导入 DrissionPage 或外部系统底层 SDK，也不得写 Step 检查点。
 
-公共元素按“平台 → 产品或站点 → 页面 → 页面组件”组织。公共元素库只保存元素描述，不保存实时 DOM 对象、店铺配置或业务凭据。
+生成 V2 应用时：
+
+1. 扫描并验证顶层元素和指令元数据；
+2. 解析 `element:<id>` / `instruction:<id>` 的完整依赖闭包；
+3. 拒绝重复 ID、未知依赖、循环、路径逃逸、符号链接和硬链接；
+4. 复制到 `src/<python_package>/elements/` 和 `instructions/`；
+5. 在 `catalog.lock.json` 固定来源、目标、版本、依赖、复制时间和内容哈希，复制时间不参与内容一致性判断；
+6. `check`、`run` 和 `resume` 前只验证应用副本，不读取或同步顶层库。
+
+新元素或指令采用：
+
+```text
+应用内候选元素和候选指令
+→ Fake Browser 测试
+→ 开发人员授权 verify-candidates
+→ 逐步验证页面身份、定位唯一性、显示、可点击和刷新稳定性
+→ 独立验证指令结果
+→ Preview 端到端通过
+→ 提出回灌顶层源库的独立 diff
+→ 回归受影响应用
+```
+
+候选项保留在应用自己的快照目录并标记 `candidate`，不得直接写入顶层库。已有应用升级公共资产时，必须先展示来源版本、哈希和文件 diff；开发人员确认前不得替换应用副本。禁止运行时自动修复或云端静默同步。
 
 ## 14. 业务代码边界
 
 业务步骤可以自由编排流程、条件和循环，但所有外部操作必须经过 `ExecutionContext`：
 
+- 可复用能力：`ctx.instructions`；
 - 浏览器：`ctx.browser` 或 `ctx.browsers`；
 - Excel：`ctx.excel`；
 - 飞书：`ctx.feishu`；
 - 数据库：`ctx.database`；
 - 日志、截图、产物、凭据和检查点：对应上下文服务。
 
-应用源码不得直接导入 DrissionPage，不得调用 `page.ele().click()`，不得绕开包装器直接访问飞书、Excel 或数据库底层驱动。
+应用源码和应用快照指令不得直接导入 DrissionPage，不得调用 `page.ele().click()`，不得绕开包装器直接访问飞书、Excel 或数据库底层驱动。应用不得从仓库顶层 `elements` 或 `instructions` 导入运行时代码，只能使用包内冻结副本。
 
 每个步骤必须有稳定步骤 ID、输入、输出、成功条件、重试策略、恢复策略，并在验证成功后才写入检查点。
+
+一条 Instruction 必须有稳定 ID、语义版本、精确输入输出、依赖元素、前置条件、成功条件和副作用等级。注册表必须拒绝重复 ID、输入输出漂移及验证失败；Instruction 的 `verify()` 通过不等于 Step 成功，Step 仍须独立验证后才能写检查点。
 
 ## 15. 多店铺配置
 
@@ -385,13 +431,15 @@ AI 必须编写完整业务流程。信息不足时使用结构化对象，不�
 rpa-app = "<python_package>.cli:main"
 ```
 
-必须支持：
+所有新生成的 V2 应用必须支持：
 
 ```bash
 uv sync
 uv run rpa-app doctor
 uv run rpa-app check
 uv run rpa-app test
+uv run rpa-app login
+uv run rpa-app verify-candidates
 uv run rpa-app run --mode preview
 uv run rpa-app run --mode live
 uv run rpa-app resume --run-id <run_id> --mode preview
@@ -401,8 +449,10 @@ uv run rpa-app resume --run-id <run_id> --mode live
 含义：
 
 - `doctor`：检查 Python、浏览器、配置、目录和依赖；
-- `check`：检查需求一致性、待确认项、元素和架构边界；
+- `check`：检查需求一致性、待确认项、元素、指令、快照哈希和架构边界；
 - `test`：运行无外部副作用测试；
+- `login`：在单独授权下建立或确认指定持久化 Profile 的登录态，不执行业务流程；
+- `verify-candidates`：在单独授权下逐条验证应用候选元素和候选指令，不关闭正常运行门禁；
 - `preview`：真实读取和下载，所有外部业务写入只生成本地预览；
 - `live`：执行经过开发人员单独授权的真实写入；
 - `resume`：从失败步骤恢复，仍受 preview/live 模式约束。
@@ -415,6 +465,7 @@ uv run rpa-app resume --run-id <run_id> --mode live
 - Fake Browser、Fake Excel、Fake Feishu 和 Fake Database 测试；
 - 类型、语法和静态检查；
 - ID 唯一性检查；
+- 指令契约、依赖闭包和应用快照完整性检查；
 - 架构边界检查；
 - 敏感信息和误提交文件扫描；
 - 检查点与失败恢复测试。
@@ -466,7 +517,7 @@ runs/<run_id>/write-previews/
 - 应用 ID、名称和生成时间；
 - AI 识别出的完整业务步骤；
 - 新增和修改文件；
-- 复用、新增和候选元素；
+- 复用、新增和候选元素、指令及快照哈希；
 - 待确认项及风险；
 - 已运行、通过、失败和未运行的测试；
 - 真实浏览器测试和授权状态；
@@ -514,6 +565,8 @@ reviews/<timestamp>.toml
 
 - 所有 `PendingConfirmation` 已关闭；
 - 所有 `UnresolvedElement` 已解析并测试；
+- 所有 `UnresolvedInstruction` 已解析并完成真实验证；
+- `catalog.lock.json` 与应用副本一致；
 - 自动测试全部通过；
 - 真实浏览器流程已授权并完成；
 - 所有外部写入至少完成格式预览；
@@ -546,9 +599,9 @@ reviews/<timestamp>.toml
 - 现有代码修改方案未确认；
 - 需要真实浏览器或外部写入授权；
 - 仍有待确认项或未解析元素；
+- 仍有未解析指令、候选项或快照哈希不一致；
 - 脱敏扫描失败；
 - 测试失败；
 - 提交或推送门禁未满足。
 
 提醒必须说明：发生了什么、受影响文件或步骤、当前已完成工作、下一项需要开发人员确认的具体问题。
-

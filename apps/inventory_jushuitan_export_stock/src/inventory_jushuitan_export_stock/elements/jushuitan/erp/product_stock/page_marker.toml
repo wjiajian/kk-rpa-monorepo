@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.product_stock.page_marker"
+version = "0.1.0"
+name = "商品库存页标识"
+platform = "jushuitan"
+product = "erp"
+page = "product_stock"
+component = "page_marker"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-003-select-brand-and-search.png"
+reason = "未授权访问登录后页面，成功标识待补抓。"

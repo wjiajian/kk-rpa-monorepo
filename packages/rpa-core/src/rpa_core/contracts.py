@@ -81,6 +81,18 @@ class ElementResolutionStatus(StrEnum):
     RESOLVED = "resolved"
 
 
+class InstructionResolutionStatus(StrEnum):
+    UNRESOLVED = "unresolved"
+    CANDIDATE = "candidate"
+    RESOLVED = "resolved"
+
+
+class VerificationStatus(StrEnum):
+    NOT_RUN = "not_run"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
 class RetryPolicy(ContractModel):
     """Bounded retry settings used by both requirement and runtime steps."""
 
@@ -104,12 +116,14 @@ class AppCommands(ContractModel):
     preview: Literal["rpa-app run --mode preview"] = "rpa-app run --mode preview"
     live: Literal["rpa-app run --mode live"] = "rpa-app run --mode live"
     resume: Literal["rpa-app resume"] = "rpa-app resume"
+    login: Literal["rpa-app login"] | None = None
+    verify_candidates: Literal["rpa-app verify-candidates"] | None = None
 
 
 class AppManifest(ContractModel):
     """Machine-readable contents of an application's ``app.toml``."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     app_id: str = Field(pattern=APP_ID_PATTERN)
     app_slug: str = Field(pattern=APP_SLUG_PATTERN)
     name: str = Field(min_length=1)
@@ -119,6 +133,7 @@ class AppManifest(ContractModel):
     requirement_revision: int = Field(ge=0)
     requirement_hash: str = Field(pattern=HASH_PATTERN)
     configuration_schema: str = Field(default="config/config.schema.json", min_length=1)
+    catalog_lock: str | None = None
     status: AppStatus = AppStatus.DRAFT
     latest_review: str = ""
     commands: AppCommands = Field(default_factory=AppCommands)
@@ -132,6 +147,21 @@ class AppManifest(ContractModel):
                 f"({self.app_slug!r}), got {module_name!r}"
             )
         _require_relative_path(self.configuration_schema, "configuration_schema")
+        if self.schema_version == 1:
+            if self.catalog_lock is not None:
+                raise ValueError("schema_version 1 must not declare catalog_lock")
+            if self.commands.login is not None or self.commands.verify_candidates is not None:
+                raise ValueError("schema_version 1 must not declare V2 commands")
+        else:
+            if not self.catalog_lock:
+                raise ValueError("schema_version 2 requires catalog_lock")
+            _require_relative_path(self.catalog_lock, "catalog_lock")
+            if self.commands.login != "rpa-app login":
+                raise ValueError("schema_version 2 requires the standard login command")
+            if self.commands.verify_candidates != "rpa-app verify-candidates":
+                raise ValueError(
+                    "schema_version 2 requires the standard verify-candidates command"
+                )
         if self.latest_review:
             _require_relative_path(self.latest_review, "latest_review")
         if self.status in {AppStatus.APPROVED, AppStatus.READY_FOR_PUSH} and not self.latest_review:
@@ -182,8 +212,10 @@ class RequirementStep(ContractModel):
     conditions: list[str] = Field(default_factory=list)
     loop: RequirementLoop | None = None
     element_refs: list[str] = Field(default_factory=list)
+    instruction_refs: list[str] = Field(default_factory=list)
     pending_confirmation_ids: list[str] = Field(default_factory=list)
     unresolved_element_ids: list[str] = Field(default_factory=list)
+    unresolved_instruction_ids: list[str] = Field(default_factory=list)
     timeout_seconds: float = Field(default=30.0, gt=0.0)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
     resume: ResumePolicy = ResumePolicy.VERIFY_THEN_RUN
@@ -196,8 +228,10 @@ class RequirementStep(ContractModel):
         "success_conditions",
         "conditions",
         "element_refs",
+        "instruction_refs",
         "pending_confirmation_ids",
         "unresolved_element_ids",
+        "unresolved_instruction_ids",
         "recovery",
     )
     @classmethod
@@ -281,6 +315,95 @@ class UnresolvedElement(ContractModel):
         return self.status is ElementResolutionStatus.RESOLVED and self.tested
 
 
+class UnresolvedInstruction(ContractModel):
+    """A missing reusable capability retained inside a complete V2 flow."""
+
+    id: str = Field(pattern=r"^UI-[A-Za-z0-9_.:-]+$")
+    requirement_step: str = Field(pattern=ITEM_ID_PATTERN)
+    platform: str = Field(min_length=1)
+    capability: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    candidate_instruction_ref: str | None = Field(default=None, pattern=ITEM_ID_PATTERN)
+    candidate_implementation: str | None = None
+    fake_test_ref: str | None = None
+    fake_test_status: VerificationStatus = VerificationStatus.NOT_RUN
+    real_test_status: VerificationStatus = VerificationStatus.NOT_RUN
+    real_test_evidence: str | None = None
+    status: InstructionResolutionStatus = InstructionResolutionStatus.UNRESOLVED
+    resolved_instruction_ref: str | None = Field(default=None, pattern=ITEM_ID_PATTERN)
+    blocks_offline_test: bool = False
+    blocks_real_run: bool = True
+    blocks_review: bool = True
+    blocks_push: bool = True
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> "UnresolvedInstruction":
+        for field_name in (
+            "candidate_implementation",
+            "fake_test_ref",
+            "real_test_evidence",
+        ):
+            value = getattr(self, field_name)
+            if value:
+                _require_relative_path(value, field_name)
+
+        if self.status is InstructionResolutionStatus.UNRESOLVED:
+            if any(
+                value is not None
+                for value in (
+                    self.candidate_instruction_ref,
+                    self.candidate_implementation,
+                    self.fake_test_ref,
+                    self.resolved_instruction_ref,
+                    self.real_test_evidence,
+                )
+            ):
+                raise ValueError(
+                    "unresolved instruction must not declare candidate or resolved artifacts"
+                )
+            if self.fake_test_status is not VerificationStatus.NOT_RUN:
+                raise ValueError("unresolved instruction fake test must be not_run")
+            if self.real_test_status is not VerificationStatus.NOT_RUN:
+                raise ValueError("unresolved instruction real test must be not_run")
+
+        if self.status is InstructionResolutionStatus.CANDIDATE:
+            if not all(
+                (
+                    self.candidate_instruction_ref,
+                    self.candidate_implementation,
+                    self.fake_test_ref,
+                )
+            ):
+                raise ValueError(
+                    "candidate instruction requires reference, implementation, and fake test"
+                )
+            if self.resolved_instruction_ref or self.real_test_evidence:
+                raise ValueError("candidate instruction must not declare resolved evidence")
+            if self.real_test_status is not VerificationStatus.NOT_RUN:
+                raise ValueError("candidate instruction real test must be not_run")
+
+        if self.status is InstructionResolutionStatus.RESOLVED:
+            if not self.resolved_instruction_ref:
+                raise ValueError("resolved instruction requires resolved_instruction_ref")
+            if self.real_test_status is not VerificationStatus.PASSED:
+                raise ValueError("resolved instruction requires a passed real test")
+            if not self.real_test_evidence:
+                raise ValueError("resolved instruction requires real_test_evidence")
+        elif self.resolved_instruction_ref:
+            raise ValueError(
+                "resolved_instruction_ref is only valid for a resolved instruction"
+            )
+        return self
+
+    @property
+    def is_resolved(self) -> bool:
+        return (
+            self.status is InstructionResolutionStatus.RESOLVED
+            and self.real_test_status is VerificationStatus.PASSED
+            and bool(self.real_test_evidence)
+        )
+
+
 class TestRequirements(ContractModel):
     required_suites: list[str] = Field(
         default_factory=lambda: [
@@ -329,13 +452,14 @@ class AuthorizationRequirements(ContractModel):
 class RequirementSpec(ContractModel):
     """Canonical requirement contract persisted in Markdown and JSON."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     source: RequirementSource
     application: RequirementApplication
     steps: list[RequirementStep] = Field(min_length=1)
     outputs: list[RequirementOutput] = Field(default_factory=list)
     pending_confirmations: list[PendingConfirmation] = Field(default_factory=list)
     unresolved_elements: list[UnresolvedElement] = Field(default_factory=list)
+    unresolved_instructions: list[UnresolvedInstruction] = Field(default_factory=list)
     test_requirements: TestRequirements = Field(default_factory=TestRequirements)
     authorization_requirements: AuthorizationRequirements = Field(
         default_factory=AuthorizationRequirements
@@ -348,6 +472,7 @@ class RequirementSpec(ContractModel):
             "outputs": [output.id for output in self.outputs],
             "pending_confirmations": [item.id for item in self.pending_confirmations],
             "unresolved_elements": [item.id for item in self.unresolved_elements],
+            "unresolved_instructions": [item.id for item in self.unresolved_instructions],
         }
         for group_name, identifiers in groups.items():
             _raise_on_duplicates(identifiers, group_name)
@@ -356,10 +481,21 @@ class RequirementSpec(ContractModel):
         _raise_on_duplicates(all_identifiers, "all requirement objects")
 
         step_ids = set(groups["steps"])
+        steps_by_id = {step.id: step for step in self.steps}
         pending_ids = set(groups["pending_confirmations"])
         unresolved_ids = set(groups["unresolved_elements"])
+        unresolved_instruction_ids = set(groups["unresolved_instructions"])
         linked_pending: set[str] = set()
         linked_unresolved: set[str] = set()
+        linked_unresolved_instructions: set[str] = set()
+
+        if self.schema_version == 1:
+            has_v2_fields = bool(self.unresolved_instructions) or any(
+                step.instruction_refs or step.unresolved_instruction_ids
+                for step in self.steps
+            )
+            if has_v2_fields:
+                raise ValueError("schema_version 1 must not declare instruction fields")
 
         for step in self.steps:
             unknown_pending = set(step.pending_confirmation_ids) - pending_ids
@@ -374,8 +510,17 @@ class RequirementSpec(ContractModel):
                     f"step {step.id!r} references unknown unresolved elements: "
                     f"{sorted(unknown_elements)!r}"
                 )
+            unknown_instructions = (
+                set(step.unresolved_instruction_ids) - unresolved_instruction_ids
+            )
+            if unknown_instructions:
+                raise ValueError(
+                    f"step {step.id!r} references unknown unresolved instructions: "
+                    f"{sorted(unknown_instructions)!r}"
+                )
             linked_pending.update(step.pending_confirmation_ids)
             linked_unresolved.update(step.unresolved_element_ids)
+            linked_unresolved_instructions.update(step.unresolved_instruction_ids)
 
         for item in self.pending_confirmations:
             if item.requirement_step not in step_ids:
@@ -394,6 +539,32 @@ class RequirementSpec(ContractModel):
                 )
             if item.id not in linked_unresolved:
                 raise ValueError(f"unresolved element {item.id!r} is not linked from its step")
+            if (
+                item.is_resolved
+                and item.resolved_element_ref not in steps_by_id[item.requirement_step].element_refs
+            ):
+                raise ValueError(
+                    f"resolved element {item.id!r} is not referenced by its step"
+                )
+
+        for item in self.unresolved_instructions:
+            if item.requirement_step not in step_ids:
+                raise ValueError(
+                    f"unresolved instruction {item.id!r} references unknown step "
+                    f"{item.requirement_step!r}"
+                )
+            if item.id not in linked_unresolved_instructions:
+                raise ValueError(
+                    f"unresolved instruction {item.id!r} is not linked from its step"
+                )
+            if (
+                item.is_resolved
+                and item.resolved_instruction_ref
+                not in steps_by_id[item.requirement_step].instruction_refs
+            ):
+                raise ValueError(
+                    f"resolved instruction {item.id!r} is not referenced by its step"
+                )
 
         return self
 
@@ -406,14 +577,23 @@ class RequirementSpec(ContractModel):
         return tuple(item for item in self.unresolved_elements if not item.is_resolved)
 
     @property
+    def open_unresolved_instructions(self) -> tuple[UnresolvedInstruction, ...]:
+        return tuple(item for item in self.unresolved_instructions if not item.is_resolved)
+
+    @property
     def has_blockers(self) -> bool:
-        return bool(self.open_pending_confirmations or self.open_unresolved_elements)
+        return bool(
+            self.open_pending_confirmations
+            or self.open_unresolved_elements
+            or self.open_unresolved_instructions
+        )
 
     @property
     def blocking_item_ids(self) -> tuple[str, ...]:
         return tuple(
             [item.id for item in self.open_pending_confirmations]
             + [item.id for item in self.open_unresolved_elements]
+            + [item.id for item in self.open_unresolved_instructions]
         )
 
 
@@ -451,6 +631,7 @@ __all__ = [
     "AuthorizationRequirements",
     "ConfirmationStatus",
     "ElementResolutionStatus",
+    "InstructionResolutionStatus",
     "PendingConfirmation",
     "RequirementApplication",
     "RequirementLoop",
@@ -465,4 +646,6 @@ __all__ = [
     "StepStatus",
     "TestRequirements",
     "UnresolvedElement",
+    "UnresolvedInstruction",
+    "VerificationStatus",
 ]

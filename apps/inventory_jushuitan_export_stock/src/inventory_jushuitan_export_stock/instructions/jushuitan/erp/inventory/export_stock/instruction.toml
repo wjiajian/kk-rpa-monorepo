@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.inventory.export_stock"
+version = "0.1.0"
+name = "导出库存文件"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:ExportStock"
+dependencies = [
+  "element:jushuitan.erp.product_stock.export_menu",
+  "element:jushuitan.erp.product_stock.export_stock_option",
+]

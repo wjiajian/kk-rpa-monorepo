@@ -24,8 +24,10 @@
   ↓
 需求记忆与机器 Spec
   ↓
-独立业务应用
-  ↓ 只能通过 ExecutionContext
+检索顶层 elements/ 与 instructions/
+  ↓ 复制实际使用项及依赖闭包
+独立业务应用 + catalog.lock.json + 包内冻结副本
+  ↓ Step 通过 InstructionRegistry / ExecutionContext
 公共运行框架与 BrowserActions
   ↓
 DrissionPage / Excel / 飞书 / 数据库适配器
@@ -35,19 +37,24 @@ DrissionPage / Excel / 飞书 / 数据库适配器
 
 各层边界：
 
-- `apps/<app_slug>/`：只表达步骤、条件、循环、输入、输出和成功条件。
-- `packages/rpa-core/`：Program、Step、ExecutionContext、运行器、浏览器包装、检查点、日志、证据和授权门禁。
-- `packages/rpa-platforms/`：按平台、站点、页面和组件组织的元素与页面知识。
+- `elements/`：真实验证过的元素源资产，按平台、产品、页面和组件组织。
+- `instructions/`：真实验证过的 Python 指令源资产，按平台、产品和能力组织。
+- `apps/<app_slug>/`：表达步骤、条件、循环、输入、输出和成功条件，并保存实际使用资产的冻结副本。
+- `packages/rpa-core/`：Program、Step、Instruction、Catalog、ExecutionContext、运行器、浏览器包装、检查点、日志、证据和授权门禁。
+- `packages/rpa-platforms/`：兼容保留目录，不再作为元素或指令源库。
 - `packages/rpa-integrations/`：Excel、飞书、数据库和告警适配器。
 
 ## 强制不变量
 
 - 每个应用拥有独立的 `pyproject.toml`、`uv.lock`、`.python-version` 和本地 `.venv/`。
-- 应用通过本地 path dependency 引用公共包，不复制公共框架。
+- 应用通过本地 path dependency 引用公共框架，不复制 `rpa-core`。
+- 元素和指令通过 `catalog.lock.json` 固定包内副本；运行时不得读取或自动同步顶层源库。
+- 顶层源库只允许真实验证项；应用候选项留在应用内并阻止正常真实运行。
 - 应用不得直接导入 DrissionPage、Excel 底层库、飞书 SDK 或数据库驱动。
+- 应用不得从顶层 `elements` / `instructions` 导入；复制指令也不得直接导入 DrissionPage。
 - 步骤成功条件验证通过后才允许写检查点。
 - Preview 只生成外部写入预览；Live 必须有单次、精确范围的授权。
-- 任何未解决的待确认项或未解析元素都阻止审核、提交和推送。
+- 任何未解决的待确认项、元素或指令都阻止审核、提交和推送。
 - AI 不得自行把状态设置为 `approved` 或 `ready_for_push`。
 
 ## 当前非目标

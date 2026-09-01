@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.inventory.select_brand"
+version = "0.1.0"
+name = "选择商品品牌"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:SelectBrand"
+dependencies = [
+  "element:jushuitan.erp.product_stock.brand_selector",
+  "element:jushuitan.erp.product_stock.brand_selected_marker",
+]

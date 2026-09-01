@@ -1,0 +1,28 @@
+"""Application-local candidate instruction registry."""
+
+from rpa_core.instructions import InstructionRegistry
+
+from .jushuitan.erp.auth.login.instruction import Login
+from .jushuitan.erp.auth.require_session.instruction import RequireSession
+from .jushuitan.erp.inventory.export_stock.instruction import ExportStock
+from .jushuitan.erp.inventory.open_module.instruction import OpenInventoryModule
+from .jushuitan.erp.inventory.open_product_stock.instruction import OpenProductStock
+from .jushuitan.erp.inventory.search.instruction import SearchInventory
+from .jushuitan.erp.inventory.select_brand.instruction import SelectBrand
+
+
+def build_instruction_registry() -> InstructionRegistry:
+    return InstructionRegistry(
+        [
+            Login(),
+            RequireSession(),
+            OpenInventoryModule(),
+            OpenProductStock(),
+            SelectBrand(),
+            SearchInventory(),
+            ExportStock(),
+        ]
+    )
+
+
+__all__ = ["build_instruction_registry"]

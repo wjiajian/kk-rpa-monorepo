@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.product_stock.export_menu"
+version = "0.1.0"
+name = "导出菜单"
+platform = "jushuitan"
+product = "erp"
+page = "product_stock"
+component = "export_menu"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-005-export-stock.png"
+reason = "截图未提供可验证 DOM 定位器。"

@@ -41,6 +41,15 @@
       "title": "ElementResolutionStatus",
       "type": "string"
     },
+    "InstructionResolutionStatus": {
+      "enum": [
+        "unresolved",
+        "candidate",
+        "resolved"
+      ],
+      "title": "InstructionResolutionStatus",
+      "type": "string"
+    },
     "PendingConfirmation": {
       "additionalProperties": false,
       "properties": {
@@ -327,6 +336,13 @@
           "title": "Inputs",
           "type": "array"
         },
+        "instruction_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Instruction Refs",
+          "type": "array"
+        },
         "loop": {
           "anyOf": [
             {
@@ -394,6 +410,13 @@
             "type": "string"
           },
           "title": "Unresolved Element Ids",
+          "type": "array"
+        },
+        "unresolved_instruction_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Instruction Ids",
           "type": "array"
         }
       },
@@ -585,6 +608,149 @@
       ],
       "title": "UnresolvedElement",
       "type": "object"
+    },
+    "UnresolvedInstruction": {
+      "additionalProperties": false,
+      "description": "A missing reusable capability retained inside a complete V2 flow.",
+      "properties": {
+        "blocks_offline_test": {
+          "default": false,
+          "title": "Blocks Offline Test",
+          "type": "boolean"
+        },
+        "blocks_push": {
+          "default": true,
+          "title": "Blocks Push",
+          "type": "boolean"
+        },
+        "blocks_real_run": {
+          "default": true,
+          "title": "Blocks Real Run",
+          "type": "boolean"
+        },
+        "blocks_review": {
+          "default": true,
+          "title": "Blocks Review",
+          "type": "boolean"
+        },
+        "candidate_implementation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Implementation"
+        },
+        "candidate_instruction_ref": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Instruction Ref"
+        },
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "fake_test_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fake Test Ref"
+        },
+        "fake_test_status": {
+          "$ref": "#/$defs/VerificationStatus",
+          "default": "not_run"
+        },
+        "id": {
+          "pattern": "^UI-[A-Za-z0-9_.:-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "platform": {
+          "minLength": 1,
+          "title": "Platform",
+          "type": "string"
+        },
+        "real_test_evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Real Test Evidence"
+        },
+        "real_test_status": {
+          "$ref": "#/$defs/VerificationStatus",
+          "default": "not_run"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "requirement_step": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+          "title": "Requirement Step",
+          "type": "string"
+        },
+        "resolved_instruction_ref": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved Instruction Ref"
+        },
+        "status": {
+          "$ref": "#/$defs/InstructionResolutionStatus",
+          "default": "unresolved"
+        }
+      },
+      "required": [
+        "id",
+        "requirement_step",
+        "platform",
+        "capability",
+        "reason"
+      ],
+      "title": "UnresolvedInstruction",
+      "type": "object"
+    },
+    "VerificationStatus": {
+      "enum": [
+        "not_run",
+        "passed",
+        "failed"
+      ],
+      "title": "VerificationStatus",
+      "type": "string"
     }
   },
   "additionalProperties": false,
@@ -611,8 +777,11 @@
       "type": "array"
     },
     "schema_version": {
-      "const": 1,
       "default": 1,
+      "enum": [
+        1,
+        2
+      ],
       "title": "Schema Version",
       "type": "integer"
     },
@@ -635,6 +804,13 @@
         "$ref": "#/$defs/UnresolvedElement"
       },
       "title": "Unresolved Elements",
+      "type": "array"
+    },
+    "unresolved_instructions": {
+      "items": {
+        "$ref": "#/$defs/UnresolvedInstruction"
+      },
+      "title": "Unresolved Instructions",
       "type": "array"
     }
   },

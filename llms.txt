@@ -12,17 +12,22 @@
 - [元素、页面与候选元素](llm-wiki/04-elements-and-pages.md)
 - [运行隔离与安全授权](llm-wiki/05-runtime-isolation-and-safety.md)
 - [测试与证据](llm-wiki/06-testing-and-evidence.md)
+- [指令、元素分析与应用快照](llm-wiki/07-instructions-and-snapshots.md)
 - [官方资料索引](llm-wiki/sources.md)
 - [ADR-025：浏览器自动化选用 DrissionPage](llm-wiki/decisions/ADR-025-browser-automation-drissionpage.md)
+- [ADR-026：元素与指令使用应用快照](llm-wiki/decisions/ADR-026-application-catalog-snapshots.md)
 
 ## Canonical project rules
 
 - [AGENTS.md](AGENTS.md) 是生成、修改、测试、审核和外部写入的最高级仓库规则。
 - [rpa-framework-design.md](docs/rpa-framework-design.md) 是完整架构设计。
 - 同一份需求文档对应一个稳定 app ID、一个独立应用目录和一个程序入口。
-- 业务应用只能通过 `ExecutionContext` 访问浏览器和外部系统。
+- 顶层 `elements/` 和 `instructions/` 只保存真实验证源资产；应用运行时只使用 `catalog.lock.json` 固定的包内副本。
+- Program/Step 负责编排和检查点，Instruction 负责可复用能力及独立验证。
+- 业务应用和复制指令只能通过 `ExecutionContext` 访问浏览器和外部系统。
 - 真实浏览器测试、Preview 和 Live 是不同授权边界；Preview 不等于 Live 授权。
-- 未解决的 `PendingConfirmation` 或 `UnresolvedElement` 阻止审核、提交和推送。
+- 未解决的 `PendingConfirmation`、`UnresolvedElement` 或 `UnresolvedInstruction` 阻止审核、提交和推送。
+- 当前 `apps/` 为空；公共包测试或公开登录页观察都不等于已生成业务应用或真实 Preview。
 
 ## Documentation policy
 

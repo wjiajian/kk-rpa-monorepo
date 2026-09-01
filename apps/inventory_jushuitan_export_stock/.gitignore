@@ -1,0 +1,13 @@
+.venv/
+.env
+config/stores.local.toml
+requirement/assets/*
+!requirement/assets/.gitkeep
+profiles/
+runs/
+runtime/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]

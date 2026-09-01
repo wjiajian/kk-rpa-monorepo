@@ -1,0 +1,10 @@
+schema_version = 1
+
+[stores.STORE_001]
+platform = "jushuitan"
+login_url = "https://www.erp321.com/login.aspx"
+profile_directory = "profiles/STORE_001"
+debug_port = 9301
+brand_value = "BRAND_001"
+username_env = "RPA_STORE_001_USERNAME"
+password_env = "RPA_STORE_001_PASSWORD"

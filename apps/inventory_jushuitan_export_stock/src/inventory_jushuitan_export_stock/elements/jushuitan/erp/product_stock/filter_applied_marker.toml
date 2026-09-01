@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.product_stock.filter_applied_marker"
+version = "0.1.0"
+name = "筛选完成标识"
+platform = "jushuitan"
+product = "erp"
+page = "product_stock"
+component = "filter_applied_marker"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-003-select-brand-and-search.png"
+reason = "筛选成功条件尚未在真实页面验证。"

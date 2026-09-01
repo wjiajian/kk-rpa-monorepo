@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.product_stock.search_button"
+version = "0.1.0"
+name = "搜索按钮"
+platform = "jushuitan"
+product = "erp"
+page = "product_stock"
+component = "search_button"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-003-select-brand-and-search.png"
+reason = "截图未提供可验证 DOM 定位器。"

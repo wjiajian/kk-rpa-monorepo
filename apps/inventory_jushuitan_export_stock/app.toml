@@ -1,0 +1,23 @@
+schema_version = 2
+app_id = "jushuitan.inventory.export_stock"
+app_slug = "inventory_jushuitan_export_stock"
+name = "聚水潭库存导出"
+version = "0.1.0"
+entrypoint = "inventory_jushuitan_export_stock.cli:main"
+python = "3.12"
+requirement_revision = 107
+requirement_hash = "sha256:8a86352eedbbbdfbf03bbade09c4766800d34598cadc232d3c513ecf183ac2f2"
+configuration_schema = "config/config.schema.json"
+catalog_lock = "catalog.lock.json"
+status = "pending_confirmation"
+latest_review = ""
+
+[commands]
+doctor = "rpa-app doctor"
+check = "rpa-app check"
+test = "rpa-app test"
+preview = "rpa-app run --mode preview"
+live = "rpa-app run --mode live"
+resume = "rpa-app resume"
+login = "rpa-app login"
+verify_candidates = "rpa-app verify-candidates"

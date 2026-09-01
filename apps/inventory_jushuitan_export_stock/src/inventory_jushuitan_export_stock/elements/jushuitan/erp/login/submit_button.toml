@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.login.submit_button"
+version = "0.1.0"
+name = "登录按钮"
+platform = "jushuitan"
+product = "erp"
+page = "login"
+component = "submit_button"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+reason = "未获得应用候选验证证据。"

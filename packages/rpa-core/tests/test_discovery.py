@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rpa_core.contracts import AppManifest
+from rpa_core.catalog import CatalogLock, hash_catalog_path
+from rpa_core.contracts import AppManifest, RequirementSpec
 from rpa_core.discovery import (
     ValidationReport,
     _validate_requirement_pair,
+    _validate_v2_catalog_references,
     discover_applications,
     ensure_application_identity_available,
     issue_codes,
@@ -106,6 +108,44 @@ def test_architecture_scan_rejects_direct_driver_and_element_click(
         "APP_FORBIDDEN_IMPORT",
         "APP_DIRECT_ELEMENT_ACTION",
     }
+
+
+def test_architecture_scan_rejects_runtime_import_from_top_level_catalog(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src" / "bad_app" / "program.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "from instructions.shared import OpenPage\n"
+        "import elements\n",
+        encoding="utf-8",
+    )
+
+    issues = scan_application_architecture(tmp_path)
+
+    assert issue_codes(issues) == {"APP_RUNTIME_SOURCE_CATALOG_IMPORT"}
+    assert len(issues) == 2
+
+
+def test_architecture_scan_rejects_driver_import_in_copied_instruction(
+    tmp_path: Path,
+) -> None:
+    source = (
+        tmp_path
+        / "src"
+        / "example_app"
+        / "instructions"
+        / "example"
+        / "web"
+        / "open_page"
+        / "instruction.py"
+    )
+    source.parent.mkdir(parents=True)
+    source.write_text("from DrissionPage import Chromium\n", encoding="utf-8")
+
+    issues = scan_application_architecture(tmp_path)
+
+    assert issue_codes(issues) == {"APP_FORBIDDEN_IMPORT"}
 
 
 def test_architecture_scan_rejects_hardcoded_port_and_profile(tmp_path: Path) -> None:
@@ -263,3 +303,117 @@ def test_scoped_validation_does_not_validate_unrelated_draft_application(
 
     assert report.ok
     assert validated == [current.resolve()]
+
+
+def test_v2_candidate_instruction_requires_locked_implementation_and_fake_test(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "example_app"
+    instruction_dir = (
+        app_dir
+        / "src"
+        / "example_app"
+        / "instructions"
+        / "example"
+        / "web"
+        / "open_page"
+    )
+    instruction_dir.mkdir(parents=True)
+    implementation = instruction_dir / "instruction.py"
+    implementation.write_text("class OpenPage:\n    pass\n", encoding="utf-8")
+    fake_test = app_dir / "tests" / "test_candidate_open_page.py"
+    fake_test.parent.mkdir(parents=True)
+    fake_test.write_text("def test_candidate():\n    assert True\n", encoding="utf-8")
+
+    lock = CatalogLock.model_validate(
+        {
+            "items": [
+                {
+                    "kind": "instruction",
+                    "id": "example.web.open_page",
+                    "version": "0.1.0",
+                    "status": "candidate",
+                    "source_type": "application_candidate",
+                    "source_path": (
+                        "src/example_app/instructions/example/web/open_page"
+                    ),
+                    "target_path": (
+                        "src/example_app/instructions/example/web/open_page"
+                    ),
+                    "content_hash": hash_catalog_path(instruction_dir, app_dir),
+                }
+            ]
+        }
+    )
+    (app_dir / "catalog.lock.json").write_text(
+        json.dumps(lock.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+    manifest = AppManifest.model_validate(
+        {
+            "schema_version": 2,
+            "app_id": "example.app",
+            "app_slug": "example_app",
+            "name": "Example",
+            "version": "0.1.0",
+            "entrypoint": "example_app.cli:main",
+            "python": "3.12",
+            "requirement_revision": 1,
+            "requirement_hash": "sha256:" + ("0" * 64),
+            "catalog_lock": "catalog.lock.json",
+            "commands": {
+                "login": "rpa-app login",
+                "verify_candidates": "rpa-app verify-candidates",
+            },
+        }
+    )
+    requirement = RequirementSpec.model_validate(
+        {
+            "schema_version": 2,
+            "source": {
+                "document_id": "redacted",
+                "revision": 1,
+                "requirement_hash": "sha256:" + ("0" * 64),
+            },
+            "application": {
+                "app_id": "example.app",
+                "app_slug": "example_app",
+                "name": "Example",
+                "version": "0.1.0",
+                "entrypoint": "example_app.cli:main",
+            },
+            "steps": [
+                {
+                    "id": "S001",
+                    "name": "Open page",
+                    "action": "open_page",
+                    "success_conditions": ["page_open"],
+                    "unresolved_instruction_ids": ["UI-001"],
+                }
+            ],
+            "unresolved_instructions": [
+                {
+                    "id": "UI-001",
+                    "requirement_step": "S001",
+                    "platform": "example",
+                    "capability": "open page",
+                    "reason": "not in source catalog",
+                    "candidate_instruction_ref": "example.web.open_page",
+                    "candidate_implementation": (
+                        "src/example_app/instructions/example/web/open_page/instruction.py"
+                    ),
+                    "fake_test_ref": "tests/test_candidate_open_page.py",
+                    "fake_test_status": "passed",
+                    "status": "candidate",
+                }
+            ],
+        }
+    )
+    report = ValidationReport()
+
+    _validate_v2_catalog_references(app_dir, manifest, requirement, report)
+
+    assert report.ok
+    fake_test.unlink()
+    _validate_v2_catalog_references(app_dir, manifest, requirement, report)
+    assert "APP_CANDIDATE_INSTRUCTION_TEST_MISSING" in issue_codes(report.issues)

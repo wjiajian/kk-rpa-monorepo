@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/rpa/jushuitan-inventory-export-config.schema.json",
+  "title": "Inventory export local store configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "stores"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "stores": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/store"
+      }
+    }
+  },
+  "$defs": {
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "login_url",
+        "profile_directory",
+        "debug_port",
+        "brand_value",
+        "username_env",
+        "password_env"
+      ],
+      "properties": {
+        "platform": {
+          "const": "jushuitan"
+        },
+        "login_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "profile_directory": {
+          "type": "string",
+          "pattern": "^profiles/[A-Za-z0-9._-]+$"
+        },
+        "debug_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "brand_value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "username_env": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]+$"
+        },
+        "password_env": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]+$"
+        }
+      }
+    }
+  }
+}

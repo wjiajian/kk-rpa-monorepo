@@ -13,7 +13,7 @@ import re
 import stat
 from threading import Lock
 import time
-from typing import Any, Callable, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
 from uuid import uuid4
 
 try:
@@ -23,6 +23,9 @@ except ImportError:  # pragma: no cover - exercised by an explicit fail-closed t
 
 from .contracts import RetryPolicy, ResumePolicy, RunMode, SideEffect, StepStatus
 from .events import JsonlEventLogger, sanitize_event_value
+
+if TYPE_CHECKING:
+    from .instructions import InstructionRegistry
 
 
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -341,6 +344,17 @@ class ExecutionContext:
     @property
     def browser(self) -> Any:
         return self.service("browser")
+
+    @property
+    def instructions(self) -> "InstructionRegistry":
+        from .instructions import InstructionRegistry
+
+        registry = self.service("instructions")
+        if not isinstance(registry, InstructionRegistry):
+            raise RuntimeContractError(
+                "service 'instructions' must be an InstructionRegistry"
+            )
+        return registry
 
     @property
     def feishu(self) -> Any:

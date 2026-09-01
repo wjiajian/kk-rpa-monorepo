@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -13,7 +14,7 @@ from rpa_core.contracts import (
     ResumePolicy,
     SideEffect,
 )
-from rpa_core.schema_export import export_schemas
+from rpa_core.schema_export import export_schemas, schema_documents
 
 
 ZERO_HASH = "sha256:" + ("0" * 64)
@@ -90,6 +91,32 @@ def test_app_manifest_has_fixed_commands_and_statuses() -> None:
     assert manifest.status is AppStatus.DRAFT
     assert manifest.commands.preview == "rpa-app run --mode preview"
     assert manifest.commands.live == "rpa-app run --mode live"
+
+
+def test_v2_manifest_requires_catalog_lock_and_candidate_commands() -> None:
+    document = manifest_document()
+    document["schema_version"] = 2
+    document["catalog_lock"] = "catalog.lock.json"
+    document["commands"] = {
+        "login": "rpa-app login",
+        "verify_candidates": "rpa-app verify-candidates",
+    }
+
+    manifest = AppManifest.model_validate(document)
+
+    assert manifest.schema_version == 2
+    assert manifest.catalog_lock == "catalog.lock.json"
+
+    missing_lock = manifest_document()
+    missing_lock["schema_version"] = 2
+    missing_lock["commands"] = document["commands"]
+    with pytest.raises(ValidationError, match="requires catalog_lock"):
+        AppManifest.model_validate(missing_lock)
+
+    v1_with_v2_command = manifest_document()
+    v1_with_v2_command["commands"] = {"login": "rpa-app login"}
+    with pytest.raises(ValidationError, match="must not declare V2 commands"):
+        AppManifest.model_validate(v1_with_v2_command)
 
 
 def test_manifest_rejects_nonstandard_command_and_mismatched_entrypoint() -> None:
@@ -188,11 +215,77 @@ def test_resolved_element_requires_reference_and_test_evidence() -> None:
         RequirementSpec.model_validate(document)
 
 
+def test_v2_candidate_instruction_is_structured_and_blocks_real_run() -> None:
+    document = requirement_document()
+    document["schema_version"] = 2
+    document["steps"][0]["unresolved_instruction_ids"] = ["UI-001"]  # type: ignore[index]
+    document["unresolved_instructions"] = [
+        {
+            "id": "UI-001",
+            "requirement_step": "load_fixture",
+            "platform": "example",
+            "capability": "load fixture",
+            "reason": "No verified shared instruction",
+            "candidate_instruction_ref": "example.fixture.load",
+            "candidate_implementation": (
+                "src/example_offline_export/instructions/example/fixture/load/instruction.py"
+            ),
+            "fake_test_ref": "tests/test_candidate_fixture_load.py",
+            "fake_test_status": "passed",
+            "status": "candidate",
+        }
+    ]
+
+    requirement = RequirementSpec.model_validate(document)
+
+    assert requirement.has_blockers
+    assert requirement.blocking_item_ids == ("UI-001",)
+    assert requirement.unresolved_instructions[0].blocks_offline_test is False
+    assert requirement.unresolved_instructions[0].blocks_real_run
+
+
+def test_v2_resolved_instruction_requires_step_reference_and_real_evidence() -> None:
+    document = requirement_document()
+    document["schema_version"] = 2
+    document["steps"][0]["instruction_refs"] = ["example.fixture.load"]  # type: ignore[index]
+    document["steps"][0]["unresolved_instruction_ids"] = ["UI-001"]  # type: ignore[index]
+    document["unresolved_instructions"] = [
+        {
+            "id": "UI-001",
+            "requirement_step": "load_fixture",
+            "platform": "example",
+            "capability": "load fixture",
+            "reason": "Originally absent",
+            "status": "resolved",
+            "resolved_instruction_ref": "example.fixture.load",
+            "real_test_status": "passed",
+            "real_test_evidence": "runs/verify-001/evidence.json",
+        }
+    ]
+
+    requirement = RequirementSpec.model_validate(document)
+
+    assert not requirement.has_blockers
+
+    document["steps"][0]["instruction_refs"] = []  # type: ignore[index]
+    with pytest.raises(ValidationError, match="not referenced by its step"):
+        RequirementSpec.model_validate(document)
+
+
+def test_v1_requirement_rejects_instruction_fields() -> None:
+    document = requirement_document()
+    document["steps"][0]["instruction_refs"] = ["example.fixture.load"]  # type: ignore[index]
+
+    with pytest.raises(ValidationError, match="schema_version 1"):
+        RequirementSpec.model_validate(document)
+
+
 def test_checked_in_schema_export_is_json_and_contains_contracts(tmp_path) -> None:
     paths = export_schemas(tmp_path)
 
     assert {path.name for path in paths} == {
         "app-manifest.schema.json",
+        "catalog-lock.schema.json",
         "requirement-spec.schema.json",
     }
     requirement_schema = json.loads(
@@ -200,3 +293,9 @@ def test_checked_in_schema_export_is_json_and_contains_contracts(tmp_path) -> No
     )
     assert requirement_schema["properties"]["steps"]["minItems"] == 1
     assert "PendingConfirmation" in requirement_schema["$defs"]
+    assert "UnresolvedInstruction" in requirement_schema["$defs"]
+
+    checked_in = Path(__file__).parents[1] / "src" / "rpa_core" / "schemas"
+    for filename, expected in schema_documents().items():
+        actual = json.loads((checked_in / filename).read_text(encoding="utf-8"))
+        assert actual == expected, f"checked-in schema drift: {filename}"

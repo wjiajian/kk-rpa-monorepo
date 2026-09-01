@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.shell.authenticated_marker"
+version = "0.1.0"
+name = "已登录页面标识"
+platform = "jushuitan"
+product = "erp"
+page = "authenticated_shell"
+component = "authenticated_marker"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+reason = "未授权访问登录后页面，不能推断稳定标识。"

@@ -7,11 +7,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from rpa_core.catalog import CatalogLock
 from rpa_core.contracts import AppManifest, RequirementSpec
 
 
 SCHEMA_FILENAMES = {
     "app-manifest.schema.json": AppManifest,
+    "catalog-lock.schema.json": CatalogLock,
     "requirement-spec.schema.json": RequirementSpec,
 }
 
@@ -26,7 +28,7 @@ def schema_documents() -> dict[str, dict[str, Any]]:
 
 
 def export_schemas(output_dir: str | Path | None = None) -> tuple[Path, ...]:
-    """Write both public schemas and return their paths.
+    """Write all public schemas and return their paths.
 
     The default is the package's checked-in ``schemas`` directory.  Tests can
     pass a temporary directory and compare the generated documents without

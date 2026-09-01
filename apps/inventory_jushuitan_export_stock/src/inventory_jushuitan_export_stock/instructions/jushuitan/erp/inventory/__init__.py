@@ -1,0 +1,1 @@
+"""Inventory candidate instructions."""

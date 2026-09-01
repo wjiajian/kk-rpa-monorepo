@@ -1,0 +1,17 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.auth.login"
+version = "0.1.0"
+name = "登录聚水潭 ERP"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:Login"
+dependencies = [
+  "element:jushuitan.erp.login.account_input",
+  "element:jushuitan.erp.login.password_input",
+  "element:jushuitan.erp.login.agreement_checkbox",
+  "element:jushuitan.erp.login.submit_button",
+  "element:jushuitan.erp.login.human_verification_marker",
+  "element:jushuitan.erp.shell.authenticated_marker",
+]

@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.inventory.open_product_stock"
+version = "0.1.0"
+name = "进入商品库存"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:OpenProductStock"
+dependencies = [
+  "element:jushuitan.erp.inventory.product_stock_entry",
+  "element:jushuitan.erp.product_stock.page_marker",
+]

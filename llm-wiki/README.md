@@ -11,9 +11,10 @@
 5. [元素、页面与候选元素](04-elements-and-pages.md)
 6. [运行隔离与安全授权](05-runtime-isolation-and-safety.md)
 7. [测试与证据](06-testing-and-evidence.md)
-8. [官方资料索引](sources.md)
+8. [指令、元素分析与应用快照](07-instructions-and-snapshots.md)
+9. [官方资料索引](sources.md)
 
-正式选型记录见 [ADR-025](decisions/ADR-025-browser-automation-drissionpage.md)。
+正式选型记录见 [ADR-025](decisions/ADR-025-browser-automation-drissionpage.md) 和 [ADR-026](decisions/ADR-026-application-catalog-snapshots.md)。
 
 ## 信息优先级
 
@@ -40,8 +41,10 @@
 
 - Wiki 建立日期：2026-08-31
 - 浏览器底层：DrissionPage
-- 当前实现状态：阶段 1“需求协议和应用骨架”与阶段 2“核心运行闭环”已完成离线实现与验收
-- 当前能力边界：阶段 3 DrissionPage 适配器尚未实现；真实浏览器和真实外部写入尚未测试
-- 离线验收证据：[测试与证据](06-testing-and-evidence.md#2026-08-31-阶段-12-离线验收基线)
-- 官方文档核验日期：2026-08-31
+- 当前实现状态：`rpa-core 0.2.0` 已实现 V1 运行契约、V2 指令/快照契约、BrowserActions、DrissionPage 动作适配器和 BrowserManager 的包级能力
+- 当前应用状态：`apps/` 为空，没有可执行的独立业务应用
+- 当前能力边界：无副作用公共包测试已通过；DrissionPage 真实登录、登录后流程、下载、Preview 和真实外部写入均未测试
+- 公开页面观察：Codex 内置浏览器只检查过公开登录页，未输入凭据或登录，不属于 DrissionPage 集成验证
+- 当前验收证据：[测试与证据](06-testing-and-evidence.md#2026-09-01-核心指令与快照补丁)
+- 官方文档核验日期：2026-09-01
 - 官方文档标注版本：DrissionPage 4.1.1.4

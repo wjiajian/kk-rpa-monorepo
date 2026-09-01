@@ -1,0 +1,14 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.product_stock.export_stock_option"
+version = "0.1.0"
+name = "导出库存选项"
+platform = "jushuitan"
+product = "erp"
+page = "product_stock"
+component = "export_stock_option"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+source_screenshot = "requirement/assets/step-005-export-stock.png"
+reason = "下载触发元素尚未在真实页面验证。"

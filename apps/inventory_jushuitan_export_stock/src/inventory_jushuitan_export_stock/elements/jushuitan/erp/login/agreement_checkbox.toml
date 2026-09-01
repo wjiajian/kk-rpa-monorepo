@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.login.agreement_checkbox"
+version = "0.1.0"
+name = "用户协议确认框"
+platform = "jushuitan"
+product = "erp"
+page = "login"
+component = "agreement_checkbox"
+status = "candidate"
+dependencies = []
+locator_status = "unresolved"
+reason = "未获得应用候选验证证据。"

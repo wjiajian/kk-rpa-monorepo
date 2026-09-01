@@ -1,0 +1,13 @@
+schema_version = 1
+kind = "instruction"
+id = "jushuitan.inventory.open_module"
+version = "0.1.0"
+name = "打开库存模块"
+platform = "jushuitan"
+product = "erp"
+status = "candidate"
+entrypoint = "instruction.py:OpenInventoryModule"
+dependencies = [
+  "element:jushuitan.erp.navigation.inventory_module",
+  "element:jushuitan.erp.inventory.module_marker",
+]

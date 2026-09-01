@@ -1,8 +1,8 @@
 # AI 驱动的浏览器 RPA 应用框架设计
 
-> 文档状态：第二版，已纳入 2026-08-31 前确认的设计决策  
-> 适用平台：淘系、京东、拼多多等浏览器后台  
-> 业务协作：浏览器自动化、Excel、飞书多维表格和数据库  
+> 文档状态：第三版，已纳入 2026-09-01 指令库与应用快照决策
+> 适用平台：淘系、京东、拼多多等浏览器后台
+> 业务协作：浏览器自动化、Excel、飞书多维表格和数据库
 > 当前重点：给 AI 一份带操作描述和截图的飞书需求文档，由 AI 生成一个完整、独立、可测试和可审核的 RPA 应用
 
 ## 1. 愿景
@@ -130,10 +130,10 @@ flowchart TB
 | 层 | 责任 | 禁止事项 |
 | --- | --- | --- |
 | 需求层 | 飞书读取、截图下载、需求 memory、JSON Spec、变更比较 | 在可提交文件中保留真实店铺和凭据 |
-| AI 生成层 | 生成完整应用、待确认项、候选元素、测试和报告 | 静默覆盖已有应用或人工代码 |
-| 应用层 | 一份需求对应的业务流程和独立依赖 | 直接调用 DrissionPage 或外部服务底层驱动 |
-| 公共框架层 | Program、Step、上下文、恢复、门禁和运行时 | 包含具体店铺业务逻辑 |
-| 平台资产层 | 淘系、京东、拼多多的页面和公共元素 | 保存实时 DOM、账号或店铺配置 |
+| AI 生成层 | 生成完整应用、待确认项、候选元素/指令、测试和报告 | 静默覆盖已有应用或人工代码 |
+| 应用层 | 一份需求对应的业务流程、独立依赖和冻结资产副本 | 直接调用 DrissionPage、顶层源库或外部服务底层驱动 |
+| 公共框架层 | Program、Step、Instruction、Catalog、上下文、恢复、门禁和运行时 | 包含具体店铺业务逻辑 |
+| 平台资产层 | 顶层已验证元素与 Python 指令源库 | 保存实时 DOM、账号、店铺配置或未验证定位 |
 | 集成层 | Excel、飞书、数据库和告警 | 感知具体应用 ID |
 | 运行时层 | 浏览器实例、Profile、端口、锁、目录和进程 | 多店铺共享同一 Profile |
 
@@ -144,41 +144,26 @@ rpa-monorepo/
 ├── AGENTS.md
 ├── README.md
 ├── .gitignore
+├── elements/
+│   ├── README.md
+│   └── <platform>/<product>/<page>/<component>.toml
+├── instructions/
+│   ├── README.md
+│   └── <platform>/<product>/<capability>/
+│       ├── instruction.toml
+│       └── instruction.py
 ├── docs/
-│   ├── rpa-framework-design.md
-│   ├── requirement-guide.md
-│   ├── application-development-guide.md
-│   ├── element-library-guide.md
-│   └── runbook/
+│   └── rpa-framework-design.md
 ├── packages/
 │   ├── rpa-core/
 │   │   ├── pyproject.toml
 │   │   ├── src/rpa_core/
-│   │   │   ├── program.py
-│   │   │   ├── step.py
-│   │   │   ├── context.py
-│   │   │   ├── checkpoint.py
-│   │   │   ├── errors.py
-│   │   │   ├── actions/
-│   │   │   ├── runtime/
-│   │   │   ├── observability/
-│   │   │   ├── review/
+│   │   │   ├── instructions.py
+│   │   │   ├── catalog.py
 │   │   │   └── schemas/
 │   │   └── tests/
-│   ├── rpa-platforms/
-│   │   ├── pyproject.toml
-│   │   ├── src/rpa_platforms/
-│   │   │   ├── taobao/
-│   │   │   ├── jd/
-│   │   │   └── pinduoduo/
-│   │   └── tests/
+│   ├── rpa-platforms/                # 兼容保留，不再是资产源库
 │   └── rpa-integrations/
-│       ├── pyproject.toml
-│       ├── src/rpa_integrations/
-│       │   ├── excel/
-│       │   ├── feishu/
-│       │   └── database/
-│       └── tests/
 └── apps/
     └── <app_slug>/
         ├── app.toml
@@ -189,14 +174,17 @@ rpa-monorepo/
         ├── .gitignore
         ├── README.md
         ├── GENERATION_REPORT.md
+        ├── catalog.lock.json
         ├── requirement/
         ├── config/
-        ├── src/
+        ├── src/<python_package>/
+        │   ├── elements/
+        │   └── instructions/
         ├── tests/
         └── reviews/
 ~~~
 
-根目录不为所有应用提供共享 .venv 或统一 uv.lock。公共包和每个应用都是独立 Python 项目。
+根目录不为所有应用提供共享 .venv 或统一 uv.lock。公共框架和每个应用都是独立 Python 项目。元素和指令只在生成时从顶层源库复制，应用运行时只读取自己的冻结副本。
 
 ## 8. 独立应用结构
 
@@ -211,6 +199,7 @@ apps/<app_slug>/
 ├── README.md
 ├── GENERATION_REPORT.md
 ├── REQUIREMENT_CHANGE_PROPOSAL.md
+├── catalog.lock.json
 ├── requirement/
 │   ├── REQUIREMENT_MEMORY.md
 │   ├── requirement.spec.json
@@ -229,7 +218,8 @@ apps/<app_slug>/
 │       ├── steps.py
 │       ├── models.py
 │       ├── validators.py
-│       └── candidate_elements/
+│       ├── elements/
+│       └── instructions/
 ├── tests/
 │   ├── unit/
 │   ├── integration/
@@ -249,7 +239,8 @@ apps/<app_slug>/
 - 声明自己的第三方依赖；
 - 拥有独立测试和命令入口；
 - 可以单独复制到目标机器并同步环境；
-- 不依赖其他应用目录。
+- 不依赖其他应用目录；
+- 使用 `catalog.lock.json` 固定包内元素和指令，不在运行时引用顶层源库。
 
 uv 当前项目机制会在 pyproject.toml 同级管理持久化 .venv，uv run 会在执行前检查项目、锁文件和环境是否一致。
 
@@ -264,20 +255,18 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "rpa-core",
-    "rpa-platforms",
-    "rpa-integrations",
 ]
 
 [tool.uv.sources]
 rpa-core = { path = "../../packages/rpa-core", editable = true }
-rpa-platforms = { path = "../../packages/rpa-platforms", editable = true }
-rpa-integrations = { path = "../../packages/rpa-integrations", editable = true }
 
 [project.scripts]
 rpa-app = "sales_taobao_sycm_store_daily.cli:main"
 ~~~
 
-应用不固定公共包旧版本。公共包修改会影响引用它的应用，因此合入公共包前必须识别受影响应用并执行回归测试。
+应用不固定 `rpa-core` 旧版本；需要外部集成时再声明 `rpa-integrations`。公共包修改会影响引用它的应用，因此合入前必须识别受影响应用并执行回归测试。
+
+顶层 `elements/` 和 `instructions/` 不是 Python path dependency。生成应用时只复制实际使用项及依赖闭包，之后由应用自己的锁文件和哈希保证可复现。顶层资产更新不会自动影响已有应用。
 
 ## 9. 需求输入
 
@@ -305,8 +294,9 @@ rpa-app = "sales_taobao_sycm_store_daily.cli:main"
 6. 记录截图来源标识和 SHA-256；
 7. 从文本和截图提取有序业务步骤；
 8. 识别输入、输出、成功条件、循环和分支；
-9. 匹配公共元素库；
-10. 生成需求 memory、JSON Spec 和待确认项。
+9. 匹配顶层已验证元素库和指令库，并解析依赖闭包；
+10. 为缺失能力生成 `UE-*` / `UI-*` 候选项；
+11. 生成需求 memory、V2 JSON Spec、应用快照和待确认项。
 
 ### 9.2 截图规则
 
@@ -356,7 +346,7 @@ app_id 一旦写入需求 memory 就保持稳定。重新处理同一需求时�
 示例：
 
 ~~~toml
-schema_version = 1
+schema_version = 2
 app_id = "sales.taobao.sycm_store_daily"
 app_slug = "sales_taobao_sycm_store_daily"
 name = "生意参谋店铺销售日报"
@@ -366,6 +356,7 @@ python = "3.12"
 requirement_revision = 484
 requirement_hash = "sha256:..."
 configuration_schema = "config/config.schema.json"
+catalog_lock = "catalog.lock.json"
 status = "draft"
 latest_review = ""
 
@@ -376,9 +367,11 @@ test = "rpa-app test"
 preview = "rpa-app run --mode preview"
 live = "rpa-app run --mode live"
 resume = "rpa-app resume"
+login = "rpa-app login"
+verify_candidates = "rpa-app verify-candidates"
 ~~~
 
-app.toml 不保存店铺、账号、凭据和本机路径。
+app.toml 不保存店铺、账号、凭据和本机路径。V1 清单继续可以读取；新应用必须使用 V2，且 V2 必须声明快照锁与两个候选验证命令。
 
 ### 10.3 应用扫描
 
@@ -390,6 +383,7 @@ app.toml 不保存店铺、账号、凭据和本机路径。
 - 需求 memory 和 JSON Spec 一致；
 - pyproject.toml 和 uv.lock 完整；
 - 标准命令存在；
+- V2 catalog.lock.json 存在且包内资产哈希一致；
 - 审核状态和最近审核引用有效。
 
 ## 11. 双份需求记忆
@@ -412,7 +406,7 @@ requirement/requirement.spec.json
 - 输入、输出和成功条件；
 - 条件、循环和异常处理；
 - 截图映射；
-- 元素状态；
+- 元素、指令和应用快照状态；
 - 待确认项和开发人员结论；
 - 需求变更历史；
 - 对应程序版本和测试状态。
@@ -425,7 +419,7 @@ requirement/requirement.spec.json
 
 ~~~json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": {
     "document_id": "redacted",
     "revision": 484,
@@ -444,12 +438,15 @@ requirement/requirement.spec.json
       "outputs": ["sales_xlsx"],
       "success_conditions": ["download_completed", "workbook_schema_valid"],
       "element_refs": ["taobao.sycm.sales.export_button"],
+      "instruction_refs": ["taobao.sycm.export_sales"],
+      "unresolved_instruction_ids": [],
       "pending_confirmation_ids": []
     }
   ],
   "outputs": [],
   "pending_confirmations": [],
-  "unresolved_elements": []
+  "unresolved_elements": [],
+  "unresolved_instructions": []
 }
 ~~~
 
@@ -583,16 +580,37 @@ UnresolvedElement(
 
 AI 不根据截图编造 XPath 或 CSS。未解析元素仍然放进完整步骤流程。
 
-任何未解决 PendingConfirmation 或 UnresolvedElement 都阻止审核通过、提交和推送。
+### 14.3 UnresolvedInstruction
+
+顶层指令库没有对应能力时，使用稳定 `UI-*` 对象记录需求步骤、平台、能力、缺失原因、候选实现、Fake 测试、真实测试和证据状态。
+
+```python
+UnresolvedInstruction(
+    id="UI-003",
+    requirement_step="步骤 4",
+    platform="taobao.sycm",
+    capability="导出销售明细",
+    reason="顶层指令库无已验证实现",
+    status="candidate",
+    candidate_instruction_ref="taobao.sycm.export_sales",
+    candidate_implementation="src/app/instructions/taobao/sycm/export_sales/instruction.py",
+    fake_test_ref="tests/test_candidate_export_sales.py",
+    fake_test_status="passed",
+)
+```
+
+候选状态允许 doctor 和无副作用测试，但阻止正常真实运行、审核和推送。只有稳定指令引用、真实测试通过及证据齐全时才能标记 resolved。
+
+任何未解决 PendingConfirmation、UnresolvedElement 或 UnresolvedInstruction 都阻止审核通过、提交和推送。
 
 ## 15. 元素库
 
 ### 15.1 组织方式
 
-公共元素按以下层级：
+顶层元素源库按以下层级：
 
 ~~~text
-平台 → 产品或站点 → 页面 → 页面组件 → 元素
+elements/<platform>/<product>/<page>/<component>.toml
 ~~~
 
 例如：
@@ -628,7 +646,7 @@ class ElementSpec:
 
 ### 15.3 候选元素流程
 
-新元素先进入应用内 candidate_elements：
+新元素先进入应用内快照目录：
 
 ~~~text
 需求截图识别
@@ -637,12 +655,30 @@ class ElementSpec:
 → 补抓 DOM
 → 验证唯一、显示、可点击和刷新稳定性
 → 完成端到端测试
-→ 迁入 packages/rpa-platforms
-→ 应用改为引用公共元素
+→ 提出迁入顶层 elements/ 的独立 diff
+→ 当前应用保持冻结副本或经确认执行显式升级
 → 回归测试受影响应用
 ~~~
 
-测试通过前不得并入公共库。
+测试通过前不得并入顶层源库。候选元素保存在应用自己的 `src/<python_package>/elements/`，并以 `application_candidate/candidate` 条目写入 `catalog.lock.json`。
+
+### 15.4 Python 指令库
+
+公共指令表示可独立验证、可跨应用复用的稳定能力：
+
+```text
+instructions/<platform>/<product>/<capability>/
+├── instruction.toml
+└── instruction.py
+```
+
+一条指令必须声明稳定 ID、语义版本、平台、输入、输出、依赖元素、前置条件、成功条件和副作用等级。实现继承 `Instruction`，通过 `ExecutionContext` 调用 BrowserActions 或其他受控服务，并提供独立 `verify()`。指令不得包含店铺专属规则、真实品牌、日期范围或应用输出策略，也不得写 Step 检查点。
+
+### 15.5 应用快照
+
+`snapshot_catalog()` 扫描顶层源库，解析 `element:<id>` / `instruction:<id>` 依赖闭包，将实际使用项复制到应用包内，并生成 `catalog.lock.json`。锁条目固定类型、ID、版本、状态、来源、目标、依赖、复制时间和内容哈希；复制时间不参与内容一致性判断。
+
+运行时只校验应用副本，拒绝文件缺失、哈希漂移、未知依赖、循环、路径逃逸、符号链接和硬链接。顶层源库之后的变化不会改变已有应用；升级必须先展示来源版本、哈希和文件 diff，再经开发人员确认和回归测试。
 
 ## 16. 核心程序模型
 
@@ -713,7 +749,7 @@ class StepSpec:
 
 ### 16.4 ExecutionContext
 
-以下是阶段 3、4 完成后的目标上下文。阶段 2 已实现运行身份（含 `requirement_hash`）、运行目录、服务注册表、输出和协作式步骤 deadline；浏览器、Excel、数据库、密钥和产物等类型化入口在对应阶段补齐。
+运行身份（含 `requirement_hash`）、运行目录、服务注册表、输出和协作式步骤 deadline 已实现；`instructions` 已提供类型化注册表入口。浏览器、Excel、数据库、密钥和产物继续通过对应的受控服务入口扩展。
 
 ~~~python
 @dataclass(slots=True)
@@ -732,6 +768,10 @@ class ExecutionContext:
     approvals: ApprovalContext
 
     @property
+    def instructions(self) -> InstructionRegistry:
+        """当前应用包内注册的冻结指令集合。"""
+
+    @property
     def browser(self) -> BrowserActions:
         """默认账号浏览器。"""
 
@@ -742,16 +782,14 @@ ExecutionContext 是业务代码访问外部世界的唯一入口。
 
 ### 16.5 业务代码边界
 
-允许业务程序自由编排：
+允许业务程序自由编排。跨应用复用的稳定动作优先通过指令注册表调用：
 
 ~~~python
-ctx.browser.click(OrderList.SEARCH_BUTTON)
-rows = ctx.browser.find_all(OrderList.ORDER_ROW)
-
-for row in rows:
-    order_no = ctx.browser.text(OrderRow.ORDER_NO, root=row)
-    if should_export(order_no):
-        ctx.browser.click(OrderRow.EXPORT_BUTTON, root=row)
+result = ctx.instructions.execute(
+    "example.orders.search",
+    ctx,
+    {"date_range": date_range},
+)
 ~~~
 
 禁止：
@@ -761,6 +799,8 @@ page.ele(...).click()
 ~~~
 
 apps 目录不能直接导入 DrissionPage、底层飞书客户端、Excel 驱动或数据库驱动。
+
+复制到应用的指令也受同一架构扫描约束。指令完成 `verify()` 后只返回声明输出；调用它的 Step 仍要执行自己的成功条件，并且只有 Step 验证成功后才能写检查点。
 
 ## 17. 浏览器包装和 DrissionPage
 
@@ -1031,6 +1071,8 @@ uv sync
 uv run rpa-app doctor
 uv run rpa-app check
 uv run rpa-app test
+uv run rpa-app login
+uv run rpa-app verify-candidates
 uv run rpa-app run --mode preview
 uv run rpa-app run --mode live
 uv run rpa-app resume --run-id <run_id> --mode preview
@@ -1040,13 +1082,15 @@ uv run rpa-app resume --run-id <run_id> --mode live
 | 命令 | 责任 |
 | --- | --- |
 | doctor | 检查 Python、Chrome、配置、目录、依赖和本地权限 |
-| check | 检查需求一致性、待确认项、元素和架构边界 |
+| check | 检查需求一致性、待确认项、元素、指令、快照哈希和架构边界 |
 | test | 运行无外部副作用测试 |
+| login | 在单独授权下建立或确认指定持久化 Profile 的登录态 |
+| verify-candidates | 在单独授权下逐条验证候选元素和候选指令 |
 | preview | 执行已授权的真实读取和下载，拦截业务写入 |
 | live | 执行被单独授权的真实写入 |
 | resume | 从失败步骤恢复，仍受 preview 或 live 约束 |
 
-`run` 和 `resume` 不能依赖开发人员先手动执行 `check`；命令必须在创建运行目录前自动执行同一套需求一致性、开放待确认项、应用身份、架构和敏感信息门禁。
+`run` 和 `resume` 不能依赖开发人员先手动执行 `check`；命令必须在创建运行目录前自动执行同一套需求一致性、开放待确认项、应用身份、快照完整性、架构和敏感信息门禁。候选验证只能走 `verify-candidates`，不得关闭正常 `run` 的阻塞规则。
 
 ## 23. Excel、飞书和数据库集成
 
@@ -1158,7 +1202,7 @@ run.cleaned
 - app_id、名称和生成时间；
 - 识别出的完整业务步骤；
 - 新增和修改文件；
-- 复用、新增和候选元素；
+- 复用、新增和候选元素、指令及快照哈希；
 - 待确认项及风险；
 - 已执行、通过、失败和未执行的测试；
 - 真实浏览器授权和结果；
@@ -1240,6 +1284,8 @@ reviews/2026-08-25T143000+0800.toml
 
 - 所有 PendingConfirmation 已关闭；
 - 所有 UnresolvedElement 已解析并测试；
+- 所有 UnresolvedInstruction 已解析并完成真实验证；
+- catalog.lock.json 与应用元素/指令副本一致；
 - 自动测试全部通过；
 - 真实浏览器流程已授权并完成；
 - 所有外部写入至少完成格式预览；
@@ -1269,7 +1315,9 @@ AI 代为操作前展示精确文件清单、测试结果、提交信息、远�
 - 成功条件；
 - 重试和恢复；
 - preview 写入拦截；
-- 敏感信息不进入日志。
+- 敏感信息不进入日志；
+- 指令声明输入输出、独立验证和稳定错误；
+- 候选指令 Fake Browser 行为。
 
 ### 28.2 架构测试
 
@@ -1280,7 +1328,10 @@ AI 代为操作前展示精确文件清单、测试结果、提交信息、远�
 - 禁止 page.ele().click()；
 - app_id、Program ID 和步骤 ID 唯一；
 - 禁止提交 .env、stores.local.toml、截图、Profile 和运行产物；
-- app.toml、需求 memory 和 JSON Spec 一致。
+- app.toml、需求 memory 和 JSON Spec 一致；
+- 应用不得从顶层 elements/instructions 导入；
+- 复制指令不得导入 DrissionPage；
+- V2 快照锁、依赖闭包、内容哈希和候选条目一致。
 
 ### 28.3 公共包契约测试
 
@@ -1290,10 +1341,13 @@ AI 代为操作前展示精确文件清单、测试结果、提交信息、远�
 - Excel 原子更新失败保留原文件；
 - 飞书 upsert 按唯一键防重；
 - preview 模式无真实写入。
+- 指令注册表不写 Step 检查点；
+- Catalog 拒绝重复 ID、未知依赖、循环、路径逃逸、符号链接和硬链接；
+- 修改顶层源库不改变已有应用副本。
 
 ### 28.4 真实平台测试
 
-必须由开发人员明确授权。按完整流程执行，遇到未解析元素时补抓、验证并继续。
+必须由开发人员明确授权。候选阶段先走 `verify-candidates`，按需求步骤逐条确认页面身份、元素唯一性/可见/可点击/刷新稳定性和指令结果；完整业务流程再走 Preview。
 
 验证码和短信仅检测并提示人工处理。
 
@@ -1336,15 +1390,19 @@ D:\RPAData\
 
 开发完成、技术测试通过、RPA 开发审核通过和业务迁移验收通过是不同状态。
 
-## 31. 当前原型迁移
+## 31. 当前仓库迁移边界
 
-现有 src/drission_element_library 是生意参谋元素和登录原型。迁移时：
+当前仓库没有 `src/drission_element_library`，也没有可恢复或迁移的历史业务应用。不得根据旧文档描述重建不存在的原型。
 
-- 通用 BasePage 查找、等待、点击和输入迁到 packages/rpa-core；
-- 生意参谋元素迁到 packages/rpa-platforms 的淘系目录；
-- 平台登录状态判断迁到平台 assertions；
-- 登录脚本改造成首个独立应用的真实冒烟测试；
-- 新旧实现行为一致前不删除原型。
+后续若从其他仓库迁入资产：
+
+- 通用浏览器包装只进入 `packages/rpa-core`；
+- 已真实验证的元素进入顶层 `elements/`；
+- 已真实验证、可复用的 Python 能力进入顶层 `instructions/`；
+- 应用只复制实际使用的依赖闭包并固定在自己的 `catalog.lock.json`；
+- 登录状态判断作为可独立验证的指令或页面断言；
+- 未完成真实验证的内容只能作为应用候选项；
+- 新旧实现行为一致前不删除原来源。
 
 ## 32. 未来调度中心边界
 
@@ -1388,7 +1446,7 @@ D:\RPAData\
 
 ## 34. 实施顺序
 
-> 2026-09-01 状态：阶段 1 与阶段 2 已完成离线实现和验收；阶段 3 已完成 BrowserActions、Fake Browser、DrissionPage 4.1.1.4 动作适配器，以及 BrowserManager 的 Profile 排他锁、动态端口租约和生命周期策略。首个需求应用已绑定本地店铺配置和精确范围 Preview 授权，公开登录页已有 4 个候选元素通过内置浏览器辅助检查；DrissionPage 真实登录和库存页端到端验证尚未完成。
+> 2026-09-01 状态：`rpa-core 0.2.0` 已具备 V1 运行契约、V2 指令/快照契约、BrowserActions、Fake Browser、DrissionPage 动作适配器和 BrowserManager 等公共包能力；`apps/` 当前为空，因此尚无独立应用、应用级 Preview 或业务验收。Codex 内置浏览器只观察过公开登录页，未输入凭据或登录；这不属于 DrissionPage 集成测试，也不能把公开控件直接晋升为已验证资产。
 
 ### 阶段 1：需求协议和应用骨架
 
@@ -1397,9 +1455,9 @@ D:\RPAData\
 - 建立独立应用模板；
 - 实现应用扫描和冲突检测；
 - 实现脱敏和误提交扫描；
-- 用假需求生成完整示例应用。
+- 保留用假需求生成完整示例应用的验收任务。
 
-验收：AI 能从一份脱敏需求生成独立目录、独立 uv 项目、完整步骤和待确认项。
+当前：公共契约和扫描器已实现；由于仓库没有应用，尚未在当前 HEAD 证明“从需求生成独立应用”的完整验收。
 
 ### 阶段 2：核心运行闭环
 
@@ -1409,7 +1467,7 @@ D:\RPAData\
 - 实现 preview/live 授权上下文；
 - 实现 JSON 日志和生成报告。
 
-验收：假应用可以失败、恢复、预览写入并阻止未授权 live。
+当前：公共运行时已有相应实现和包级回归；当前仓库没有可执行应用，不能声称应用级 Preview/Resume/Live 拒绝已经在本轮验收。
 
 ### 阶段 3：浏览器和元素
 
@@ -1417,10 +1475,11 @@ D:\RPAData\
 - 实现 BrowserActions 最小契约与 Fake Browser（已完成）；
 - 实现 DrissionPage 生产动作适配器（已完成并接入 BrowserManager）；
 - 实现 Profile、端口和锁（公共 BrowserManager 已完成，等待真实 Chrome 集成验证）；
-- 实现候选元素到公共库流程；
+- 实现 InstructionRegistry、顶层元素/指令发现、依赖闭包、应用快照锁和 V2 候选门禁（已完成包级实现）；
+- 实现候选元素/指令到顶层源库的显式升级流程；
 - 保留本地浏览器 KEEP_OPEN。
 
-验收：同机至少两个店铺实例互不影响，应用不导入 DrissionPage。
+当前验收边界：无副作用测试覆盖公共契约、快照完整性和架构扫描；真实 Chromium、Profile 复用、登录、候选验证、下载和双账号并发仍未执行。
 
 ### 阶段 4：Excel、飞书和告警
 
@@ -1440,6 +1499,8 @@ D:\RPAData\
 - RPA 开发处理待确认项；
 - 完成真实 Preview 和必要 Live；
 - 形成自然语言审核记录。
+
+前置条件：提供实际飞书需求文档 URL 和最新 revision；真实候选验证还需另行限定账号别名、Profile、站点、步骤和允许动作。公开登录页信息不能替代这些输入。
 
 ### 阶段 6：迁移扩展
 
@@ -1462,7 +1523,7 @@ D:\RPAData\
 | --- | --- | --- |
 | ADR-001 | 一份需求对应一个应用和程序 | 保持需求、代码、依赖和审核边界清晰 |
 | ADR-002 | 每个应用独立 .venv、pyproject.toml 和 uv.lock | 依赖隔离，支持独立运行部署 |
-| ADR-003 | 公共包在同一仓库，通过路径引用最新代码 | 复用框架和元素，避免复制 |
+| ADR-003 | 公共框架在同一仓库，通过路径引用最新代码 | 复用运行时并避免复制核心包 |
 | ADR-004 | 应用通过 app.toml 扫描发现，不维护中心注册表 | 避免双份注册信息不一致 |
 | ADR-005 | 保持现有飞书需求模板 | 不增加提报人负担 |
 | ADR-006 | 同时生成 Markdown memory 和 JSON Spec | 兼顾人工维护和机器稳定读取 |
@@ -1470,7 +1531,7 @@ D:\RPAData\
 | ADR-008 | 截图下载到应用但不提交 | AI 可本地使用，同时避免敏感图片入库 |
 | ADR-009 | 信息不全仍生成完整草稿 | 尽快形成可审阅程序 |
 | ADR-010 | 未知元素不从截图猜定位器 | DOM 定位必须真实验证 |
-| ADR-011 | 新元素测试后才并入公共库 | 避免污染所有应用 |
+| ADR-011 | 新元素和指令真实测试后才并入顶层源库 | 避免污染后续应用 |
 | ADR-012 | 不区分 AI 和人工代码区 | 应用代码统一增量维护 |
 | ADR-013 | 默认不创建分支、不提交、不推送 | 审核测试完成前保持本地草稿 |
 | ADR-014 | 真实浏览器必须开发人员授权 | 防止未经允许操作真实平台 |
@@ -1485,10 +1546,11 @@ D:\RPAData\
 | ADR-023 | 新旧程序并行一周 | 用真实结果完成迁移验收 |
 | ADR-024 | 调度中心后置 | 当前聚焦 AI 生成和应用运行框架 |
 | ADR-025 | 浏览器自动化底层选用 DrissionPage | 统一 Chromium 控制能力，并通过 BrowserActions 隔离业务应用与底层对象 |
+| ADR-026 | 元素与指令使用应用快照 | 固定已测试行为，顶层更新通过显式 diff 升级 |
 
 ## 36. 后续阶段待确定
 
-`app.toml` 与 `requirement.spec.json` 的 V1 Schema 已在阶段 1 实现并纳入一致性测试。后续字段扩展必须提升或兼容 Schema 版本，不能静默改变 V1 语义。
+`app.toml` 与 `requirement.spec.json` 的 V1 Schema 继续兼容；V2 已增加 catalog lock、登录/候选验证命令、指令引用和 `UnresolvedInstruction`。后续字段扩展仍必须提升或兼容 Schema 版本，不能静默改变 V1/V2 语义。
 
 - .xlsx 底层库及公式、样式保真范围；
 - Windows 浏览器进程保活实现；
