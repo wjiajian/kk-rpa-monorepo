@@ -133,6 +133,45 @@ def test_snapshot_is_frozen_from_source_and_detects_local_tampering(
         verify_catalog_snapshot(application)
 
 
+def test_instruction_snapshot_ignores_only_generated_python_bytecode(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    application = repository / "apps" / "example_app"
+    application.mkdir(parents=True)
+    _write_element(repository)
+    source_instruction = _write_instruction(repository)
+    source_cache = source_instruction / "__pycache__"
+    source_cache.mkdir()
+    (source_cache / "instruction.cpython-312.pyc").write_bytes(b"generated")
+
+    lock = snapshot_catalog(
+        repository,
+        application,
+        "example_app",
+        ["instruction:example.web.open_login"],
+    )
+    copied_instruction = (
+        application
+        / "src"
+        / "example_app"
+        / "instructions"
+        / "example"
+        / "web"
+        / "open_login"
+    )
+    assert not (copied_instruction / "__pycache__").exists()
+
+    runtime_cache = copied_instruction / "__pycache__"
+    runtime_cache.mkdir()
+    (runtime_cache / "instruction.cpython-312.pyc").write_bytes(b"generated")
+    assert verify_catalog_snapshot(application) == lock
+
+    (copied_instruction / "unexpected.py").write_text("unexpected\n", encoding="utf-8")
+    with pytest.raises(CatalogIntegrityError, match="hash mismatch"):
+        verify_catalog_snapshot(application)
+
+
 def test_snapshot_never_overwrites_existing_lock_or_target(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     application = repository / "apps" / "example_app"

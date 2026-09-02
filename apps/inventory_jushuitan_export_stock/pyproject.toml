@@ -5,7 +5,7 @@ description = "Independent RPA application draft for exporting a filtered invent
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "rpa-core==0.2.0",
+  "rpa-core==0.6.0",
 ]
 
 [project.scripts]

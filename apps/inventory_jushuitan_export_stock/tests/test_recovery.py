@@ -14,7 +14,7 @@ from .helpers import make_browser, make_context, make_program
     [
         (
             "S003",
-            "jushuitan.erp.product_stock.brand_selected_marker",
+            "jushuitan.erp.product_stock.brand_selector",
             True,
             "jushuitan.erp.inventory.product_stock_entry",
         ),
@@ -22,7 +22,7 @@ from .helpers import make_browser, make_context, make_program
             "S004",
             "jushuitan.erp.product_stock.filter_applied_marker",
             True,
-            "jushuitan.erp.product_stock.brand_selector",
+            "jushuitan.erp.product_stock.reset_button",
         ),
         (
             "S005",

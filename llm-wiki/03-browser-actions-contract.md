@@ -4,14 +4,15 @@
 
 ## 当前实现基线
 
-截至 2026-09-01，公共包已落地无副作用契约和 DrissionPage 4.1.1.4 动作适配器：
+截至 2026-09-02，`rpa-core 0.6.0` 已落地无副作用契约和 DrissionPage 4.1.1.4 动作适配器：
 
-- `BrowserActions`：`open`、`exists`、`click`、`input`、`select`、`download`、`screenshot`；
-- `ElementSpec`：稳定元素 ID，允许 locator 为空以显式表达未解析元素；
+- `BrowserActions`：`open`、`exists`、`click`、`input`、`text`、`select`、`download`、`screenshot`；
+- `ElementSpec`：稳定元素 ID，允许目标 locator 为空以显式表达未解析元素，并支持可选 `frame_locator`、`option_locator`、`selected_option_locator`、`popup_locator` 与 `dismiss_locator`；适配器在每次动作前重新解析 iframe，不把 frame 对象暴露给应用；所有 locator 只描述通用节点，不包含运行时业务值；
 - `SecretValue`：`str` 和 `repr` 都不泄露运行时值；
 - `DownloadRef` / `ArtifactRef`：本地路径、文件大小和 SHA-256；
-- `FakeBrowserActions`：不启动浏览器、不访问网络，按元素稳定 ID 验证完整业务编排。
-- `DrissionBrowserActions`：接收运行时托管的 Chromium Tab，实现 `open`、`exists`、`click`、`input`、原生 `select`、`download` 和 `screenshot`；输入固定采用 `clear(by_js=True) → focus() → input(..., by_js=False)`。
+- `FakeBrowserActions`：不启动浏览器、不访问网络，按元素稳定 ID 验证完整业务编排；文本读取必须显式提供 fixture，动作记录只保留 `<redacted>`。
+- `DrissionBrowserActions`：接收运行时托管的 Chromium Tab，实现上述动作；输入固定采用 `clear(by_js=True) → focus() → input(..., by_js=False)`；`select` 保持原生 `select.by_text()`；输入型自定义下拉配置 `option_locator` 时，在同一 frame 内等待并过滤显示、启用、可点击且文本完全一致的选项，必须唯一命中才点击，未配置时保留 Enter 兼容行为。精确多选组件还会按真实 checkbox 状态清除非目标项、补齐唯一目标项，点击经过验证且不受浮层遮挡的关闭目标，并等待浮层不可见；任何一步不能证明成功都失败关闭。
+- `text()`：普通元素返回可见文本，`input` 返回当前 `value`；读取失败转换为公共 `ElementActionError`。
 - 下载只允许进入当前 `run_dir/downloads/`，截图只允许进入 `run_dir/evidence/`，返回前检查普通文件、大小和 SHA-256；路径逃逸或符号链接目录会失败关闭。
 - 适配器把底层导航、查找、动作和下载失败转换为公共稳定异常，不把 Tab、元素或 `DownloadMission` 暴露给应用。
 - `BrowserManager`：为每个 Profile 持有 OS 排他锁，通过机器级租约目录动态选择未监听端口，创建 `ChromiumOptions` 和 `Chromium`，并把 Tab 绑定为当前运行的 `DrissionBrowserActions`。
@@ -19,7 +20,7 @@
 
 生产适配器必须调用 `ElementSpec.require_locator()`；Fake 可以在 locator 尚未补抓时使用稳定 ID，从而验证完整流程而不伪造 CSS/XPath。应用通过 `ExecutionContext.browser` 获取该能力。
 
-当前 `apps/` 为空，没有应用级 CLI 绑定或 Preview 运行证据。公共授权契约要求未来 Preview 精确匹配 `app_id + run_id + account_id + mode`，但只有生成应用并完成相应测试后才能报告该门禁的应用级结果。真实 Chromium 集成验证尚未完成；协议扩展还缺少 `find`、`find_all`、文本读取、标签页、iframe 上下文和统一动作事件。以下仍是目标协议，而不是已经全部交付的接口。
+当前已有一个应用完成 Fake 测试和一次已授权的 S001–S005 Preview 下载及幂等恢复验证；其中 16 个元素和 7 条指令已显式晋升顶层公共库并重新锁定到应用快照。指令目录的内容哈希排除 Python 自动生成的 `__pycache__`、`.pyc` 和 `.pyo`，其他额外文件仍会触发完整性失败。业务验收状态以应用生成报告和开发人员审核记录为准。公共授权契约要求 Preview 精确匹配 `app_id + run_id + account_id + mode`。协议扩展仍缺少 `find`、`find_all`、受控标签页、显式 frame 上下文管理器和统一动作事件；以下仍是目标协议，而不是已经全部交付的接口。
 
 ## 目标协议
 

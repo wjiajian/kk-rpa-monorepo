@@ -24,6 +24,78 @@ class InventoryExportProgram(BaseProgram):
             {},
         )
         context.metadata["prepare_result"] = dict(result)
+        target = context.metadata.get("resume_recovery_target")
+        if target is not None:
+            self._restore_resume_browser_state(context, str(target))
+
+    @staticmethod
+    def _restore_resume_browser_state(
+        context: ExecutionContext,
+        target_step_id: str,
+    ) -> None:
+        store = context.metadata.get("store_config")
+        if not isinstance(store, StoreConfig):
+            raise TypeError("resume recovery requires StoreConfig")
+        prerequisites = {
+            "S001": (),
+            "S002": (
+                ("jushuitan.inventory.open_module", {}),
+            ),
+            "S003": (
+                ("jushuitan.inventory.open_module", {}),
+                ("jushuitan.inventory.open_product_stock", {}),
+            ),
+            "S004": (
+                ("jushuitan.inventory.open_module", {}),
+                ("jushuitan.inventory.open_product_stock", {}),
+                (
+                    "jushuitan.inventory.select_brand",
+                    {"brand_value": store.brand_value},
+                ),
+            ),
+            "S005": (
+                ("jushuitan.inventory.open_module", {}),
+                ("jushuitan.inventory.open_product_stock", {}),
+                (
+                    "jushuitan.inventory.select_brand",
+                    {"brand_value": store.brand_value},
+                ),
+                (
+                    "jushuitan.inventory.search",
+                    {"brand_value": store.brand_value},
+                ),
+            ),
+        }
+        try:
+            recovery_plan = prerequisites[target_step_id]
+        except KeyError as error:
+            raise ValueError(f"unsupported resume target: {target_step_id}") from error
+        last_error: Exception | None = None
+        for plan_attempt in range(1, 3):
+            recovered = []
+            try:
+                for instruction_id, inputs in recovery_plan:
+                    context.instructions.execute(
+                        instruction_id,
+                        context,
+                        inputs,
+                    )
+                    recovered.append(instruction_id)
+            except Exception as error:
+                last_error = error
+                if plan_attempt < 2:
+                    continue
+                try:
+                    context.browser.screenshot(
+                        name=f"resume-prepare-{target_step_id.lower()}-failed.png"
+                    )
+                except Exception:
+                    pass
+                raise
+            context.metadata["resume_prepare_instructions"] = tuple(recovered)
+            return
+        assert last_error is not None
+        raise last_error
 
     def verify(self, context: ExecutionContext) -> bool:
         result = context.outputs.get("S005")

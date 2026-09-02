@@ -1,281 +1,363 @@
 {
   "items": [
     {
-      "content_hash": "sha256:2f74591ce1f76bcbb39b10367c5f2c65d636ba3524deb14dbe4d3980842a6664",
-      "dependencies": [],
-      "id": "jushuitan.erp.inventory.module_marker",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/inventory/module_marker.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/inventory/module_marker.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:468d15a2f55d05c62cc00826264ee882e1a118714f92277a831d3526a5a18e15",
-      "dependencies": [],
-      "id": "jushuitan.erp.inventory.product_stock_entry",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/inventory/product_stock_entry.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/inventory/product_stock_entry.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:8916977d285238ba7efee8193da787cad5a3deec527066fd30925fb30ced9fc5",
+      "content_hash": "sha256:c761330729344a154f8ad28a97bfbe7b0291ab469c5fa93a5d19dffefce025ec",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [],
       "id": "jushuitan.erp.login.account_input",
       "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/account_input.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
+      "source_path": "elements/jushuitan/erp/login/account_input.toml",
+      "source_type": "repository",
+      "status": "verified",
       "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/account_input.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:41bdd999970e9e9125372f3f81f97783d6c31918c9c814180808960c5f476312",
-      "dependencies": [],
-      "id": "jushuitan.erp.login.agreement_checkbox",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/agreement_checkbox.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/agreement_checkbox.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:4b4af8933056cc6d1f5f451bb55fdf9352ac573c926189d831faf90ce3b81890",
-      "dependencies": [],
-      "id": "jushuitan.erp.login.human_verification_marker",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/human_verification_marker.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/human_verification_marker.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:f7940bc7ce86808475cc64bfa2b82b4e11230d8643eac5513819944a2a90fdaa",
+      "content_hash": "sha256:11bce6ddb8ecc6ca434620e94ab2e7f2e371695e7ca9ec6fdff62ceaa095db29",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [],
       "id": "jushuitan.erp.login.password_input",
       "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/password_input.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
+      "source_path": "elements/jushuitan/erp/login/password_input.toml",
+      "source_type": "repository",
+      "status": "verified",
       "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/password_input.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:4501c5c4e7facbbd2c00402ca4e7cc18192ff37a24740184f857118f6b88e9d8",
+      "content_hash": "sha256:e3d7b0753f8c9de7ae0c146f229bdbad300a6d9379ff3eb89b4a0380f8f46dd8",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.login.agreement_checkbox",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/login/agreement_checkbox.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/agreement_checkbox.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:2a1001f46afdf4d3b63ce4ffafc768ac1cceac7d87ec4a719dd4ef4e9a0679d6",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [],
       "id": "jushuitan.erp.login.submit_button",
       "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/submit_button.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
+      "source_path": "elements/jushuitan/erp/login/submit_button.toml",
+      "source_type": "repository",
+      "status": "verified",
       "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/submit_button.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:006195ad352424d260795aa23a47c901d1377b30cd566969061f44298da2a3b5",
+      "content_hash": "sha256:766c46e0d720321fb1fd250c6ad1b90ca48e35bb9887574363c616510afd3887",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [],
-      "id": "jushuitan.erp.navigation.inventory_module",
+      "id": "jushuitan.erp.login.password_notice_confirm",
       "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/navigation/inventory_module.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/navigation/inventory_module.toml",
+      "source_path": "elements/jushuitan/erp/login/password_notice_confirm.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/login/password_notice_confirm.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:e606f750957bf0022ee253ee3d14c1a55d093ac9ccb208fc99e377fb15794de6",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.brand_selected_marker",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/brand_selected_marker.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/brand_selected_marker.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:3bbb42596c2f26fd67a0ab6b3d6179dae4efe3f2b6af61ac73ee76d97e72766a",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.brand_selector",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/brand_selector.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/brand_selector.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:c9e28ea91e7f824d7c056da7a03ba4e64f97ad53c9bbc5ff19680c9d0726fec5",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.export_menu",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/export_menu.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/export_menu.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:1bac935a70c61cb0db52bdb7aaeed6a4a33886cf38e5876af68be27005ffc462",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.export_stock_option",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/export_stock_option.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/export_stock_option.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:4128dc54e9d362b0a6ffee6f7aae1a1a2018bed57c6989d24477a9c274a2abb1",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.filter_applied_marker",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/filter_applied_marker.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/filter_applied_marker.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:a123362fda31677170fd533582c3f7388b111abbf918384a82cbcbd5d5e0ef2b",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.page_marker",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/page_marker.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/page_marker.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:3f0af6ccce920c93fd63295d25afd95cc6b432c257d86ff10483a5800a85c7d5",
-      "dependencies": [],
-      "id": "jushuitan.erp.product_stock.search_button",
-      "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/search_button.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/search_button.toml",
-      "version": "0.1.0"
-    },
-    {
-      "content_hash": "sha256:75ee6fee8a1489de207611da1ff9350df6414ff12fd1e1f64a64f2177bc7709a",
+      "content_hash": "sha256:f7d016d51514fea4a84f5612713ea8b6c5fe5c7d3f1e67155e7620dc35ad699f",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [],
       "id": "jushuitan.erp.shell.authenticated_marker",
       "kind": "element",
-      "source_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/shell/authenticated_marker.toml",
-      "source_type": "application_candidate",
-      "status": "candidate",
+      "source_path": "elements/jushuitan/erp/shell/authenticated_marker.toml",
+      "source_type": "repository",
+      "status": "verified",
       "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/shell/authenticated_marker.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:a2770b61b6702089b9ad9267a70986d67d4e6fb1957e69dcb452744a2f88775a",
+      "content_hash": "sha256:7a85f3f03572c67354703142cb5710e070901d62406f4e72479c50280d49e581",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.login.account_input", "kind": "element"},
-        {"id": "jushuitan.erp.login.password_input", "kind": "element"},
-        {"id": "jushuitan.erp.login.agreement_checkbox", "kind": "element"},
-        {"id": "jushuitan.erp.login.submit_button", "kind": "element"},
-        {"id": "jushuitan.erp.login.human_verification_marker", "kind": "element"},
-        {"id": "jushuitan.erp.shell.authenticated_marker", "kind": "element"}
+        {
+          "id": "jushuitan.erp.login.account_input",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.login.password_input",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.login.agreement_checkbox",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.login.submit_button",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.login.password_notice_confirm",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.shell.authenticated_marker",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.auth.login",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/login/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/login/instruction.py",
+      "source_path": "instructions/jushuitan/erp/auth/login",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/login",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:3de6fcb232b441c406889ccc6d938c7a7574b179c049ac07aab24042afad3bb9",
+      "content_hash": "sha256:383e8c2e826853551a64bb05a6fcef510f1ccee47609dd1e80188bc7ef41c41a",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.shell.authenticated_marker", "kind": "element"}
+        {
+          "id": "jushuitan.erp.shell.authenticated_marker",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.auth.require_session",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/require_session/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/require_session/instruction.py",
+      "source_path": "instructions/jushuitan/erp/auth/require_session",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/require_session",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:55a79efd025573fef05ecab544baea0da3d5f0ea92e9b89754f1ef3113259348",
+      "content_hash": "sha256:0d808f80482b98a7c39e107476bb8fdedf8fd0f044ad4218bc6aa219ad3de079",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.export_menu",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/export_menu.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/export_menu.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:cb168b09366ccbb4fc243022224a200dc65238e31805586e467123f9e8254530",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.export_stock_option",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/export_stock_option.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/export_stock_option.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:c9dd201ff14d860471dd08f3e274cdd35c8581ad6eb334d1f07c232303a69d1c",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.brand_selector",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/brand_selector.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/brand_selector.toml",
+      "version": "0.2.0"
+    },
+    {
+      "content_hash": "sha256:663c1e049b55563bd00dc4bd442a7786a77d472f192174fb3e72afd61a3f7f06",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.product_stock.export_menu", "kind": "element"},
-        {"id": "jushuitan.erp.product_stock.export_stock_option", "kind": "element"}
+        {
+          "id": "jushuitan.erp.product_stock.export_menu",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.product_stock.export_stock_option",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.product_stock.brand_selector",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.inventory.export_stock",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/export_stock/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/export_stock/instruction.py",
+      "source_path": "instructions/jushuitan/erp/inventory/export_stock",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/export_stock",
+      "version": "0.3.0"
+    },
+    {
+      "content_hash": "sha256:c6bdcc131c6688b45525499e1e5147cf3f759cb4dee9498c8542302d7e6a09f0",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.navigation.inventory_module",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/navigation/inventory_module.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/navigation/inventory_module.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:487605717489133a9ff2104b122e9fa6abef54247f24e3de7403433ae6620ac4",
+      "content_hash": "sha256:b6e8093febe53a3b40dfd75f9601cd8057a3085254d4f13daa4a596747b1f7a4",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.inventory.module_marker",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/inventory/module_marker.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/inventory/module_marker.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:0b342df7194055b2e1f9bb68d8ccc7b222e7bd1926cfe8072c1ceda16b5178cd",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.navigation.inventory_module", "kind": "element"},
-        {"id": "jushuitan.erp.inventory.module_marker", "kind": "element"}
+        {
+          "id": "jushuitan.erp.navigation.inventory_module",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.inventory.module_marker",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.inventory.open_module",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_module/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_module/instruction.py",
+      "source_path": "instructions/jushuitan/erp/inventory/open_module",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_module",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:dcd0e5b4fbd9cb4d25ab9f5269357fe452feea24cb1b1fbbdf1d6a62c3f1a9ac",
+      "content_hash": "sha256:6da090d53e3585caf3290ca163cdf473c2b016436eee39078a82889d54db8239",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.inventory.product_stock_entry",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/inventory/product_stock_entry.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/inventory/product_stock_entry.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:5149f38cb43a2f1be5c80013f58ab45369c63c9dae56d39ae9d00a4f5036c45b",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.page_marker",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/page_marker.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/page_marker.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:841d8cb9da3b3675dc8f41699c133cf165d14394bd57d8d7e1d0b546c4395f88",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.inventory.product_stock_entry", "kind": "element"},
-        {"id": "jushuitan.erp.product_stock.page_marker", "kind": "element"}
+        {
+          "id": "jushuitan.erp.inventory.product_stock_entry",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.product_stock.page_marker",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.inventory.open_product_stock",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_product_stock/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_product_stock/instruction.py",
+      "source_path": "instructions/jushuitan/erp/inventory/open_product_stock",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_product_stock",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:b594289bee7644298754a7125e9b8196660998c36f34b44c8d898a77bbee7cbe",
+      "content_hash": "sha256:19775f5ccea2d3250e36d15be2e9b9889446d27349a54ab752cc4a8b57753c11",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.search_button",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/search_button.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/search_button.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:9de5d1b048dc9aa90efc84ff17e7e829ac29216bc7a5ecf7faf6cb8dcfc9ab63",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.filter_applied_marker",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/filter_applied_marker.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/filter_applied_marker.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:64bc6f4bbd73c52cbd6c93c5f91e08f1cd7684c69a188df5f289f1fb4849c112",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.product_stock.search_button", "kind": "element"},
-        {"id": "jushuitan.erp.product_stock.filter_applied_marker", "kind": "element"}
+        {
+          "id": "jushuitan.erp.product_stock.search_button",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.product_stock.filter_applied_marker",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.product_stock.brand_selector",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.inventory.search",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/search/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/search/instruction.py",
+      "source_path": "instructions/jushuitan/erp/inventory/search",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/search",
+      "version": "0.3.0"
+    },
+    {
+      "content_hash": "sha256:6b4c3a70d655a67b30c33e3e8cabdd326db369a3d863d64f98a4aa4a2a4c975f",
+      "copied_at": "2026-09-02T08:27:31+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.product_stock.reset_button",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/product_stock/reset_button.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/product_stock/reset_button.toml",
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:f0d2dbe33a8d5af741b4aae932614892440d9650fb39b7a25546e8fc22d19c4e",
+      "content_hash": "sha256:70dca054c357340560cde407cdabec0aee442c9bf9194070485f78f0156be2cd",
+      "copied_at": "2026-09-02T08:27:31+00:00",
       "dependencies": [
-        {"id": "jushuitan.erp.product_stock.brand_selector", "kind": "element"},
-        {"id": "jushuitan.erp.product_stock.brand_selected_marker", "kind": "element"}
+        {
+          "id": "jushuitan.erp.product_stock.reset_button",
+          "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.product_stock.brand_selector",
+          "kind": "element"
+        }
       ],
       "id": "jushuitan.inventory.select_brand",
       "kind": "instruction",
-      "source_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/select_brand/instruction.py",
-      "source_type": "application_candidate",
-      "status": "candidate",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/select_brand/instruction.py",
-      "version": "0.1.0"
+      "source_path": "instructions/jushuitan/erp/inventory/select_brand",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/select_brand",
+      "version": "0.2.0"
     }
   ],
   "schema_version": 1

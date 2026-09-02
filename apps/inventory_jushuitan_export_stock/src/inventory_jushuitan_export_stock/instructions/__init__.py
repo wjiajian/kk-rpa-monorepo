@@ -1,4 +1,4 @@
-"""Application-local candidate instruction registry."""
+"""Application-local verified instruction snapshot registry."""
 
 from rpa_core.instructions import InstructionRegistry
 

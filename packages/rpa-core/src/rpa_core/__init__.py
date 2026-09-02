@@ -19,7 +19,7 @@ from .catalog import (
 from .drission_browser import DrissionBrowserActions
 from .instructions import Instruction, InstructionRegistry, InstructionSpec
 
-__version__ = "0.2.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "BrowserActions",

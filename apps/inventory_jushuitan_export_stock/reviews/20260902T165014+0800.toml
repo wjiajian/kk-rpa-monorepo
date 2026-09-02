@@ -1,0 +1,62 @@
+schema_version = 1
+review_id = "review-20260902T165014+0800"
+app_id = "jushuitan.inventory.export_stock"
+app_version = "0.1.0"
+requirement_revision = 107
+requirement_hash = "sha256:5d5392ab35e4263f015dd80e68aad443b6e5aba822b262a2babfc38c7b691ceb"
+reviewer = "RPA_DEVELOPER_001"
+reviewed_at = "2026-09-02T16:50:14+08:00"
+decision = "approved"
+authorization = "explicit_natural_language"
+status_after_review = "ready_for_push"
+business_acceptance = "not_declared"
+
+review_scope = [
+  "current application program and V2 contracts",
+  "16 verified public elements and 7 verified public instructions",
+  "rpa-core 0.6.0 browser and catalog changes",
+  "existing Preview evidence accepted for the current version",
+  "commit current requirement-related changes and push main to origin/main",
+]
+
+[preview]
+authorization_batch = "patch-c-verify-20260901"
+run_id = "patch-c-preview-20260902"
+result = "succeeded"
+requirement_hash_at_execution = "sha256:8a86352eedbbbdfbf03bbade09c4766800d34598cadc232d3c513ecf183ac2f2"
+accepted_for_current_requirement_hash = true
+download_size_bytes = 218167
+download_sha256 = "sha256:040d5ba474ca4eba126bd1ba308a255e77ae0831f73176516126e7dda4d205d0"
+resume_idempotency = "passed"
+external_business_writes_executed = false
+external_write_validation = "not_required_by_requirement"
+
+[tests]
+application = "20 passed"
+rpa_core = "138 passed"
+total = "158 passed"
+doctor = "passed"
+check = "passed"
+catalog_snapshot = "23/23 passed"
+memory_spec_differences = 0
+architecture_issues = 0
+sensitive_content_issues = 0
+uv_lock_check = "passed"
+git_diff_check = "passed"
+
+[reviewed_content]
+algorithm = "sha256"
+file_count = 103
+change_set_hash = "sha256:7faaca133817c8a165130faff91139b46eb25cb68cb98b57971352940a9387ab"
+review_record_excluded_from_change_set = true
+app_manifest = "sha256:14303ce636e72f476293256195bb7d506cf30d546c0d32bd5dfb9e5f83c1bcff"
+requirement_memory = "sha256:671d3ff5462cc46c92876f9867904e9a57d3cc950d29fb2f383f096913e95809"
+requirement_spec = "sha256:7eeb9123e26cacc7022e1eb5398a94f5fece128f2e77e3c04f9e70991180005c"
+catalog_lock = "sha256:321aaa764e1fd5e29142f658cd7eede87588d1cecec8245750283f187b0b87d9"
+generation_report = "sha256:d17507746ee3f958f8d982fa04b07d9735bfd25fba6fa92c3b12d1379e221d80"
+
+non_blocking_notes = [
+  "The accepted Preview ran before public-asset promotion; promotion changed source ownership, resolution metadata, and dependency injection without changing business actions or success conditions.",
+  "No new real browser run or external business write was performed during public-asset promotion.",
+  "Developer review approval does not declare business acceptance.",
+]

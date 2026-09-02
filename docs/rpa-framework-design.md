@@ -626,20 +626,22 @@ taobao → sycm → sales_overview → date_picker → START_DATE_INPUT
 ~~~python
 @dataclass(frozen=True, slots=True)
 class ElementSpec:
-    key: str
+    id: str
     name: str
-    locators: tuple[Locator, ...]
-    timeout_seconds: float | None = None
-    readiness: Readiness = Readiness.PRESENT
-    description: str = ""
+    page: str
+    component: str | None = None
+    locator: Locator | None = None
+    frame_locator: Locator | None = None
+    option_locator: Locator | None = None
 ~~~
 
 要求：
 
-- key 稳定唯一；
+- id 稳定唯一；
 - name 使用可理解中文；
-- 首个定位器为首选；
-- 备用定位器被使用时产生 drift 事件；
+- locator 为空时显式表示未解析元素，真实适配器必须失败关闭；
+- frame_locator 只保存已验证 iframe 定位描述，适配器在每次动作前重新解析 frame；
+- option_locator 只保存输入型自定义下拉的通用选项定位，不拼接运行时业务值；适配器在同一 frame 内按可见文本精确匹配；
 - 默认不缓存 DOM；
 - 定位器优先稳定属性、可访问性属性和组件内相对定位；
 - 绝对 XPath 和深层位置序号只能临时使用并写说明。
@@ -678,7 +680,7 @@ instructions/<platform>/<product>/<capability>/
 
 `snapshot_catalog()` 扫描顶层源库，解析 `element:<id>` / `instruction:<id>` 依赖闭包，将实际使用项复制到应用包内，并生成 `catalog.lock.json`。锁条目固定类型、ID、版本、状态、来源、目标、依赖、复制时间和内容哈希；复制时间不参与内容一致性判断。
 
-运行时只校验应用副本，拒绝文件缺失、哈希漂移、未知依赖、循环、路径逃逸、符号链接和硬链接。顶层源库之后的变化不会改变已有应用；升级必须先展示来源版本、哈希和文件 diff，再经开发人员确认和回归测试。
+运行时只校验应用副本，拒绝文件缺失、哈希漂移、未知依赖、循环、路径逃逸、符号链接和硬链接。Python 导入指令目录后生成的 `__pycache__`、`.pyc` 和 `.pyo` 不属于资产内容，不参与复制或哈希；其他额外文件仍会造成完整性失败。顶层源库之后的变化不会改变已有应用；升级必须先展示来源版本、哈希和文件 diff，再经开发人员确认和回归测试。
 
 ## 16. 核心程序模型
 
@@ -804,23 +806,21 @@ apps 目录不能直接导入 DrissionPage、底层飞书客户端、Excel 驱�
 
 ## 17. 浏览器包装和 DrissionPage
 
-当前项目使用 DrissionPage 4.x。公共 BrowserActions 至少封装：
+当前项目使用 DrissionPage 4.x。`rpa-core 0.6.0` 已落地的公共 BrowserActions 为：
 
 ~~~python
 class BrowserActions(Protocol):
     def open(self, url: str, *, wait: str = "document") -> None: ...
-    def find(self, element: ElementSpec, *, root=None) -> ElementRef: ...
-    def find_all(self, element: ElementSpec, *, root=None) -> list[ElementRef]: ...
-    def exists(self, element: ElementSpec, *, timeout=0, root=None) -> bool: ...
-    def click(self, element: ElementSpec, *, root=None) -> None: ...
-    def input(self, element: ElementSpec, value: SecretLike, *, root=None) -> None: ...
-    def text(self, element: ElementSpec, *, root=None) -> str: ...
-    def select(self, element: ElementSpec, value: str, *, root=None) -> None: ...
+    def exists(self, element: ElementSpec, *, timeout=0) -> bool: ...
+    def click(self, element: ElementSpec) -> None: ...
+    def input(self, element: ElementSpec, value: SecretLike) -> None: ...
+    def text(self, element: ElementSpec) -> str: ...
+    def select(self, element: ElementSpec, value: SecretLike) -> None: ...
     def download(self, element: ElementSpec, *, filename=None) -> DownloadRef: ...
     def screenshot(self, *, name=None, full_page=False) -> ArtifactRef: ...
-    def tab(self, *, opened_by=None, close=False) -> ContextManager: ...
-    def frame(self, element: ElementSpec) -> ContextManager: ...
 ~~~
+
+`ElementSpec.frame_locator` 提供受控 iframe 上下文：每次元素动作先从托管 Tab 重新获取 frame，再在 frame 内重新定位目标。`text()` 对普通元素返回可见文本，对 `input` 返回当前 `value`。`select()` 对原生 `select` 使用精确文本选择；输入型自定义下拉若配置 `option_locator`，则在同一 frame 内等待选项并按“显示、启用、可点击、可见文本完全一致”筛选，只有唯一命中才点击；未配置时保留 Enter 兼容行为。多选组件可同时配置 `selected_option_locator`、`popup_locator` 和 `dismiss_locator`：适配器按真实 checkbox 状态移除所有非目标项、补选唯一目标项，随后点击不受浮层遮挡的安全关闭目标，并确认浮层不可见后才返回。0 命中、多命中、额外选中项无法清除、浮层未关闭和未知标签都失败关闭，运行时值不写入日志或定位器。`find`、`find_all`、标签页和显式 frame 上下文管理器仍属于后续扩展。
 
 包装器自动完成：
 
@@ -1446,7 +1446,7 @@ D:\RPAData\
 
 ## 34. 实施顺序
 
-> 2026-09-01 状态：`rpa-core 0.2.0` 已具备 V1 运行契约、V2 指令/快照契约、BrowserActions、Fake Browser、DrissionPage 动作适配器和 BrowserManager 等公共包能力；`apps/` 当前为空，因此尚无独立应用、应用级 Preview 或业务验收。Codex 内置浏览器只观察过公开登录页，未输入凭据或登录；这不属于 DrissionPage 集成测试，也不能把公开控件直接晋升为已验证资产。
+> 2026-09-02 状态：`rpa-core 0.6.0` 已具备 V1 运行契约、V2 指令/快照契约、含 iframe、只读文本、精确集合选择和统一下载预算的 BrowserActions、Fake Browser、DrissionPage 动作适配器和 BrowserManager。首个独立应用已完成授权 Preview，并将实际流程验证的 16 个元素和 7 条指令显式晋升顶层公共库；业务验收状态仍以应用生成报告和开发人员审核记录为准。
 
 ### 阶段 1：需求协议和应用骨架
 
@@ -1457,7 +1457,7 @@ D:\RPAData\
 - 实现脱敏和误提交扫描；
 - 保留用假需求生成完整示例应用的验收任务。
 
-当前：公共契约和扫描器已实现；由于仓库没有应用，尚未在当前 HEAD 证明“从需求生成独立应用”的完整验收。
+当前：公共契约和扫描器已实现；首个独立应用已完成真实 Preview、资产晋升和应用快照重建，当前处于 `ready_for_review`，尚未形成开发人员审核通过记录。
 
 ### 阶段 2：核心运行闭环
 
@@ -1467,19 +1467,20 @@ D:\RPAData\
 - 实现 preview/live 授权上下文；
 - 实现 JSON 日志和生成报告。
 
-当前：公共运行时已有相应实现和包级回归；当前仓库没有可执行应用，不能声称应用级 Preview/Resume/Live 拒绝已经在本轮验收。
+当前：公共运行时已有相应实现和包级回归；应用级离线门禁已验证，真实 Preview/Resume/Live 尚未完成。
 
 ### 阶段 3：浏览器和元素
 
 - 迁移现有 DrissionPage 原型；
 - 实现 BrowserActions 最小契约与 Fake Browser（已完成）；
 - 实现 DrissionPage 生产动作适配器（已完成并接入 BrowserManager）；
+- 实现受控 iframe 定位、只读文本和输入型自定义下拉精确选项定位（已完成实现与离线测试）；
 - 实现 Profile、端口和锁（公共 BrowserManager 已完成，等待真实 Chrome 集成验证）；
 - 实现 InstructionRegistry、顶层元素/指令发现、依赖闭包、应用快照锁和 V2 候选门禁（已完成包级实现）；
 - 实现候选元素/指令到顶层源库的显式升级流程；
 - 保留本地浏览器 KEEP_OPEN。
 
-当前验收边界：无副作用测试覆盖公共契约、快照完整性和架构扫描；真实 Chromium、Profile 复用、登录、候选验证、下载和双账号并发仍未执行。
+当前验收边界：无副作用测试覆盖公共契约、快照完整性和架构扫描；一个应用已完成 Profile 登录复用、S001–S005 Preview 下载和幂等恢复。双账号并发、开发人员审核及提交推送仍未完成，也不由单次 Preview 自动推定通过。
 
 ### 阶段 4：Excel、飞书和告警
 

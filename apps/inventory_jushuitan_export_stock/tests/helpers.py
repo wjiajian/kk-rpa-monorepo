@@ -70,6 +70,7 @@ def make_context(run_dir: Path, browser: FakeBrowserActions) -> ExecutionContext
         run_dir=run_dir,
         services={
             "browser": browser,
+            "elements": element_catalog(),
             "instructions": build_instruction_registry(),
         },
         metadata={"app_dir": str(run_dir.parent.parent)},

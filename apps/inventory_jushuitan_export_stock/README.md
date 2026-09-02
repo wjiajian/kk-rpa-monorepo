@@ -1,8 +1,8 @@
 # 聚水潭库存导出 RPA
 
-这是从飞书需求 revision 107 生成的独立应用草稿。应用读取本地账号配置，复用持久化浏览器 Profile，进入商品库存，按本地品牌值筛选并导出库存文件，最终返回下载路径、SHA-256 和字节数。
+这是从飞书需求 revision 107 生成的独立应用。应用读取本地账号配置，复用持久化浏览器 Profile，进入商品库存，按本地品牌值精确筛选并导出库存文件，最终返回下载路径、SHA-256 和字节数。
 
-当前状态是 `pending_confirmation`。应用包含 16 个候选元素和 7 条候选指令，Fake Browser 可以验证完整流程，但尚未获得真实登录后页面的候选验证证据。因此正常 `run` 和 `resume` 会在创建运行目录和启动浏览器之前拒绝执行。
+当前状态是 `ready_for_review`。实际流程验证得到的 16 个元素和 7 条指令已进入顶层公共库，应用内保存同一依赖闭包的不可变快照，并由 `catalog.lock.json` 固定来源、版本和内容哈希。普通 `check`、`run` 和 `resume` 的候选门禁已经关闭；真实浏览器命令仍须由操作者在明确授权范围内执行。
 
 ## 本地配置
 
@@ -27,7 +27,8 @@ uv run rpa-app doctor
 uv run rpa-app check
 uv run rpa-app test
 uv run rpa-app login --account STORE_001
-uv run rpa-app verify-candidates --account STORE_001
+uv run rpa-app verify-candidates --account STORE_001 --batch-id <authorization-batch-id>
+uv run rpa-app verify-candidates --account STORE_001 --batch-id <authorization-batch-id> --resume-run-id <run_id>
 uv run rpa-app run --mode preview --account STORE_001
 uv run rpa-app resume --run-id <run_id> --mode preview --account STORE_001
 ```
@@ -36,9 +37,10 @@ uv run rpa-app resume --run-id <run_id> --mode preview --account STORE_001
 
 - `doctor`：只读检查，不启动浏览器；
 - `test`：运行无外部副作用测试；
-- `check`：精确列出所有 `UE-*`、`UI-*`，并返回非零状态；
-- `login`、`verify-candidates`：要求补丁 C 的单独真实浏览器授权；
-- `run`、`resume`：候选项关闭前拒绝，且不会创建 `runs/`。
+- `check`：校验 Memory/Spec、需求哈希、公共资产快照、架构边界和敏感信息，当前应返回成功；
+- `login`、`verify-candidates`：必须携带单独的真实浏览器授权；
+- `verify-candidates`：保留为 V2 标准命令，用于将来出现新候选资产时逐条验证；
+- `run`、`resume`：当前已可调度；本次公共库整理没有再次启动真实浏览器。
 
 ## 业务流程
 
@@ -46,9 +48,10 @@ uv run rpa-app resume --run-id <run_id> --mode preview --account STORE_001
 Prepare 验证登录态
 → S001 打开库存模块
 → S002 进入商品库存
-→ S003 选择本地配置品牌
-→ S004 搜索并验证筛选
+→ S003 精确归一化为仅选中本地配置品牌
+→ 安全点击筛选区空白输入框并验证品牌下拉层已收起
+→ S004 点击搜索并验证筛选
 → S005 导出并验证下载文件
 ```
 
-应用不写 NAS、飞书多维表格、数据库或正式 Excel。真实 Preview 只验证读取、筛选和下载，不表示外部业务写入或业务验收通过。
+如果品牌下拉层未收起、选中集合不是唯一目标、搜索按钮不可点击、结果表标识缺失或下载未完成，流程会失败关闭，不会继续导出。未观察到的人机验证场景不沉淀虚构定位器：登录未达到认证标识时，程序保存证据并转人工处理。应用不写 NAS、飞书多维表格、数据库或正式 Excel；真实 Preview 只验证读取、筛选和下载，不表示外部业务写入或业务验收通过。

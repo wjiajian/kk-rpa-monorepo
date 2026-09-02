@@ -26,8 +26,12 @@ def test_fake_browser_runs_prepare_and_s001_through_s005_in_order(tmp_path: Path
     assert ordered_actions == [
         ("click", "jushuitan.erp.navigation.inventory_module"),
         ("click", "jushuitan.erp.inventory.product_stock_entry"),
+        ("click", "jushuitan.erp.product_stock.reset_button"),
+        ("select", "jushuitan.erp.product_stock.brand_selector"),
         ("select", "jushuitan.erp.product_stock.brand_selector"),
         ("click", "jushuitan.erp.product_stock.search_button"),
+        ("select", "jushuitan.erp.product_stock.brand_selector"),
+        ("select", "jushuitan.erp.product_stock.brand_selector"),
         ("click", "jushuitan.erp.product_stock.export_menu"),
         ("download", "jushuitan.erp.product_stock.export_stock_option"),
     ]

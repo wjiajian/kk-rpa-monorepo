@@ -485,7 +485,7 @@ def hash_catalog_path(path: str | Path, root: str | Path) -> str:
         digest.update(_read_safe_file(source, boundary))
     else:
         digest.update(b"directory\0")
-        for candidate in sorted(source.rglob("*")):
+        for candidate in _catalog_directory_entries(source):
             _assert_safe_path(
                 candidate,
                 boundary,
@@ -578,7 +578,7 @@ def _copy_catalog_path(source: Path, target: Path, root: Path) -> None:
         shutil.copy2(source, target, follow_symlinks=False)
         return
     target.mkdir(parents=True, exist_ok=False)
-    for candidate in sorted(source.rglob("*")):
+    for candidate in _catalog_directory_entries(source):
         relative = candidate.relative_to(source)
         destination = target / relative
         _assert_safe_path(
@@ -591,6 +591,27 @@ def _copy_catalog_path(source: Path, target: Path, root: Path) -> None:
         else:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(candidate, destination, follow_symlinks=False)
+
+
+def _catalog_directory_entries(source: Path) -> tuple[Path, ...]:
+    """Return stable source entries while excluding Python bytecode caches.
+
+    Repository instruction snapshots are imported from their application-local
+    directories. Python may then create ``__pycache__`` files beside the locked
+    sources; those generated files are not catalog content and must not make a
+    previously valid snapshot fail integrity checks. All other unexpected files
+    remain part of the hash and therefore still fail closed.
+    """
+
+    entries: list[Path] = []
+    for candidate in sorted(source.rglob("*")):
+        relative = candidate.relative_to(source)
+        if "__pycache__" in relative.parts:
+            continue
+        if candidate.is_file() and candidate.suffix in {".pyc", ".pyo"}:
+            continue
+        entries.append(candidate)
+    return tuple(entries)
 
 
 def _assert_safe_path(path: Path, root: Path, *, expected: str) -> None:

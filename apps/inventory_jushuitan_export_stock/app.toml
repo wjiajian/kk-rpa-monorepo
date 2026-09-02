@@ -6,11 +6,11 @@ version = "0.1.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
 python = "3.12"
 requirement_revision = 107
-requirement_hash = "sha256:8a86352eedbbbdfbf03bbade09c4766800d34598cadc232d3c513ecf183ac2f2"
+requirement_hash = "sha256:5d5392ab35e4263f015dd80e68aad443b6e5aba822b262a2babfc38c7b691ceb"
 configuration_schema = "config/config.schema.json"
 catalog_lock = "catalog.lock.json"
-status = "pending_confirmation"
-latest_review = ""
+status = "ready_for_push"
+latest_review = "reviews/20260902T165014+0800.toml"
 
 [commands]
 doctor = "rpa-app doctor"

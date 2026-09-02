@@ -65,6 +65,15 @@ def _retry_policy() -> RetryPolicy:
     )
 
 
+def _download_retry_policy() -> RetryPolicy:
+    return RetryPolicy(
+        max_attempts=1,
+        delay_seconds=0.0,
+        backoff_multiplier=1.0,
+        retryable_errors=[],
+    )
+
+
 def _store(context: ExecutionContext) -> StoreConfig:
     value = context.metadata.get("store_config")
     if not isinstance(value, StoreConfig):
@@ -78,6 +87,7 @@ def build_steps() -> tuple[InstructionStep, ...]:
         "resume_policy": ResumePolicy.VERIFY_THEN_RUN,
         "side_effect": SideEffect.READ,
     }
+    download_common = {**common, "retry_policy": _download_retry_policy()}
     return (
         InstructionStep(
             StepSpec(
@@ -122,29 +132,37 @@ def build_steps() -> tuple[InstructionStep, ...]:
                 step_id="S004",
                 name="搜索并验证筛选",
                 timeout_seconds=60.0,
+                declared_inputs=("brand_value",),
                 declared_outputs=("filter_applied",),
-                success_conditions=("filtered result marker is visible",),
+                success_conditions=(
+                    "filtered result marker is visible",
+                    "configured brand remains selected after search",
+                ),
                 recovery=("verify filtered results before searching again",),
                 **common,
             ),
             "jushuitan.inventory.search",
+            lambda context: {"brand_value": _store(context).brand_value},
         ),
         InstructionStep(
             StepSpec(
                 step_id="S005",
                 name="导出并验证库存文件",
-                timeout_seconds=180.0,
-                declared_inputs=("filename",),
+                timeout_seconds=360.0,
+                declared_inputs=("filename", "brand_value"),
                 declared_outputs=("download_path", "sha256", "size_bytes"),
                 success_conditions=(
                     "download is inside the run directory",
                     "download is non-empty and hash is reproducible",
                 ),
                 recovery=("verify an existing completed download before downloading again",),
-                **common,
+                **download_common,
             ),
             "jushuitan.inventory.export_stock",
-            lambda context: {"filename": str(context.metadata["export_filename"])},
+            lambda context: {
+                "filename": str(context.metadata["export_filename"]),
+                "brand_value": _store(context).brand_value,
+            },
         ),
     )
 

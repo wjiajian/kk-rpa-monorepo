@@ -81,6 +81,11 @@ class ElementSpec:
     page: str
     component: str | None = None
     locator: Locator | None = None
+    frame_locator: Locator | None = None
+    option_locator: Locator | None = None
+    selected_option_locator: Locator | None = None
+    popup_locator: Locator | None = None
+    dismiss_locator: Locator | None = None
 
     def __post_init__(self) -> None:
         if not _ELEMENT_ID_PATTERN.fullmatch(self.id):
@@ -89,6 +94,16 @@ class ElementSpec:
             raise ValueError("element name and page must not be empty")
         if self.component is not None and not self.component.strip():
             raise ValueError("element component must not be empty when provided")
+        if self.selected_option_locator is not None and self.option_locator is None:
+            raise ValueError(
+                "selected_option_locator requires option_locator"
+            )
+        if self.selected_option_locator is not None and (
+            self.popup_locator is None or self.dismiss_locator is None
+        ):
+            raise ValueError(
+                "selected_option_locator requires popup_locator and dismiss_locator"
+            )
 
     @property
     def is_resolved(self) -> bool:
@@ -189,6 +204,8 @@ class BrowserActions(Protocol):
 
     def input(self, element: ElementSpec, value: SecretLike) -> None: ...
 
+    def text(self, element: ElementSpec) -> str: ...
+
     def select(self, element: ElementSpec, value: SecretLike) -> None: ...
 
     def download(
@@ -236,9 +253,11 @@ class FakeBrowserActions:
     run_dir: Path | str
     visible_element_ids: Iterable[str] = field(default_factory=tuple)
     downloads: Mapping[str, FakeDownload] = field(default_factory=dict)
+    text_values: Mapping[str, str] = field(default_factory=dict)
     actions: list[BrowserActionRecord] = field(default_factory=list, init=False)
     current_url: str | None = field(default=None, init=False)
     _visible: frozenset[str] = field(init=False, repr=False)
+    _text_values: dict[str, str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.run_dir = Path(self.run_dir)
@@ -250,6 +269,16 @@ class FakeBrowserActions:
         )
         if invalid:
             raise ValueError(f"invalid fake element IDs: {invalid!r}")
+        invalid_text_ids = sorted(
+            element_id
+            for element_id in self.text_values
+            if not _ELEMENT_ID_PATTERN.fullmatch(element_id)
+        )
+        if invalid_text_ids:
+            raise ValueError(f"invalid fake text element IDs: {invalid_text_ids!r}")
+        if any(not isinstance(value, str) for value in self.text_values.values()):
+            raise ValueError("fake text values must be strings")
+        self._text_values = dict(self.text_values)
 
     def open(self, url: str, *, wait: str = "document") -> None:
         if not url.strip():
@@ -276,6 +305,17 @@ class FakeBrowserActions:
         self._require_visible(element)
         _require_runtime_value(value)
         self.actions.append(BrowserActionRecord("input", element.id, "<redacted>"))
+
+    def text(self, element: ElementSpec) -> str:
+        self._require_visible(element)
+        try:
+            value = self._text_values[element.id]
+        except KeyError as error:
+            raise ElementActionError(
+                f"no fake text configured for element {element.id!r}"
+            ) from error
+        self.actions.append(BrowserActionRecord("text", element.id, "<redacted>"))
+        return value
 
     def select(self, element: ElementSpec, value: SecretLike) -> None:
         self._require_visible(element)

@@ -13,6 +13,9 @@ import re
 from time import monotonic, sleep
 from typing import Any
 
+from DrissionPage.common import Keys
+from DrissionPage.errors import ContextLostError, ElementLostError, GetDocumentError
+
 from .browser import (
     ArtifactRef,
     DownloadError,
@@ -27,6 +30,16 @@ from .browser import (
 
 
 _SAFE_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+_TRANSIENT_LOOKUP_ERRORS = (ContextLostError, ElementLostError, GetDocumentError)
+
+
+class _TransientScopeUnavailable(RuntimeError):
+    """An iframe is temporarily absent while its context is refreshing."""
+
+
+_RETRYABLE_LOOKUP_ERRORS = _TRANSIENT_LOOKUP_ERRORS + (
+    _TransientScopeUnavailable,
+)
 
 
 @dataclass(slots=True)
@@ -74,13 +87,7 @@ class DrissionBrowserActions:
     def exists(self, element: ElementSpec, *, timeout: float = 0.0) -> bool:
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
-        locator = element.require_locator().value
-        try:
-            return bool(self.tab.ele(locator, timeout=timeout))
-        except Exception as error:
-            raise ElementLookupError(
-                f"element lookup failed: {element.id}"
-            ) from error
+        return self._locate(element, timeout=timeout, required=False) is not None
 
     def click(self, element: ElementSpec) -> None:
         target = self._find(element)
@@ -101,27 +108,56 @@ class DrissionBrowserActions:
         target = self._find(element)
         revealed = _reveal(value)
         try:
-            if not target.wait.clickable(
-                wait_moved=False,
-                timeout=self.action_timeout,
-                raise_err=False,
-            ):
-                raise ElementActionError(f"element is not ready for input: {element.id}")
-            # DrissionPage 4.1.1.4 uses JS clear on macOS internally. Calling
-            # it explicitly keeps behavior deterministic across platforms.
-            target.clear(by_js=True)
-            target.focus()
-            target.input(revealed, clear=False, by_js=False)
+            self._input_value(target, revealed, element)
         except ElementActionError:
             raise
         except Exception as error:
             raise ElementActionError(f"element input failed: {element.id}") from error
 
+    def text(self, element: ElementSpec) -> str:
+        target = self._find(element)
+        try:
+            value = target.attr("value") if str(target.tag).lower() == "input" else target.text
+            if value is None:
+                return ""
+            if not isinstance(value, str):
+                raise ElementActionError(f"element text is not a string: {element.id}")
+            return value
+        except ElementActionError:
+            raise
+        except Exception as error:
+            raise ElementActionError(f"element text read failed: {element.id}") from error
+
     def select(self, element: ElementSpec, value: SecretLike) -> None:
         target = self._find(element)
         revealed = _reveal(value)
         try:
-            target.select.by_text(revealed, timeout=self.action_timeout)
+            tag = str(target.tag).lower()
+            if tag == "select":
+                target.select.by_text(revealed, timeout=self.action_timeout)
+            elif tag == "input":
+                if not target.wait.clickable(
+                    wait_moved=True,
+                    timeout=self.action_timeout,
+                    raise_err=False,
+                ):
+                    raise ElementActionError(
+                        f"custom select trigger is not clickable: {element.id}"
+                    )
+                target.click(by_js=False)
+                self._input_value(target, revealed, element)
+                if element.option_locator is None:
+                    target.input(Keys.ENTER, clear=False, by_js=False)
+                elif element.selected_option_locator is not None:
+                    self._ensure_exact_custom_selection(element, revealed)
+                else:
+                    self._click_exact_option(element, revealed)
+            else:
+                raise ElementActionError(
+                    f"unsupported select element tag for {element.id}: {tag!r}"
+                )
+        except ElementActionError:
+            raise
         except Exception as error:
             raise ElementActionError(f"element select failed: {element.id}") from error
 
@@ -135,16 +171,20 @@ class DrissionBrowserActions:
             _validate_filename(filename)
         target = self._find(element)
         download_dir = self._artifact_directory("downloads")
+        started = monotonic()
         try:
             mission = target.click.to_download(
                 str(download_dir),
                 rename=filename,
                 by_js=False,
-                timeout=self.action_timeout,
+                timeout=self.download_timeout,
             )
             if not mission:
                 raise DownloadError("download did not start")
-            deadline = monotonic() + self.download_timeout
+            # One bounded budget covers both server-side export preparation and
+            # transfer completion. A late mission does not receive a second
+            # full timeout after it appears.
+            deadline = started + self.download_timeout
             while not mission.is_done and monotonic() < deadline:
                 sleep(min(0.05, max(0.0, deadline - monotonic())))
             if not mission.is_done:
@@ -186,16 +226,355 @@ class DrissionBrowserActions:
             raise ElementActionError("browser screenshot failed") from error
 
     def _find(self, element: ElementSpec) -> Any:
-        locator = element.require_locator().value
-        try:
-            target = self.tab.ele(locator, timeout=self.action_timeout)
-        except Exception as error:
-            raise ElementLookupError(
-                f"element lookup failed: {element.id}"
-            ) from error
-        if not target:
-            raise ElementLookupError(f"element was not found: {element.id}")
+        target = self._locate(
+            element,
+            timeout=self.action_timeout,
+            required=True,
+        )
+        assert target is not None
         return target
+
+    def _locate(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float,
+        required: bool,
+    ) -> Any | None:
+        locator = element.require_locator().value
+        deadline = monotonic() + timeout
+        first_attempt = True
+        while first_attempt or monotonic() < deadline:
+            lookup_timeout = (
+                timeout
+                if first_attempt
+                else min(0.5, max(0.0, deadline - monotonic()))
+            )
+            first_attempt = False
+            try:
+                scope = self._scope(element, timeout=lookup_timeout)
+                target = scope.ele(locator, timeout=lookup_timeout)
+                if target:
+                    return target
+                # DrissionPage already waited for the supplied timeout. A
+                # normal miss is final; only context-refresh errors are retried.
+                break
+            except _RETRYABLE_LOOKUP_ERRORS:
+                pass
+            except ElementLookupError:
+                raise
+            except Exception as error:
+                raise ElementLookupError(
+                    f"element lookup failed: {element.id}"
+                ) from error
+            if timeout == 0 or monotonic() >= deadline:
+                break
+            sleep(min(0.05, max(0.0, deadline - monotonic())))
+        if required:
+            raise ElementLookupError(f"element was not found: {element.id}")
+        return None
+
+    def _scope(self, element: ElementSpec, *, timeout: float) -> Any:
+        if element.frame_locator is None:
+            return self.tab
+        try:
+            frame = self.tab.get_frame(element.frame_locator.value, timeout=timeout)
+        except _TRANSIENT_LOOKUP_ERRORS:
+            raise
+        except Exception as error:
+            raise ElementLookupError(f"frame lookup failed: {element.id}") from error
+        if not frame:
+            raise _TransientScopeUnavailable(element.id)
+        return frame
+
+    def _input_value(self, target: Any, value: str, element: ElementSpec) -> None:
+        if not target.wait.clickable(
+            wait_moved=False,
+            timeout=self.action_timeout,
+            raise_err=False,
+        ):
+            raise ElementActionError(f"element is not ready for input: {element.id}")
+        # DrissionPage 4.1.1.4 uses JS clear on macOS internally. Calling it
+        # explicitly keeps behavior deterministic across platforms.
+        target.clear(by_js=True)
+        target.focus()
+        target.input(value, clear=False, by_js=False)
+
+    def _click_exact_option(self, element: ElementSpec, value: str) -> None:
+        option_locator = element.option_locator
+        if option_locator is None:
+            raise ElementActionError(
+                f"custom select option locator is missing: {element.id}"
+            )
+        deadline = monotonic() + self.action_timeout
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise ElementActionError(
+                    f"no unique exact custom select option became ready: {element.id}"
+                )
+            lookup_timeout = min(0.2, max(0.01, remaining))
+            try:
+                scope = self._scope(element, timeout=lookup_timeout)
+                candidates = scope.eles(option_locator.value, timeout=lookup_timeout)
+            except _RETRYABLE_LOOKUP_ERRORS:
+                continue
+            except ElementLookupError:
+                raise
+            except Exception as error:
+                raise ElementActionError(
+                    f"custom select option lookup failed: {element.id}"
+                ) from error
+
+            matches = []
+            for candidate in candidates:
+                try:
+                    states = candidate.states
+                    if not (
+                        states.is_displayed
+                        and states.is_enabled
+                        and states.is_clickable
+                    ):
+                        continue
+                    candidate_text = candidate.text
+                    if isinstance(candidate_text, str) and candidate_text.strip() == value:
+                        matches.append(candidate)
+                except Exception:
+                    # Dynamic dropdown options may disappear while being inspected.
+                    # Re-querying the locator is safer than retaining a stale object.
+                    continue
+
+            if len(matches) > 1:
+                raise ElementActionError(
+                    f"multiple exact custom select options are ready: {element.id}"
+                )
+            if len(matches) == 1:
+                option = matches[0]
+                if not option.wait.clickable(
+                    wait_moved=True,
+                    timeout=min(remaining, self.action_timeout),
+                    raise_err=False,
+                ):
+                    raise ElementActionError(
+                        f"exact custom select option is no longer clickable: {element.id}"
+                    )
+                option.click(by_js=False)
+                return
+            sleep(min(0.05, remaining))
+
+    def _ensure_exact_custom_selection(
+        self,
+        element: ElementSpec,
+        value: str,
+    ) -> None:
+        """Make one custom multi-select contain exactly ``value``.
+
+        The option text is runtime data and is deliberately excluded from all
+        errors. Dynamic menus are re-queried after every click so stale option
+        objects never survive a selection-state transition.
+        """
+
+        if element.selected_option_locator is None:
+            raise ElementActionError(
+                f"custom select selected-option locator is missing: {element.id}"
+            )
+        deadline = monotonic() + self.action_timeout
+        while monotonic() < deadline:
+            selected = self._selected_custom_option_values(
+                element,
+                timeout=min(0.5, max(0.01, deadline - monotonic())),
+            )
+            target_count = sum(candidate == value for candidate in selected)
+            if target_count > 1 or len(selected) != len(set(selected)):
+                raise ElementActionError(
+                    f"custom select returned duplicate selected options: {element.id}"
+                )
+            extras = [candidate for candidate in selected if candidate != value]
+            if not extras and target_count == 1:
+                self._dismiss_custom_select(element)
+                return
+
+            previous = selected
+            if extras:
+                self._click_exact_option(element, extras[0])
+            else:
+                self._click_exact_option(element, value)
+            self._wait_for_custom_selection_change(
+                element,
+                previous=previous,
+                deadline=deadline,
+            )
+        raise ElementActionError(
+            f"custom select did not reach one exact selection: {element.id}"
+        )
+
+    def _selected_custom_option_values(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float,
+    ) -> tuple[str, ...]:
+        option_locator = element.option_locator
+        selected_locator = element.selected_option_locator
+        if option_locator is None or selected_locator is None:
+            raise ElementActionError(
+                f"custom select selection locators are incomplete: {element.id}"
+            )
+        deadline = monotonic() + timeout
+        first_attempt = True
+        while first_attempt or monotonic() < deadline:
+            first_attempt = False
+            remaining = max(0.0, deadline - monotonic())
+            lookup_timeout = min(0.2, max(0.01, remaining))
+            try:
+                scope = self._scope(element, timeout=lookup_timeout)
+                options = scope.eles(option_locator.value, timeout=lookup_timeout)
+                if not options:
+                    sleep(min(0.05, remaining))
+                    continue
+                selected_options = scope.eles(
+                    selected_locator.value,
+                    timeout=lookup_timeout,
+                )
+                values: list[str] = []
+                for selected in selected_options:
+                    text = selected.text
+                    if not isinstance(text, str) or not text.strip():
+                        raise ElementActionError(
+                            f"custom select returned an invalid selected option: {element.id}"
+                        )
+                    values.append(text.strip())
+                return tuple(values)
+            except _RETRYABLE_LOOKUP_ERRORS:
+                pass
+            except ElementActionError:
+                raise
+            except ElementLookupError:
+                raise
+            except Exception as error:
+                raise ElementActionError(
+                    f"custom select selected-option lookup failed: {element.id}"
+                ) from error
+            if monotonic() < deadline:
+                sleep(min(0.05, max(0.0, deadline - monotonic())))
+        raise ElementActionError(
+            f"custom select options did not become observable: {element.id}"
+        )
+
+    def _wait_for_custom_selection_change(
+        self,
+        element: ElementSpec,
+        *,
+        previous: tuple[str, ...],
+        deadline: float,
+    ) -> None:
+        while monotonic() < deadline:
+            current = self._selected_custom_option_values(
+                element,
+                timeout=min(0.2, max(0.01, deadline - monotonic())),
+            )
+            if current != previous:
+                return
+            sleep(min(0.05, max(0.0, deadline - monotonic())))
+        raise ElementActionError(
+            f"custom select state did not change after option click: {element.id}"
+        )
+
+    def _dismiss_custom_select(self, element: ElementSpec) -> None:
+        popup_locator = element.popup_locator
+        dismiss_locator = element.dismiss_locator
+        if popup_locator is None or dismiss_locator is None:
+            raise ElementActionError(
+                f"custom select dismiss locators are incomplete: {element.id}"
+            )
+        deadline = monotonic() + self.action_timeout
+        dismiss_target = None
+        while monotonic() < deadline:
+            remaining = deadline - monotonic()
+            lookup_timeout = min(0.2, max(0.01, remaining))
+            try:
+                scope = self._scope(element, timeout=lookup_timeout)
+                if not self._visible_popup_exists(
+                    scope,
+                    popup_locator.value,
+                    timeout=lookup_timeout,
+                ):
+                    return
+                dismiss_target = scope.ele(
+                    dismiss_locator.value,
+                    timeout=lookup_timeout,
+                )
+                if dismiss_target:
+                    break
+            except _RETRYABLE_LOOKUP_ERRORS:
+                pass
+            except ElementLookupError:
+                raise
+            except Exception as error:
+                raise ElementActionError(
+                    f"custom select dismiss target lookup failed: {element.id}"
+                ) from error
+            sleep(min(0.05, max(0.0, deadline - monotonic())))
+        if dismiss_target is None:
+            raise ElementActionError(
+                f"custom select dismiss target was not found: {element.id}"
+            )
+        try:
+            if not dismiss_target.wait.clickable(
+                wait_moved=True,
+                timeout=max(0.01, deadline - monotonic()),
+                raise_err=False,
+            ):
+                raise ElementActionError(
+                    f"custom select dismiss target is not clickable: {element.id}"
+                )
+            dismiss_target.click(by_js=False)
+        except ElementActionError:
+            raise
+        except Exception as error:
+            raise ElementActionError(
+                f"custom select could not be dismissed safely: {element.id}"
+            ) from error
+
+        # Never issue a second click after the dismiss action. Only re-query
+        # the popup until it is observably hidden or the bounded wait expires.
+        while monotonic() < deadline:
+            remaining = deadline - monotonic()
+            lookup_timeout = min(0.2, max(0.01, remaining))
+            try:
+                scope = self._scope(element, timeout=lookup_timeout)
+                if not self._visible_popup_exists(
+                    scope,
+                    popup_locator.value,
+                    timeout=lookup_timeout,
+                ):
+                    return
+            except _RETRYABLE_LOOKUP_ERRORS:
+                pass
+            except ElementLookupError:
+                raise
+            except Exception as error:
+                raise ElementActionError(
+                    f"custom select popup verification failed: {element.id}"
+                ) from error
+            sleep(min(0.05, max(0.0, deadline - monotonic())))
+        raise ElementActionError(
+            f"custom select popup remained visible after dismissal: {element.id}"
+        )
+
+    @staticmethod
+    def _visible_popup_exists(scope: Any, locator: str, *, timeout: float) -> bool:
+        for popup in scope.eles(locator, timeout=timeout):
+            try:
+                if popup.states.is_displayed:
+                    return True
+            except _TRANSIENT_LOOKUP_ERRORS:
+                raise
+            except Exception:
+                # A disappearing popup is re-queried by the caller rather
+                # than treated as proof of visibility.
+                continue
+        return False
 
     def _artifact_directory(self, name: str) -> Path:
         if self.run_dir.is_symlink():

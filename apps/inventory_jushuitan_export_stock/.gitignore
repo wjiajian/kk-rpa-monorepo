@@ -2,7 +2,6 @@
 .env
 config/stores.local.toml
 requirement/assets/*
-!requirement/assets/.gitkeep
 profiles/
 runs/
 runtime/

@@ -8,20 +8,21 @@
 - 应用 ID：`jushuitan.inventory.export_stock`
 - 应用目录：`apps/inventory_jushuitan_export_stock/`
 - 程序入口：`inventory_jushuitan_export_stock.cli:main`
-- 文档执行频率：每日 09:00；当前应用只提供标准 CLI，调度器接入不属于 Patch B
+- 文档执行频率：每日 09:00；当前应用提供标准 CLI，调度器接入不属于本应用。
 
-原文出现的账号、密码、手机号、人员和真实品牌均未写入本文件或任何可提交文件。运行时账号统一使用 `STORE_001`，账号提供角色使用 `ACCOUNT_PROVIDER_001`，品牌由忽略的 `config/stores.local.toml` 注入并在可提交示例中表示为 `BRAND_001`。
+真实账号、密码、人员、店铺和品牌只存在于 Git 忽略的本地配置中。可提交内容统一使用 `STORE_001`、`ACCOUNT_PROVIDER_001` 和 `BRAND_001` 等别名。
 
 ## 完整业务流程
 
-1. `Prepare`：使用指定账号别名的独立持久化 Profile，确认已登录；登录操作只能通过单独的 `rpa-app login` 命令执行。
-2. `S001`：打开库存模块，并观察库存模块已打开标识。
-3. `S002`：进入商品库存页面，并观察商品库存页标识。
-4. `S003`：从本地店铺配置读取品牌值并选择，确认选择状态可观察。
-5. `S004`：点击搜索，等待并确认品牌筛选结果完成。
-6. `S005`：展开导出菜单，触发库存导出；文件必须保存到本次运行目录，且回传路径、SHA-256 与字节数。
+1. `Prepare`：使用指定账号的独立持久化 Profile 确认登录态；交互登录只能通过单独授权的 `rpa-app login` 执行。
+2. `S001`：直接点击左侧库存入口，并验证库存模块当前状态。
+3. `S002`：进入商品库存，并验证活动页签和业务 iframe。
+4. `S003`：重置历史筛选，从本地配置读取品牌值，把真实 checkbox 集合归一化为仅目标品牌选中；点击商品编码输入框安全收起品牌下拉，并确认弹层不可见。
+5. `S004`：在品牌下拉已收起的前提下点击搜索，验证结果表存在；搜索后再次确认仅目标品牌选中且弹层关闭。
+6. `S005`：导出前再次执行同一品牌前置条件，触发一次库存导出；文件必须位于本次运行下载目录，并回传路径、SHA-256 和字节数。
+7. `Resume`：恢复失败步骤前重建必要页面状态；已成功的 S005 只有在文件路径、大小和哈希仍一致时才跳过，不能重复导出。
 
-输出仅为本地导出文件引用，不写 NAS、不写飞书多维表格、不写数据库或正式 Excel。Preview 仍需真实浏览器授权，以验证读取、筛选和下载；这不等于业务验收。
+输出仅为本地下载文件引用，不写 NAS、飞书多维表格、数据库或正式 Excel。
 
 ## 截图映射
 
@@ -31,19 +32,27 @@
 | `AdI8dqrLyoVifFxSYqfcvlN2n4e` | `requirement/assets/step-003-select-brand-and-search.png` | `e58727a29997675fc43fbe179999de62a565f77c353cc585bf7aa06e8237d3ab` | S003、S004 |
 | `ICBnd3Y2LofvibxsLu6cLz1jnEh` | `requirement/assets/step-005-export-stock.png` | `d4eae6b2ff962d67200f685cfc87b3c76d9eae0b0527db9bccf1635768fb89f5` | S005 |
 
-截图只用于确认页面位置和业务意图，不能证明 XPath、CSS、坐标、唯一性或刷新稳定性。截图文件位于 Git 忽略目录。
+截图只用于确认业务意图，不作为定位器证据；文件位于 Git 忽略目录。
 
-## 元素与指令状态
+## 元素、指令与验证状态
 
-顶层 `elements/` 和 `instructions/` 当前没有聚水潭的已验证条目。本应用因此包含 16 个候选元素和 7 条候选指令。所有 Fake Browser 流程在本地测试中验证，真实验证状态仍为 `not_run`；`check`、正常 `run` 和 `resume` 必须列出并拒绝所有 `UE-*`、`UI-*`。
+- 顶层公共库：16 个真实验证元素、7 条真实验证指令。
+- 应用快照：从公共库复制完整依赖闭包并由 `catalog.lock.json` 固定；运行时不读取顶层目录。
+- 未沉淀项：人机验证专用标识未在真实登录中出现，不生成定位器；登录未达到认证标识时统一截图并失败转人工。旧的独立品牌选中标识已由品牌选择器内部的真实选中集合契约替代。
+- 离线测试：通过。
+- 真实候选验证：通过。
+- 真实 Preview：运行 `patch-c-preview-20260902` 完成筛选和下载，未执行外部业务写入。
+- 幂等恢复：同一运行 ID 再次恢复时 S001–S005 全部跳过，下载文件未变化。
+- 详细证据、产物哈希和授权范围见 `GENERATION_REPORT.md`。
 
-品牌选中状态可能需要读取页面文本；如果真实候选验证证明现有 `BrowserActions` 无法表达该成功条件，应先提出公共接口的增量 diff，不得绕开包装器访问 DrissionPage。
+## 变更与测试历史
 
-## 变更和测试历史
-
-- 2026-09-01：按飞书 revision 107 首次生成脱敏需求记忆、V2 Spec、候选元素/指令和离线应用草稿。
-- 程序版本：`0.1.0`
-- 当前状态：`pending_confirmation`；等待候选元素和指令的真实浏览器验证授权。
+- 2026-09-01：按飞书 revision 107 首次生成脱敏需求记忆、V2 Spec、应用候选元素/指令和离线程序。
+- 2026-09-02：完成真实页面验证、目标品牌精确选择、下拉层安全收起、搜索、库存下载和 Resume 验证。
+- 2026-09-02：经开发人员明确授权，将程序实际使用的 16 个元素和 7 条指令晋升顶层公共库，并重建应用稳定快照。
+- 2026-09-02：开发人员明确审核通过，接受既有 Preview 证据用于当前版本，并授权提交推送；审核记录为 `reviews/20260902T165014+0800.toml`。
+- 程序版本：`0.1.0`。
+- 当前状态：`ready_for_push`；审核通过不等于业务验收通过。
 
 ## 机器可读规范
 
@@ -52,11 +61,13 @@
 ```toml requirement-canonical
 schema_version = 2
 pending_confirmations = []
+unresolved_elements = []
+unresolved_instructions = []
 
 [source]
 document_id = "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722"
 revision = 107
-requirement_hash = "sha256:8a86352eedbbbdfbf03bbade09c4766800d34598cadc232d3c513ecf183ac2f2"
+requirement_hash = "sha256:5d5392ab35e4263f015dd80e68aad443b6e5aba822b262a2babfc38c7b691ceb"
 document_url = "https://<tenant>.feishu.cn/docx/<redacted>"
 
 [application]
@@ -73,10 +84,10 @@ action = "require_authenticated_session"
 inputs = ["account_id", "persistent_profile"]
 outputs = ["authenticated"]
 success_conditions = ["authenticated is true"]
-element_refs = ["jushuitan.erp.login.account_input", "jushuitan.erp.login.password_input", "jushuitan.erp.login.agreement_checkbox", "jushuitan.erp.login.submit_button", "jushuitan.erp.login.human_verification_marker", "jushuitan.erp.shell.authenticated_marker"]
+element_refs = ["jushuitan.erp.login.account_input", "jushuitan.erp.login.password_input", "jushuitan.erp.login.agreement_checkbox", "jushuitan.erp.login.submit_button", "jushuitan.erp.login.password_notice_confirm", "jushuitan.erp.shell.authenticated_marker"]
 instruction_refs = ["jushuitan.auth.login", "jushuitan.auth.require_session"]
-unresolved_element_ids = ["UE-PREPARE-ACCOUNT", "UE-PREPARE-PASSWORD", "UE-PREPARE-AGREEMENT", "UE-PREPARE-SUBMIT", "UE-PREPARE-HUMAN-VERIFY", "UE-PREPARE-AUTHENTICATED"]
-unresolved_instruction_ids = ["UI-PREPARE-LOGIN", "UI-PREPARE-SESSION"]
+unresolved_element_ids = []
+unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
 recovery = ["stop and run the separately authorized login command"]
@@ -97,8 +108,8 @@ outputs = ["inventory_module_opened"]
 success_conditions = ["inventory module marker is visible"]
 element_refs = ["jushuitan.erp.navigation.inventory_module", "jushuitan.erp.inventory.module_marker"]
 instruction_refs = ["jushuitan.inventory.open_module"]
-unresolved_element_ids = ["UE-S001-NAV", "UE-S001-MARKER"]
-unresolved_instruction_ids = ["UI-S001-OPEN-MODULE"]
+unresolved_element_ids = []
+unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
 recovery = ["verify module marker before repeating navigation"]
@@ -119,8 +130,8 @@ outputs = ["product_stock_opened"]
 success_conditions = ["product stock page marker is visible"]
 element_refs = ["jushuitan.erp.inventory.product_stock_entry", "jushuitan.erp.product_stock.page_marker"]
 instruction_refs = ["jushuitan.inventory.open_product_stock"]
-unresolved_element_ids = ["UE-S002-ENTRY", "UE-S002-MARKER"]
-unresolved_instruction_ids = ["UI-S002-OPEN-PRODUCT-STOCK"]
+unresolved_element_ids = []
+unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
 recovery = ["verify product stock marker before repeating navigation"]
@@ -134,18 +145,18 @@ retryable_errors = ["instruction_execution_failed", "instruction_verification_fa
 
 [[steps]]
 id = "S003"
-name = "根据本地配置选择品牌"
+name = "根据本地配置精确选择品牌"
 action = "select_configured_brand"
 inputs = ["stores.<account_id>.brand_value"]
 outputs = ["selected_brand", "selection_visible"]
-success_conditions = ["configured brand is visibly selected"]
-element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.brand_selected_marker"]
+success_conditions = ["only the configured brand is selected", "brand popup is hidden before search"]
+element_refs = ["jushuitan.erp.product_stock.reset_button", "jushuitan.erp.product_stock.brand_selector"]
 instruction_refs = ["jushuitan.inventory.select_brand"]
-unresolved_element_ids = ["UE-S003-SELECTOR", "UE-S003-MARKER"]
-unresolved_instruction_ids = ["UI-S003-SELECT-BRAND"]
+unresolved_element_ids = []
+unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
-recovery = ["re-read selection state before selecting again"]
+recovery = ["normalize the real selected checkbox set before continuing"]
 side_effect = "read"
 
 [steps.retry]
@@ -158,16 +169,16 @@ retryable_errors = ["instruction_execution_failed", "instruction_verification_fa
 id = "S004"
 name = "搜索并验证筛选完成"
 action = "search_inventory"
-inputs = []
+inputs = ["stores.<account_id>.brand_value"]
 outputs = ["filter_applied"]
-success_conditions = ["filtered result marker is visible"]
-element_refs = ["jushuitan.erp.product_stock.search_button", "jushuitan.erp.product_stock.filter_applied_marker"]
+success_conditions = ["filtered result marker is visible", "only the configured brand remains selected", "brand popup is hidden"]
+element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.search_button", "jushuitan.erp.product_stock.filter_applied_marker"]
 instruction_refs = ["jushuitan.inventory.search"]
-unresolved_element_ids = ["UE-S004-SEARCH", "UE-S004-MARKER"]
-unresolved_instruction_ids = ["UI-S004-SEARCH"]
+unresolved_element_ids = []
+unresolved_instruction_ids = []
 timeout_seconds = 60.0
 resume = "verify_then_run"
-recovery = ["verify filtered results before searching again"]
+recovery = ["verify and normalize the exact filter before searching again"]
 side_effect = "read"
 
 [steps.retry]
@@ -180,23 +191,23 @@ retryable_errors = ["instruction_execution_failed", "instruction_verification_fa
 id = "S005"
 name = "导出库存并验证下载"
 action = "export_inventory_file"
-inputs = ["safe_export_filename"]
+inputs = ["safe_export_filename", "stores.<account_id>.brand_value"]
 outputs = ["download_path", "sha256", "size_bytes"]
-success_conditions = ["download path is inside the run directory", "download is non-empty and hash is reproducible"]
-element_refs = ["jushuitan.erp.product_stock.export_menu", "jushuitan.erp.product_stock.export_stock_option"]
+success_conditions = ["only the configured brand remains selected", "brand popup is hidden", "download path is inside the run directory", "download is non-empty and hash is reproducible"]
+element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.export_menu", "jushuitan.erp.product_stock.export_stock_option"]
 instruction_refs = ["jushuitan.inventory.export_stock"]
-unresolved_element_ids = ["UE-S005-MENU", "UE-S005-OPTION"]
-unresolved_instruction_ids = ["UI-S005-EXPORT"]
-timeout_seconds = 180.0
+unresolved_element_ids = []
+unresolved_instruction_ids = []
+timeout_seconds = 360.0
 resume = "verify_then_run"
 recovery = ["verify an existing completed download before downloading again"]
 side_effect = "read"
 
 [steps.retry]
-max_attempts = 2
+max_attempts = 1
 delay_seconds = 0.0
 backoff_multiplier = 1.0
-retryable_errors = ["instruction_execution_failed", "instruction_verification_failed"]
+retryable_errors = []
 
 [[outputs]]
 id = "OUT-001"
@@ -207,299 +218,6 @@ fields = ["download_path", "sha256", "size_bytes"]
 unique_keys = ["sha256"]
 success_conditions = ["CLI prints a verified local download path"]
 side_effect = "read"
-
-[[unresolved_elements]]
-id = "UE-PREPARE-ACCOUNT"
-requirement_step = "Prepare"
-platform = "jushuitan"
-page = "login"
-name = "登录账号输入框"
-reason = "公开页面观察未经过应用候选验证"
-resolution = "开发人员授权后验证唯一性、可见性和刷新稳定性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-PREPARE-PASSWORD"
-requirement_step = "Prepare"
-platform = "jushuitan"
-page = "login"
-name = "登录密码输入框"
-reason = "公开页面观察未经过应用候选验证"
-resolution = "开发人员授权后验证唯一性、可见性和刷新稳定性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-PREPARE-AGREEMENT"
-requirement_step = "Prepare"
-platform = "jushuitan"
-page = "login"
-name = "用户协议确认框"
-reason = "缺少应用候选验证证据"
-resolution = "开发人员授权后验证唯一性、可点击性和刷新稳定性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-PREPARE-SUBMIT"
-requirement_step = "Prepare"
-platform = "jushuitan"
-page = "login"
-name = "登录按钮"
-reason = "缺少应用候选验证证据"
-resolution = "开发人员授权后验证唯一性、可点击性和刷新稳定性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-PREPARE-HUMAN-VERIFY"
-requirement_step = "Prepare"
-platform = "jushuitan"
-page = "login"
-name = "人机验证提示"
-reason = "人机验证状态尚未真实出现并验证"
-resolution = "授权登录时只检测、截图并转人工，不绕过验证"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-PREPARE-AUTHENTICATED"
-requirement_step = "Prepare"
-platform = "jushuitan"
-page = "authenticated_shell"
-name = "已登录页面标识"
-reason = "未授权访问登录后页面"
-resolution = "开发人员授权后补抓并验证稳定登录态标识"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S001-NAV"
-requirement_step = "S001"
-platform = "jushuitan"
-page = "authenticated_shell"
-name = "库存模块入口"
-screenshot = "requirement/assets/step-002-open-product-stock.png"
-reason = "截图只能说明页面位置"
-resolution = "授权后补抓稳定 DOM 定位器并验证"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S001-MARKER"
-requirement_step = "S001"
-platform = "jushuitan"
-page = "inventory_module"
-name = "库存模块已打开标识"
-screenshot = "requirement/assets/step-002-open-product-stock.png"
-reason = "未授权访问登录后页面"
-resolution = "授权后补抓可观察成功标识并验证"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S002-ENTRY"
-requirement_step = "S002"
-platform = "jushuitan"
-page = "inventory_module"
-name = "商品库存入口"
-screenshot = "requirement/assets/step-002-open-product-stock.png"
-reason = "截图不能提供可靠定位器"
-resolution = "授权后补抓并验证唯一性、可点击性和刷新稳定性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S002-MARKER"
-requirement_step = "S002"
-platform = "jushuitan"
-page = "product_stock"
-name = "商品库存页标识"
-screenshot = "requirement/assets/step-003-select-brand-and-search.png"
-reason = "未授权访问登录后页面"
-resolution = "授权后补抓可观察成功标识并验证"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S003-SELECTOR"
-requirement_step = "S003"
-platform = "jushuitan"
-page = "product_stock"
-name = "商品品牌选择器"
-screenshot = "requirement/assets/step-003-select-brand-and-search.png"
-reason = "截图不能提供可靠定位器"
-resolution = "授权后补抓并验证可选择行为"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S003-MARKER"
-requirement_step = "S003"
-platform = "jushuitan"
-page = "product_stock"
-name = "品牌已选择标识"
-screenshot = "requirement/assets/step-003-select-brand-and-search.png"
-reason = "精确选中值的可观察条件未知"
-resolution = "授权后验证选中值；若 BrowserActions 不足则另提接口 diff"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S004-SEARCH"
-requirement_step = "S004"
-platform = "jushuitan"
-page = "product_stock"
-name = "搜索按钮"
-screenshot = "requirement/assets/step-003-select-brand-and-search.png"
-reason = "截图不能提供可靠定位器"
-resolution = "授权后补抓并验证唯一性和可点击性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S004-MARKER"
-requirement_step = "S004"
-platform = "jushuitan"
-page = "product_stock"
-name = "筛选完成标识"
-screenshot = "requirement/assets/step-003-select-brand-and-search.png"
-reason = "筛选完成条件未知"
-resolution = "授权后补抓结果加载完成和筛选状态证据"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S005-MENU"
-requirement_step = "S005"
-platform = "jushuitan"
-page = "product_stock"
-name = "导出菜单"
-screenshot = "requirement/assets/step-005-export-stock.png"
-reason = "截图不能提供可靠定位器"
-resolution = "授权后补抓并验证菜单展开稳定性"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_elements]]
-id = "UE-S005-OPTION"
-requirement_step = "S005"
-platform = "jushuitan"
-page = "product_stock"
-name = "导出库存选项"
-screenshot = "requirement/assets/step-005-export-stock.png"
-reason = "下载触发元素尚未真实验证"
-resolution = "授权 Preview 后验证唯一性、可点击性和下载完成"
-status = "candidate"
-tested = false
-blocks_test = false
-
-[[unresolved_instructions]]
-id = "UI-PREPARE-LOGIN"
-requirement_step = "Prepare"
-platform = "jushuitan"
-capability = "interactive login"
-reason = "顶层指令库没有已验证登录能力"
-candidate_instruction_ref = "jushuitan.auth.login"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/login/instruction.py"
-fake_test_ref = "tests/test_candidate_instructions.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
-
-[[unresolved_instructions]]
-id = "UI-PREPARE-SESSION"
-requirement_step = "Prepare"
-platform = "jushuitan"
-capability = "require authenticated session"
-reason = "顶层指令库没有已验证登录态能力"
-candidate_instruction_ref = "jushuitan.auth.require_session"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/require_session/instruction.py"
-fake_test_ref = "tests/test_program_flow.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
-
-[[unresolved_instructions]]
-id = "UI-S001-OPEN-MODULE"
-requirement_step = "S001"
-platform = "jushuitan"
-capability = "open inventory module"
-reason = "顶层指令库没有已验证库存导航能力"
-candidate_instruction_ref = "jushuitan.inventory.open_module"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_module/instruction.py"
-fake_test_ref = "tests/test_program_flow.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
-
-[[unresolved_instructions]]
-id = "UI-S002-OPEN-PRODUCT-STOCK"
-requirement_step = "S002"
-platform = "jushuitan"
-capability = "open product stock"
-reason = "顶层指令库没有已验证商品库存导航能力"
-candidate_instruction_ref = "jushuitan.inventory.open_product_stock"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/open_product_stock/instruction.py"
-fake_test_ref = "tests/test_program_flow.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
-
-[[unresolved_instructions]]
-id = "UI-S003-SELECT-BRAND"
-requirement_step = "S003"
-platform = "jushuitan"
-capability = "select configured brand"
-reason = "顶层指令库没有已验证品牌选择能力"
-candidate_instruction_ref = "jushuitan.inventory.select_brand"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/select_brand/instruction.py"
-fake_test_ref = "tests/test_program_flow.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
-
-[[unresolved_instructions]]
-id = "UI-S004-SEARCH"
-requirement_step = "S004"
-platform = "jushuitan"
-capability = "search inventory"
-reason = "顶层指令库没有已验证库存搜索能力"
-candidate_instruction_ref = "jushuitan.inventory.search"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/search/instruction.py"
-fake_test_ref = "tests/test_program_flow.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
-
-[[unresolved_instructions]]
-id = "UI-S005-EXPORT"
-requirement_step = "S005"
-platform = "jushuitan"
-capability = "export and verify inventory download"
-reason = "顶层指令库没有已验证库存导出能力"
-candidate_instruction_ref = "jushuitan.inventory.export_stock"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/inventory/export_stock/instruction.py"
-fake_test_ref = "tests/test_program_flow.py"
-fake_test_status = "passed"
-real_test_status = "not_run"
-status = "candidate"
 
 [test_requirements]
 required_suites = ["unit", "fake_browser", "static", "architecture_boundary", "checkpoint_recovery", "sensitive_data"]

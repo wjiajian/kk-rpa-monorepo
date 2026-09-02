@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from DrissionPage.common import Keys
+from DrissionPage.errors import ContextLostError
 
 from rpa_core.browser import (
     DownloadError,
+    ElementActionError,
     ElementLookupError,
     ElementSpec,
     Locator,
@@ -27,6 +31,44 @@ NATIVE_SELECT = ElementSpec(
     "库存页",
     locator=Locator("#brand"),
 )
+CUSTOM_INPUT = ElementSpec(
+    "example.filter.custom_brand",
+    "自定义品牌",
+    "库存页",
+    locator=Locator("#custom-brand"),
+)
+CUSTOM_INPUT_WITH_OPTIONS = ElementSpec(
+    "example.filter.custom_brand_options",
+    "精确选项品牌",
+    "库存页",
+    locator=Locator("#custom-brand"),
+    frame_locator=Locator("#product-stock-frame"),
+    option_locator=Locator("css:.brand-option"),
+)
+CUSTOM_EXCLUSIVE_INPUT = ElementSpec(
+    "example.filter.custom_brand_exclusive",
+    "精确集合品牌",
+    "库存页",
+    locator=Locator("#custom-brand"),
+    frame_locator=Locator("#product-stock-frame"),
+    option_locator=Locator("css:.brand-option"),
+    selected_option_locator=Locator("css:.brand-option-selected"),
+    popup_locator=Locator("css:.brand-popup"),
+    dismiss_locator=Locator("#dismiss-anchor"),
+)
+FRAMED_INPUT = ElementSpec(
+    "example.filter.framed_brand",
+    "iframe 品牌",
+    "库存页",
+    locator=Locator("#framed-brand"),
+    frame_locator=Locator("#product-stock-frame"),
+)
+TEXT_MARKER = ElementSpec(
+    "example.inventory.marker",
+    "库存标识",
+    "库存页",
+    locator=Locator("#marker"),
+)
 DOWNLOAD = ElementSpec(
     "example.inventory.download",
     "下载",
@@ -41,6 +83,23 @@ class FakeElementWait:
 
     def clickable(self, **kwargs):
         self.element.wait_calls.append(kwargs)
+        return self.element.clickable
+
+
+class FakeElementStates:
+    def __init__(self, element: "FakeElement") -> None:
+        self.element = element
+
+    @property
+    def is_displayed(self) -> bool:
+        return self.element.displayed
+
+    @property
+    def is_enabled(self) -> bool:
+        return self.element.enabled
+
+    @property
+    def is_clickable(self) -> bool:
         return self.element.clickable
 
 
@@ -71,6 +130,9 @@ class FakeClicker:
 
     def __call__(self, *, by_js: bool) -> None:
         self.element.clicked_with = by_js
+        self.element.click_count += 1
+        if self.element.on_click is not None:
+            self.element.on_click()
 
     def to_download(
         self,
@@ -92,9 +154,26 @@ class FakeClicker:
 
 
 class FakeElement:
-    def __init__(self, *, clickable: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        clickable: bool = True,
+        displayed: bool = True,
+        enabled: bool = True,
+        tag: str = "button",
+        text: str = "",
+        value: str | None = None,
+        on_click: Callable[[], None] | None = None,
+    ) -> None:
         self.clickable = clickable
+        self.displayed = displayed
+        self.enabled = enabled
+        self.tag = tag
+        self.text = text
+        self.value = value
+        self.on_click = on_click
         self.wait = FakeElementWait(self)
+        self.states = FakeElementStates(self)
         self.click = FakeClicker(self)
         self.select = FakeSelect(self)
         self.wait_calls: list[dict[str, object]] = []
@@ -102,6 +181,7 @@ class FakeElement:
         self.focused = False
         self.inputs: list[tuple[str, bool, bool]] = []
         self.clicked_with: bool | None = None
+        self.click_count = 0
         self.selected: tuple[str, float] | None = None
         self.download_args: dict[str, object] | None = None
 
@@ -113,6 +193,9 @@ class FakeElement:
 
     def input(self, value: str, *, clear: bool, by_js: bool) -> None:
         self.inputs.append((value, clear, by_js))
+
+    def attr(self, name: str):
+        return self.value if name == "value" else None
 
     def __bool__(self) -> bool:
         return True
@@ -128,11 +211,24 @@ class FakeTabWait:
 
 
 class FakeTab:
-    def __init__(self, elements: dict[str, FakeElement] | None = None) -> None:
+    def __init__(
+        self,
+        elements: dict[str, FakeElement] | None = None,
+        *,
+        frames: dict[str, "FakeTab"] | None = None,
+        element_lists: dict[str, list[list[FakeElement]]] | None = None,
+    ) -> None:
         self.elements = elements or {}
+        self.frames = frames or {}
+        self.element_lists = {
+            locator: list(responses)
+            for locator, responses in (element_lists or {}).items()
+        }
         self.wait = FakeTabWait()
         self.opened: list[str] = []
         self.lookups: list[tuple[str, float]] = []
+        self.frame_lookups: list[tuple[str, float]] = []
+        self.multi_lookups: list[tuple[str, float]] = []
 
     def get(self, url: str) -> bool:
         self.opened.append(url)
@@ -141,6 +237,19 @@ class FakeTab:
     def ele(self, locator: str, *, timeout: float):
         self.lookups.append((locator, timeout))
         return self.elements.get(locator, False)
+
+    def eles(self, locator: str, *, timeout: float):
+        self.multi_lookups.append((locator, timeout))
+        responses = self.element_lists.get(locator)
+        if not responses:
+            return []
+        if len(responses) > 1:
+            return responses.pop(0)
+        return responses[0]
+
+    def get_frame(self, locator: str, *, timeout: float):
+        self.frame_lookups.append((locator, timeout))
+        return self.frames.get(locator, False)
 
     def get_screenshot(self, *, path: str, name: str, full_page: bool) -> str:
         target = Path(path) / name
@@ -173,7 +282,7 @@ def test_adapter_relocates_and_inputs_secret_without_js_typing(tmp_path: Path) -
 
 def test_adapter_click_and_native_select_use_bounded_waits(tmp_path: Path) -> None:
     button = FakeElement()
-    select = FakeElement()
+    select = FakeElement(tag="select")
     tab = FakeTab({"#login_id": button, "#brand": select})
     browser = DrissionBrowserActions(tab, tmp_path, action_timeout=7.0)
 
@@ -185,6 +294,302 @@ def test_adapter_click_and_native_select_use_bounded_waits(tmp_path: Path) -> No
         {"wait_moved": True, "timeout": 7.0, "raise_err": False}
     ]
     assert select.selected == ("FIXTURE_BRAND", 7.0)
+
+
+def test_adapter_selects_custom_input_and_reads_exact_values(tmp_path: Path) -> None:
+    custom = FakeElement(tag="input", value="FIXTURE_BRAND")
+    marker = FakeElement(tag="span", text="筛选完成")
+    browser = DrissionBrowserActions(
+        FakeTab({"#custom-brand": custom, "#marker": marker}),
+        tmp_path,
+    )
+
+    browser.select(CUSTOM_INPUT, SecretValue("FIXTURE_BRAND", label="brand"))
+
+    assert custom.clear_calls == [True]
+    assert custom.clicked_with is False
+    assert custom.focused is True
+    assert custom.inputs == [
+        ("FIXTURE_BRAND", False, False),
+        (Keys.ENTER, False, False),
+    ]
+    assert browser.text(CUSTOM_INPUT) == "FIXTURE_BRAND"
+    assert browser.text(TEXT_MARKER) == "筛选完成"
+
+
+def test_adapter_waits_for_one_exact_ready_custom_option_in_same_frame(
+    tmp_path: Path,
+) -> None:
+    custom = FakeElement(tag="input")
+    other = FakeElement(tag="div", text="OTHER_BRAND")
+    hidden_exact = FakeElement(tag="div", text="FIXTURE_BRAND", displayed=False)
+    disabled_exact = FakeElement(tag="div", text="FIXTURE_BRAND", enabled=False)
+    ready_exact = FakeElement(tag="div", text=" FIXTURE_BRAND ")
+    frame = FakeTab(
+        {"#custom-brand": custom},
+        element_lists={
+            "css:.brand-option": [
+                [],
+                [other, hidden_exact, disabled_exact, ready_exact],
+            ]
+        },
+    )
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+    browser = DrissionBrowserActions(tab, tmp_path, action_timeout=0.25)
+
+    browser.select(
+        CUSTOM_INPUT_WITH_OPTIONS,
+        SecretValue("FIXTURE_BRAND", label="brand"),
+    )
+
+    assert custom.inputs == [("FIXTURE_BRAND", False, False)]
+    assert custom.clicked_with is False
+    assert ready_exact.clicked_with is False
+    assert hidden_exact.clicked_with is None
+    assert disabled_exact.clicked_with is None
+    assert len(tab.frame_lookups) == 3
+    assert [locator for locator, _ in frame.multi_lookups] == [
+        "css:.brand-option",
+        "css:.brand-option",
+    ]
+
+
+def test_adapter_exclusive_custom_select_removes_extra_checked_option(
+    tmp_path: Path,
+) -> None:
+    selected = ["UNSET", "FIXTURE_BRAND"]
+    popup = FakeElement(tag="div")
+
+    def toggle(value: str) -> None:
+        if value in selected:
+            selected.remove(value)
+        else:
+            selected.append(value)
+
+    options = {
+        value: FakeElement(
+            tag="div",
+            text=value,
+            on_click=lambda value=value: toggle(value),
+        )
+        for value in ("UNSET", "FIXTURE_BRAND", "OTHER_BRAND")
+    }
+
+    class ExclusiveFrame(FakeTab):
+        def eles(self, locator: str, *, timeout: float):
+            self.multi_lookups.append((locator, timeout))
+            if locator == "css:.brand-option":
+                return list(options.values())
+            if locator == "css:.brand-option-selected":
+                return [options[value] for value in selected]
+            if locator == "css:.brand-popup":
+                return [popup]
+            return []
+
+    custom = FakeElement(tag="input")
+    dismiss = FakeElement(on_click=lambda: setattr(popup, "displayed", False))
+    frame = ExclusiveFrame(
+        {"#custom-brand": custom, "#dismiss-anchor": dismiss}
+    )
+    browser = DrissionBrowserActions(
+        FakeTab(frames={"#product-stock-frame": frame}),
+        tmp_path,
+        action_timeout=0.5,
+    )
+
+    browser.select(CUSTOM_EXCLUSIVE_INPUT, "FIXTURE_BRAND")
+
+    assert selected == ["FIXTURE_BRAND"]
+    assert options["UNSET"].click_count == 1
+    assert options["FIXTURE_BRAND"].click_count == 0
+    assert custom.inputs == [("FIXTURE_BRAND", False, False)]
+    assert dismiss.click_count == 1
+    assert popup.displayed is False
+
+
+def test_adapter_exclusive_custom_select_adds_missing_target_after_cleanup(
+    tmp_path: Path,
+) -> None:
+    selected = ["UNSET"]
+    popup = FakeElement(tag="div")
+
+    def toggle(value: str) -> None:
+        if value in selected:
+            selected.remove(value)
+        else:
+            selected.append(value)
+
+    options = {
+        value: FakeElement(
+            tag="div",
+            text=value,
+            on_click=lambda value=value: toggle(value),
+        )
+        for value in ("UNSET", "FIXTURE_BRAND")
+    }
+
+    class ExclusiveFrame(FakeTab):
+        def eles(self, locator: str, *, timeout: float):
+            self.multi_lookups.append((locator, timeout))
+            if locator == "css:.brand-option":
+                return list(options.values())
+            if locator == "css:.brand-option-selected":
+                return [options[value] for value in selected]
+            if locator == "css:.brand-popup":
+                return [popup]
+            return []
+
+    dismiss = FakeElement(on_click=lambda: setattr(popup, "displayed", False))
+    frame = ExclusiveFrame(
+        {
+            "#custom-brand": FakeElement(tag="input"),
+            "#dismiss-anchor": dismiss,
+        }
+    )
+    browser = DrissionBrowserActions(
+        FakeTab(frames={"#product-stock-frame": frame}),
+        tmp_path,
+        action_timeout=0.5,
+    )
+
+    browser.select(CUSTOM_EXCLUSIVE_INPUT, "FIXTURE_BRAND")
+
+    assert selected == ["FIXTURE_BRAND"]
+    assert options["UNSET"].click_count == 1
+    assert options["FIXTURE_BRAND"].click_count == 1
+    assert dismiss.click_count == 1
+    assert popup.displayed is False
+
+
+def test_adapter_exclusive_custom_select_fails_if_popup_stays_visible(
+    tmp_path: Path,
+) -> None:
+    custom = FakeElement(tag="input")
+    selected = FakeElement(tag="div", text="FIXTURE_BRAND")
+    popup = FakeElement(tag="div")
+    dismiss = FakeElement()
+    frame = FakeTab(
+        {
+            "#custom-brand": custom,
+            "#dismiss-anchor": dismiss,
+        },
+        element_lists={
+            "css:.brand-option": [[selected]],
+            "css:.brand-option-selected": [[selected]],
+            "css:.brand-popup": [[popup]],
+        },
+    )
+    browser = DrissionBrowserActions(
+        FakeTab(frames={"#product-stock-frame": frame}),
+        tmp_path,
+        action_timeout=0.05,
+    )
+
+    with pytest.raises(ElementActionError, match="remained visible"):
+        browser.select(CUSTOM_EXCLUSIVE_INPUT, "FIXTURE_BRAND")
+
+    assert dismiss.click_count == 1
+    assert popup.displayed is True
+
+
+def test_adapter_rejects_zero_or_multiple_exact_custom_options(tmp_path: Path) -> None:
+    custom = FakeElement(tag="input")
+    no_match_frame = FakeTab({"#custom-brand": custom})
+    no_match = DrissionBrowserActions(
+        FakeTab(frames={"#product-stock-frame": no_match_frame}),
+        tmp_path / "none",
+        action_timeout=0.01,
+    )
+
+    with pytest.raises(ElementActionError) as missing:
+        no_match.select(CUSTOM_INPUT_WITH_OPTIONS, "FIXTURE_BRAND")
+    assert "FIXTURE_BRAND" not in str(missing.value)
+
+    first = FakeElement(tag="div", text="FIXTURE_BRAND")
+    second = FakeElement(tag="div", text="FIXTURE_BRAND")
+    duplicate_frame = FakeTab(
+        {"#custom-brand": FakeElement(tag="input")},
+        element_lists={"css:.brand-option": [[first, second]]},
+    )
+    duplicate = DrissionBrowserActions(
+        FakeTab(frames={"#product-stock-frame": duplicate_frame}),
+        tmp_path / "duplicate",
+        action_timeout=0.1,
+    )
+
+    with pytest.raises(ElementActionError, match="multiple exact") as multiple:
+        duplicate.select(CUSTOM_INPUT_WITH_OPTIONS, "FIXTURE_BRAND")
+    assert "FIXTURE_BRAND" not in str(multiple.value)
+
+
+def test_adapter_rejects_obstructed_exact_custom_option(tmp_path: Path) -> None:
+    obstructed = FakeElement(tag="div", text="FIXTURE_BRAND", clickable=False)
+    frame = FakeTab(
+        {"#custom-brand": FakeElement(tag="input")},
+        element_lists={"css:.brand-option": [[obstructed]]},
+    )
+    browser = DrissionBrowserActions(
+        FakeTab(frames={"#product-stock-frame": frame}),
+        tmp_path,
+        action_timeout=0.01,
+    )
+
+    with pytest.raises(ElementActionError):
+        browser.select(CUSTOM_INPUT_WITH_OPTIONS, "FIXTURE_BRAND")
+    assert obstructed.clicked_with is None
+
+
+def test_adapter_relocates_frame_before_each_element_action(tmp_path: Path) -> None:
+    framed = FakeElement(tag="input", value="FIXTURE_BRAND")
+    frame = FakeTab({"#framed-brand": framed})
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+    browser = DrissionBrowserActions(tab, tmp_path)
+
+    assert browser.exists(FRAMED_INPUT, timeout=2.0) is True
+    assert browser.text(FRAMED_INPUT) == "FIXTURE_BRAND"
+    browser.select(FRAMED_INPUT, "FIXTURE_BRAND")
+
+    assert tab.frame_lookups == [
+        ("#product-stock-frame", 2.0),
+        ("#product-stock-frame", 10.0),
+        ("#product-stock-frame", 10.0),
+    ]
+    assert frame.lookups == [
+        ("#framed-brand", 2.0),
+        ("#framed-brand", 10.0),
+        ("#framed-brand", 10.0),
+    ]
+
+
+def test_adapter_re_resolves_frame_after_transient_context_loss(tmp_path: Path) -> None:
+    class RefreshingFrame(FakeTab):
+        lookup_count = 0
+
+        def ele(self, locator: str, *, timeout: float):
+            self.lookup_count += 1
+            if self.lookup_count == 1:
+                raise ContextLostError()
+            return super().ele(locator, timeout=timeout)
+
+    frame = RefreshingFrame(
+        {"#framed-brand": FakeElement(tag="input", value="FIXTURE_BRAND")}
+    )
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+    browser = DrissionBrowserActions(tab, tmp_path, action_timeout=0.2)
+
+    assert browser.text(FRAMED_INPUT) == "FIXTURE_BRAND"
+    assert frame.lookup_count == 2
+    assert len(tab.frame_lookups) == 2
+
+
+def test_adapter_rejects_unknown_select_tags(tmp_path: Path) -> None:
+    browser = DrissionBrowserActions(
+        FakeTab({"#custom-brand": FakeElement(tag="div")}),
+        tmp_path,
+    )
+
+    with pytest.raises(ElementActionError, match="unsupported select element tag"):
+        browser.select(CUSTOM_INPUT, "FIXTURE_BRAND")
 
 
 def test_adapter_exists_and_unresolved_lookup_fail_closed(tmp_path: Path) -> None:
@@ -216,7 +621,7 @@ def test_adapter_download_is_isolated_and_hashed(tmp_path: Path) -> None:
         "save_path": str(tmp_path / "downloads"),
         "rename": "inventory.fixture.csv",
         "by_js": False,
-        "timeout": 10.0,
+        "timeout": 120.0,
     }
 
 
