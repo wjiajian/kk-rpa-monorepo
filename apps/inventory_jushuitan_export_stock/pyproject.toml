@@ -1,7 +1,7 @@
 [project]
 name = "inventory-jushuitan-export-stock"
-version = "0.1.0"
-description = "Independent RPA application draft for exporting a filtered inventory file."
+version = "0.2.0"
+description = "Independent RPA application for account-verified filtered inventory export."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

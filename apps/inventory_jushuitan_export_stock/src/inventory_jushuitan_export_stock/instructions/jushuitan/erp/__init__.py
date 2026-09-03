@@ -1,1 +1,1 @@
-"""ERP candidate instruction namespace."""
+"""ERP instruction namespace."""

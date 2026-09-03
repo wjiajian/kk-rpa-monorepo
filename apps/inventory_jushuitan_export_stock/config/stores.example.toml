@@ -8,3 +8,4 @@ debug_port = 9301
 brand_value = "BRAND_001"
 username_env = "RPA_STORE_001_USERNAME"
 password_env = "RPA_STORE_001_PASSWORD"
+identity_env = "RPA_STORE_001_IDENTITY"

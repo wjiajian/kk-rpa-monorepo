@@ -40,6 +40,7 @@ from .validators import APP_DIR, load_validated_contracts
 
 
 PATCH_C_AUTHORIZATION_BATCH_ID = "patch-c-verify-20260901"
+ACCOUNT_SESSION_CANDIDATE_AUTHORIZATION_BATCH_ID: str | None = None
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
@@ -98,7 +99,7 @@ def execute_login(
     _require_patch_c_authorization(batch_id)
     run_id = _new_run_id("login")
     inputs = _load_runtime_inputs(account, require_credentials=True)
-    registry = _validated_snapshot_registry(batch_id)
+    registry = _validated_snapshot_registry()
     run_dir = APP_DIR / "runtime" / "login-runs" / run_id
 
     def operation(context: ExecutionContext) -> dict[str, object]:
@@ -146,7 +147,7 @@ def execute_candidate_verification(
 ) -> dict[str, object]:
     """Run the bounded Patch C Preview flow, optionally resuming one checkpoint."""
 
-    _require_patch_c_authorization(batch_id)
+    _require_account_session_candidate_authorization(batch_id)
     if run_id and resume_run_id:
         raise ApplicationRuntimeError(
             "candidate_run_id_conflict",
@@ -155,21 +156,11 @@ def execute_candidate_verification(
     selected_run_id = resume_run_id or run_id or _new_run_id("candidate-preview")
     _validate_run_id(selected_run_id)
     inputs = _load_runtime_inputs(account, require_credentials=True)
-    registry = _validated_snapshot_registry(batch_id)
+    registry = _validated_snapshot_registry()
     run_dir = APP_DIR / "runs" / selected_run_id
     resume_target = _resume_target(run_dir) if resume_run_id else None
 
     def operation(context: ExecutionContext) -> dict[str, object]:
-        assert inputs.credentials is not None
-        registry.execute(
-            "jushuitan.auth.login",
-            context,
-            {
-                "login_url": inputs.store.login_url,
-                "username": inputs.credentials.username,
-                "password": inputs.credentials.password,
-            },
-        )
         program = build_program(inputs.requirement_hash)
         result = Runner().resume(program, context) if resume_run_id else Runner().run(program, context)
         evidence_stem = (
@@ -215,7 +206,7 @@ def execute_standard_run(
     resume = command == "resume"
     selected_run_id = run_id or _new_run_id("preview")
     _validate_run_id(selected_run_id)
-    inputs = _load_runtime_inputs(account, require_credentials=False)
+    inputs = _load_runtime_inputs(account, require_credentials=True)
     registry = build_instruction_registry()
     run_dir = APP_DIR / "runs" / selected_run_id
     resume_target = _resume_target(run_dir) if resume else None
@@ -299,7 +290,13 @@ def _with_browser(
                 "resume_recovery_target": resume_target,
             },
         )
-        bind_program_inputs(context, inputs.store)
+        if inputs.credentials is None:
+            raise ApplicationRuntimeError(
+                "application_configuration_invalid",
+                real_browser_launched=True,
+                run_id=run_id,
+            )
+        bind_program_inputs(context, inputs.store, inputs.credentials)
         outcome = operation(context)
     except Exception as error:
         caught = error
@@ -340,8 +337,7 @@ def _load_runtime_inputs(account: str, *, require_credentials: bool) -> _Runtime
     return _RuntimeInputs(manifest.requirement_hash, store, credentials)
 
 
-def _validated_snapshot_registry(batch_id: str | None):
-    assert batch_id is not None
+def _validated_snapshot_registry():
     registry = build_instruction_registry()
     elements = element_catalog()
     required_ids = {
@@ -355,17 +351,32 @@ def _validated_snapshot_registry(batch_id: str | None):
         if element_id not in elements or not elements[element_id].is_resolved
     )
     metadata = _element_metadata()
-    wrong_batch = sorted(
-        element_id
-        for element_id in required_ids
-        if metadata.get(element_id, {}).get("status") != "verified"
-        or metadata.get(element_id, {}).get("locator_status") != "verified"
-        or not isinstance(metadata.get(element_id, {}).get("verification"), dict)
-        or metadata[element_id]["verification"].get("batch_id") != batch_id
-    )
-    if unresolved or wrong_batch:
+    invalid_metadata = []
+    for element_id in sorted(required_ids):
+        document = metadata.get(element_id, {})
+        status = document.get("status")
+        locator_status = document.get("locator_status")
+        if status == "verified":
+            verification = document.get("verification")
+            if (
+                locator_status != "verified"
+                or not isinstance(verification, dict)
+                or verification.get("status") == "failed"
+            ):
+                invalid_metadata.append(element_id)
+        elif status == "candidate":
+            offline = document.get("offline_verification")
+            if (
+                locator_status != "candidate"
+                or not isinstance(offline, dict)
+                or offline.get("status") != "passed"
+            ):
+                invalid_metadata.append(element_id)
+        else:
+            invalid_metadata.append(element_id)
+    if unresolved or invalid_metadata:
         raise ApplicationRuntimeError(
-            "candidate_snapshot_not_verified",
+            "candidate_snapshot_invalid",
             real_browser_launched=False,
         )
     return registry
@@ -431,6 +442,14 @@ def _require_patch_c_authorization(batch_id: str | None) -> None:
         raise CandidateAuthorizationError()
 
 
+def _require_account_session_candidate_authorization(batch_id: str | None) -> None:
+    if (
+        ACCOUNT_SESSION_CANDIDATE_AUTHORIZATION_BATCH_ID is None
+        or batch_id != ACCOUNT_SESSION_CANDIDATE_AUTHORIZATION_BATCH_ID
+    ):
+        raise CandidateAuthorizationError()
+
+
 def _new_run_id(prefix: str) -> str:
     return f"{prefix}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
 
@@ -492,6 +511,7 @@ def _relative_run_path(path: Path, run_dir: Path) -> str:
 
 
 __all__ = [
+    "ACCOUNT_SESSION_CANDIDATE_AUTHORIZATION_BATCH_ID",
     "ApplicationRuntimeError",
     "CandidateAuthorizationError",
     "LiveAuthorizationError",

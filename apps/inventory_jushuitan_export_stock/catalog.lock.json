@@ -110,20 +110,40 @@
       "version": "0.1.0"
     },
     {
-      "content_hash": "sha256:383e8c2e826853551a64bb05a6fcef510f1ccee47609dd1e80188bc7ef41c41a",
-      "copied_at": "2026-09-02T08:27:31+00:00",
+      "content_hash": "sha256:41d74c01ef56ddc46cc2b32f97c215b8e1f878ce3e4c2c29ef155aa104f2bda1",
+      "copied_at": "2026-09-03T01:27:28+00:00",
+      "dependencies": [],
+      "id": "jushuitan.erp.shell.account_identity_surface",
+      "kind": "element",
+      "source_path": "elements/jushuitan/erp/shell/account_identity_surface.toml",
+      "source_type": "repository",
+      "status": "verified",
+      "target_path": "src/inventory_jushuitan_export_stock/elements/jushuitan/erp/shell/account_identity_surface.toml",
+      "version": "0.1.0"
+    },
+    {
+      "content_hash": "sha256:2bb4a43d25787a11aacf034452b9c7e0801cb3facecf76ff10b2783339f0ea5b",
+      "copied_at": "2026-09-03T01:27:28+00:00",
       "dependencies": [
+        {
+          "id": "jushuitan.auth.login",
+          "kind": "instruction"
+        },
         {
           "id": "jushuitan.erp.shell.authenticated_marker",
           "kind": "element"
+        },
+        {
+          "id": "jushuitan.erp.shell.account_identity_surface",
+          "kind": "element"
         }
       ],
-      "id": "jushuitan.auth.require_session",
+      "id": "jushuitan.auth.ensure_account_session",
       "kind": "instruction",
-      "source_path": "instructions/jushuitan/erp/auth/require_session",
+      "source_path": "instructions/jushuitan/erp/auth/ensure_account_session",
       "source_type": "repository",
       "status": "verified",
-      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/require_session",
+      "target_path": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/ensure_account_session",
       "version": "0.1.0"
     },
     {

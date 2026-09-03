@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rpa_core.browser import FakeBrowserActions, FakeDownload
+from rpa_core.browser import FakeBrowserActions, FakeDownload, SecretValue
 from rpa_core.contracts import RunMode
 from rpa_core.runtime import ExecutionContext
 
 from inventory_jushuitan_export_stock.elements import element_catalog
 from inventory_jushuitan_export_stock.instructions import build_instruction_registry
-from inventory_jushuitan_export_stock.models import StoreConfig
+from inventory_jushuitan_export_stock.models import LoginCredentials, StoreConfig
 from inventory_jushuitan_export_stock.program import (
     APP_ID,
     PROGRAM_ID,
@@ -18,8 +18,10 @@ from inventory_jushuitan_export_stock.program import (
 )
 
 
-REQUIREMENT_HASH = "sha256:8a86352eedbbbdfbf03bbade09c4766800d34598cadc232d3c513ecf183ac2f2"
+REQUIREMENT_HASH = "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14"
 EXPORT_ELEMENT_ID = "jushuitan.erp.product_stock.export_stock_option"
+ACCOUNT_IDENTITY_ELEMENT_ID = "jushuitan.erp.shell.account_identity_surface"
+FIXTURE_IDENTITY = "fixture-user"
 
 
 def make_store() -> StoreConfig:
@@ -32,6 +34,7 @@ def make_store() -> StoreConfig:
         brand_value="BRAND_001",
         username_env="RPA_STORE_001_USERNAME",
         password_env="RPA_STORE_001_PASSWORD",
+        identity_env="RPA_STORE_001_IDENTITY",
     )
 
 
@@ -55,6 +58,7 @@ def make_browser(
         run_dir=run_dir,
         visible_element_ids=visible_elements(missing=missing),
         downloads=downloads,
+        text_values={ACCOUNT_IDENTITY_ELEMENT_ID: FIXTURE_IDENTITY},
     )
 
 
@@ -75,7 +79,15 @@ def make_context(run_dir: Path, browser: FakeBrowserActions) -> ExecutionContext
         },
         metadata={"app_dir": str(run_dir.parent.parent)},
     )
-    bind_program_inputs(context, make_store())
+    bind_program_inputs(
+        context,
+        make_store(),
+        LoginCredentials(
+            SecretValue(FIXTURE_IDENTITY, label="fixture-user"),
+            SecretValue("fixture-secret", label="fixture-secret"),
+            SecretValue(FIXTURE_IDENTITY, label="fixture-identity"),
+        ),
+    )
     return context
 
 

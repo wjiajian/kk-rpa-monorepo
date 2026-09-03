@@ -7,21 +7,34 @@ from pathlib import Path
 
 from rpa_core.runtime import BaseProgram, ExecutionContext, ProgramSpec
 
-from .models import StoreConfig
+from .models import LoginCredentials, StoreConfig
 from .steps import build_steps
 
 
 APP_ID = "jushuitan.inventory.export_stock"
 PROGRAM_ID = "jushuitan-inventory-export-stock"
-PROGRAM_VERSION = "0.1.0"
+PROGRAM_VERSION = "0.2.0"
 
 
 class InventoryExportProgram(BaseProgram):
     def prepare(self, context: ExecutionContext) -> None:
+        store = context.metadata.get("store_config")
+        credentials = context.metadata.get("login_credentials")
+        if not isinstance(store, StoreConfig) or not isinstance(
+            credentials,
+            LoginCredentials,
+        ):
+            raise TypeError("Prepare requires store configuration and login credentials")
+        expected_identity = credentials.expected_identity or credentials.username
         result = context.instructions.execute(
-            "jushuitan.auth.require_session",
+            "jushuitan.auth.ensure_account_session",
             context,
-            {},
+            {
+                "login_url": store.login_url,
+                "username": credentials.username,
+                "password": credentials.password,
+                "expected_identity": expected_identity,
+            },
         )
         context.metadata["prepare_result"] = dict(result)
         target = context.metadata.get("resume_recovery_target")
@@ -124,10 +137,12 @@ def build_program(
 def bind_program_inputs(
     context: ExecutionContext,
     store: StoreConfig,
+    credentials: LoginCredentials,
     *,
     export_filename: str = "inventory-export.xlsx",
 ) -> None:
     context.metadata["store_config"] = store
+    context.metadata["login_credentials"] = credentials
     context.metadata["export_filename"] = export_filename
 
 

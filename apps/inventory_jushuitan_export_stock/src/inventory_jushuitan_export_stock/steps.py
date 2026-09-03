@@ -1,4 +1,4 @@
-"""Business Step orchestration over application-local candidate instructions."""
+"""Business Step orchestration over application-local catalog instructions."""
 
 from __future__ import annotations
 

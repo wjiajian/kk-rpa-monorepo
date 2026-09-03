@@ -1,1 +1,1 @@
-"""Jushuitan candidate instruction namespace."""
+"""Jushuitan instruction namespace."""

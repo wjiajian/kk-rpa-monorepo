@@ -59,6 +59,10 @@
         "password_env": {
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]+$"
+        },
+        "identity_env": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]+$"
         }
       }
     }

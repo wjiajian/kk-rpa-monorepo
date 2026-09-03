@@ -32,6 +32,7 @@ class StoreConfig:
     brand_value: str
     username_env: str
     password_env: str
+    identity_env: str | None = None
 
     def __post_init__(self) -> None:
         if not _ACCOUNT_ID_PATTERN.fullmatch(self.account_id):
@@ -47,8 +48,9 @@ class StoreConfig:
             raise ConfigurationError("debug_port must be between 1024 and 65535")
         if not self.brand_value:
             raise ConfigurationError("brand_value must not be empty")
-        for field_name in ("username_env", "password_env"):
-            if not _ENV_NAME_PATTERN.fullmatch(getattr(self, field_name)):
+        for field_name in ("username_env", "password_env", "identity_env"):
+            value = getattr(self, field_name)
+            if value is not None and not _ENV_NAME_PATTERN.fullmatch(value):
                 raise ConfigurationError(f"invalid environment variable name: {field_name}")
 
     @property
@@ -60,6 +62,7 @@ class StoreConfig:
 class LoginCredentials:
     username: SecretValue
     password: SecretValue
+    expected_identity: SecretValue | None = None
 
 
 def load_store_config(path: str | Path, account_id: str) -> StoreConfig:
@@ -109,13 +112,20 @@ def load_login_credentials(
     try:
         username = values[store.username_env]
         secret_value = values[store.password_env]
+        identity_env = store.identity_env or store.username_env
+        expected_identity = values[identity_env]
     except KeyError as error:
         raise ConfigurationError(f"required credential variable is missing: {error.args[0]}") from error
-    if username.startswith("<") or secret_value.startswith("<"):
+    if (
+        username.startswith("<")
+        or secret_value.startswith("<")
+        or expected_identity.startswith("<")
+    ):
         raise ConfigurationError("credential placeholders must be replaced locally")
     return LoginCredentials(
         SecretValue(username, label=store.username_env),
         SecretValue(secret_value, label=store.password_env),
+        SecretValue(expected_identity, label=identity_env),
     )
 
 

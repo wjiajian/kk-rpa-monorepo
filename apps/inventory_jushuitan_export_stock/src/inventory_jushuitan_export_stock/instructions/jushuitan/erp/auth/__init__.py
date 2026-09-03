@@ -1,1 +1,1 @@
-"""Authentication candidate instructions."""
+"""Authentication instructions."""

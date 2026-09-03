@@ -35,5 +35,6 @@ def test_fake_browser_runs_prepare_and_s001_through_s005_in_order(tmp_path: Path
         ("click", "jushuitan.erp.product_stock.export_menu"),
         ("download", "jushuitan.erp.product_stock.export_stock_option"),
     ]
-    assert not any(record.action == "open" for record in browser.actions)
+    assert [record.action for record in browser.actions].count("open") == 1
+    assert browser.current_url == "https://www.erp321.com/login.aspx"
     assert not any(record.element_id == "jushuitan.erp.login.account_input" for record in browser.actions)

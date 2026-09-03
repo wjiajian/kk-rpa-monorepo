@@ -14,7 +14,7 @@
 
 ## 完整业务流程
 
-1. `Prepare`：使用指定账号的独立持久化 Profile 确认登录态；交互登录只能通过单独授权的 `rpa-app login` 执行。
+1. `Prepare`：使用指定账号的独立持久化 Profile 打开登录入口；会话失效时在本次 `run` 内使用该账号的本地凭据登录，并从已登录页面读取身份文本，与本地期望账号标识比对。只有登录态和账号身份都通过才进入 S001；错误账号、登录失败或人机验证都截图并停止。
 2. `S001`：直接点击左侧库存入口，并验证库存模块当前状态。
 3. `S002`：进入商品库存，并验证活动页签和业务 iframe。
 4. `S003`：重置历史筛选，从本地配置读取品牌值，把真实 checkbox 集合归一化为仅目标品牌选中；点击商品编码输入框安全收起品牌下拉，并确认弹层不可见。
@@ -36,12 +36,13 @@
 
 ## 元素、指令与验证状态
 
-- 顶层公共库：16 个真实验证元素、7 条真实验证指令。
-- 应用快照：从公共库复制完整依赖闭包并由 `catalog.lock.json` 固定；运行时不读取顶层目录。
+- 顶层公共库：17 个真实验证元素、7 条真实验证指令；本次新增账号身份文本载体和“确保目标账号会话”能力，已被替代且无应用引用的旧登录态检查指令已从源库退役。
+- 应用快照：当前业务依赖闭包包含 17 个公共验证元素和 7 条公共验证指令；均由 `catalog.lock.json` 固定，运行时不读取顶层目录。
+- 已解决项：账号身份文本载体在授权 Preview 中验证为唯一、可见、可读且跨恢复稳定；错误身份被失败关闭，正确身份放行后完整流程成功。候选元素和指令已回灌顶层公共库并重建应用稳定快照。
 - 未沉淀项：人机验证专用标识未在真实登录中出现，不生成定位器；登录未达到认证标识时统一截图并失败转人工。旧的独立品牌选中标识已由品牌选择器内部的真实选中集合契约替代。
 - 离线测试：通过。
-- 真实候选验证：通过。
-- 真实 Preview：运行 `patch-c-preview-20260902` 完成筛选和下载，未执行外部业务写入。
+- 真实候选验证：批次 `account-session-verify-20260903`、运行 `account-session-preview-20260903` 已通过；登录用户名与页面租户身份语义不同的问题已通过本地 `identity_env` 映射解决，真实值未进入可提交文件。
+- 真实 Preview：同一运行完成 Prepare、S001–S005；页面显示目标品牌筛选和 1,330 条结果，下载 XLSX 为 1,331 行（含表头）、47 列、218,367 字节，未执行外部业务写入。
 - 幂等恢复：同一运行 ID 再次恢复时 S001–S005 全部跳过，下载文件未变化。
 - 详细证据、产物哈希和授权范围见 `GENERATION_REPORT.md`。
 
@@ -51,8 +52,11 @@
 - 2026-09-02：完成真实页面验证、目标品牌精确选择、下拉层安全收起、搜索、库存下载和 Resume 验证。
 - 2026-09-02：经开发人员明确授权，将程序实际使用的 16 个元素和 7 条指令晋升顶层公共库，并重建应用稳定快照。
 - 2026-09-02：开发人员明确审核通过，接受既有 Preview 证据用于当前版本，并授权提交推送；审核记录为 `reviews/20260902T165014+0800.toml`。
-- 程序版本：`0.1.0`。
-- 当前状态：`ready_for_push`；审核通过不等于业务验收通过。
+- 2026-09-03：开发人员根据实际调用结果明确修正登录需求：标准 `run/resume` 必须自行确保会话并验证目标账号，不能只检查当前标签页的通用登录标识。旧审核随需求哈希和代码变化失效，但历史记录保留。
+- 2026-09-03：开发人员授权 `STORE_001` 账号身份候选验证和一次 Preview；同一运行经检查点恢复完成目标品牌筛选与一次库存下载，随后将两个新增稳定资产回灌公共库。
+- 2026-09-03：开发人员确认审核通过 0.2.0，接受运行 `account-session-preview-20260903` 的既有 Preview 证据覆盖当前需求哈希，并授权提交及推送；审核记录为 `reviews/20260903T095809+0800.toml`。
+- 程序版本：`0.2.0`。
+- 当前状态：`ready_for_push`；真实测试、自动测试和当前版本开发人员审核均已通过。
 
 ## 机器可读规范
 
@@ -61,37 +65,69 @@
 ```toml requirement-canonical
 schema_version = 2
 pending_confirmations = []
-unresolved_elements = []
-unresolved_instructions = []
+
+[[unresolved_elements]]
+id = "UE-ACCOUNT-IDENTITY"
+requirement_step = "Prepare"
+platform = "jushuitan"
+page = "authenticated_shell"
+name = "当前账号身份文本载体"
+reason = "现有公共元素只能证明页面已登录，不能证明当前会话属于命令指定账号。"
+resolution = "授权 Preview 已验证页面正文文本载体唯一、可见、可读、错误身份拒绝和跨恢复稳定性；已回灌公共元素库。"
+status = "resolved"
+resolved_element_ref = "jushuitan.erp.shell.account_identity_surface"
+tested = true
+blocks_test = false
+blocks_review = false
+blocks_push = false
+
+[[unresolved_instructions]]
+id = "UI-ENSURE-ACCOUNT-SESSION"
+requirement_step = "Prepare"
+platform = "jushuitan"
+capability = "在标准运行中确保目标账号登录并验证身份"
+reason = "既有 require_session 只检查当前标签页的库存菜单，不导航、不登录且不核对目标账号。"
+candidate_instruction_ref = "jushuitan.auth.ensure_account_session"
+candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/ensure_account_session/instruction.py"
+fake_test_ref = "tests/test_catalog_instructions.py"
+fake_test_status = "passed"
+real_test_status = "passed"
+real_test_evidence = "GENERATION_REPORT.md"
+status = "resolved"
+resolved_instruction_ref = "jushuitan.auth.ensure_account_session"
+blocks_offline_test = false
+blocks_real_run = false
+blocks_review = false
+blocks_push = false
 
 [source]
 document_id = "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722"
 revision = 107
-requirement_hash = "sha256:5d5392ab35e4263f015dd80e68aad443b6e5aba822b262a2babfc38c7b691ceb"
+requirement_hash = "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14"
 document_url = "https://<tenant>.feishu.cn/docx/<redacted>"
 
 [application]
 app_id = "jushuitan.inventory.export_stock"
 app_slug = "inventory_jushuitan_export_stock"
 name = "聚水潭库存导出"
-version = "0.1.0"
+version = "0.2.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
 
 [[steps]]
 id = "Prepare"
-name = "验证指定 Profile 已登录"
-action = "require_authenticated_session"
-inputs = ["account_id", "persistent_profile"]
-outputs = ["authenticated"]
-success_conditions = ["authenticated is true"]
-element_refs = ["jushuitan.erp.login.account_input", "jushuitan.erp.login.password_input", "jushuitan.erp.login.agreement_checkbox", "jushuitan.erp.login.submit_button", "jushuitan.erp.login.password_notice_confirm", "jushuitan.erp.shell.authenticated_marker"]
-instruction_refs = ["jushuitan.auth.login", "jushuitan.auth.require_session"]
-unresolved_element_ids = []
-unresolved_instruction_ids = []
-timeout_seconds = 30.0
+name = "确保目标账号登录并验证身份"
+action = "ensure_target_account_session"
+inputs = ["account_id", "persistent_profile", "stores.<account_id>.login_url", "credentials.<account_id>", "stores.<account_id>.expected_identity"]
+outputs = ["authenticated", "identity_verified", "login_performed", "human_verification_required"]
+success_conditions = ["authenticated is true", "identity_verified is true", "human_verification_required is false"]
+element_refs = ["jushuitan.erp.login.account_input", "jushuitan.erp.login.password_input", "jushuitan.erp.login.agreement_checkbox", "jushuitan.erp.login.submit_button", "jushuitan.erp.login.password_notice_confirm", "jushuitan.erp.shell.authenticated_marker", "jushuitan.erp.shell.account_identity_surface"]
+instruction_refs = ["jushuitan.auth.login", "jushuitan.auth.ensure_account_session"]
+unresolved_element_ids = ["UE-ACCOUNT-IDENTITY"]
+unresolved_instruction_ids = ["UI-ENSURE-ACCOUNT-SESSION"]
+timeout_seconds = 60.0
 resume = "verify_then_run"
-recovery = ["stop and run the separately authorized login command"]
-side_effect = "read"
+recovery = ["capture sanitized evidence and stop before inventory navigation"]
+side_effect = "write"
 
 [steps.retry]
 max_attempts = 1

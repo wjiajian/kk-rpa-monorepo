@@ -13,7 +13,11 @@ from rpa_core.requirements import (
 )
 
 from inventory_jushuitan_export_stock.cli import main
-from inventory_jushuitan_export_stock.validators import APP_DIR, application_report
+from inventory_jushuitan_export_stock.validators import (
+    APP_DIR,
+    application_report,
+    ensure_real_run_ready,
+)
 
 
 def test_v2_contracts_hash_and_catalog_snapshot_are_aligned() -> None:
@@ -26,14 +30,14 @@ def test_v2_contracts_hash_and_catalog_snapshot_are_aligned() -> None:
     assert manifest.requirement_revision == 107
     assert compare_requirement_models(memory, spec) == []
     assert compute_requirement_hash(spec) == manifest.requirement_hash
-    assert len(lock.items) == 23
+    assert len(lock.items) == 24
     assert spec.open_unresolved_elements == ()
     assert spec.open_unresolved_instructions == ()
     assert {item.source_type.value for item in lock.items} == {"repository"}
     assert {item.status.value for item in lock.items} == {"verified"}
 
 
-def test_repository_gate_passes_after_verified_assets_are_promoted() -> None:
+def test_repository_gate_passes_after_real_validation_and_promotion() -> None:
     report = application_report()
 
     assert report.ok
@@ -42,7 +46,7 @@ def test_repository_gate_passes_after_verified_assets_are_promoted() -> None:
     assert scan_sensitive_content(APP_DIR) == []
 
 
-def test_normal_run_and_resume_dispatch_after_verified_assets_are_promoted(
+def test_normal_run_and_resume_dispatch_after_candidate_gate_is_cleared(
     monkeypatch,
     capsys,
 ) -> None:
@@ -55,6 +59,7 @@ def test_normal_run_and_resume_dispatch_after_verified_assets_are_promoted(
         return {"ok": True, "command": kwargs["command"], "run_id": kwargs["run_id"]}
 
     monkeypatch.setattr(cli, "execute_standard_run", fake_run)
+    monkeypatch.setattr(cli, "ensure_real_run_ready", lambda: None)
 
     assert main(["run", "--mode", "preview", "--run-id", "preview-001"]) == 0
     assert main(["resume", "--mode", "preview", "--run-id", "preview-001"]) == 0
@@ -74,6 +79,10 @@ def test_normal_run_and_resume_dispatch_after_verified_assets_are_promoted(
     ]
     output = capsys.readouterr().out
     assert output.count('"ok": true') == 2
+
+
+def test_normal_run_gate_is_cleared_after_identity_verification() -> None:
+    ensure_real_run_ready()
 
 
 def test_doctor_check_login_and_candidate_verification_are_side_effect_free(capsys) -> None:

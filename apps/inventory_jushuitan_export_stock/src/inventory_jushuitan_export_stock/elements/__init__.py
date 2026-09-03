@@ -1,4 +1,4 @@
-"""Load the immutable application-local element snapshot."""
+"""Load the immutable application-local element catalog snapshot."""
 
 from __future__ import annotations
 
@@ -19,9 +19,12 @@ def element_catalog() -> dict[str, ElementSpec]:
     elements: dict[str, ElementSpec] = {}
     for path in sorted(root.rglob("*.toml")):
         document = tomllib.loads(path.read_text(encoding="utf-8"))
-        if document.get("kind") != "element" or document.get("status") != "verified":
+        if document.get("kind") != "element" or document.get("status") not in {
+            "verified",
+            "candidate",
+        }:
             raise ElementSnapshotContractError(
-                f"invalid verified element metadata: {path.name}"
+                f"invalid element snapshot metadata: {path.name}"
             )
         locator = _optional_locator(document, "locator", path)
         frame_locator = _optional_locator(document, "frame_locator", path)

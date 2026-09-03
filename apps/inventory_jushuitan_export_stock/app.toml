@@ -2,15 +2,15 @@ schema_version = 2
 app_id = "jushuitan.inventory.export_stock"
 app_slug = "inventory_jushuitan_export_stock"
 name = "聚水潭库存导出"
-version = "0.1.0"
+version = "0.2.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
 python = "3.12"
 requirement_revision = 107
-requirement_hash = "sha256:5d5392ab35e4263f015dd80e68aad443b6e5aba822b262a2babfc38c7b691ceb"
+requirement_hash = "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14"
 configuration_schema = "config/config.schema.json"
 catalog_lock = "catalog.lock.json"
 status = "ready_for_push"
-latest_review = "reviews/20260902T165014+0800.toml"
+latest_review = "reviews/20260903T095809+0800.toml"
 
 [commands]
 doctor = "rpa-app doctor"

@@ -1,12 +1,362 @@
 {
+  "schema_version": 2,
+  "source": {
+    "document_id": "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722",
+    "revision": 107,
+    "requirement_hash": "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14",
+    "document_url": "https://<tenant>.feishu.cn/docx/<redacted>"
+  },
   "application": {
     "app_id": "jushuitan.inventory.export_stock",
     "app_slug": "inventory_jushuitan_export_stock",
-    "entrypoint": "inventory_jushuitan_export_stock.cli:main",
     "name": "聚水潭库存导出",
-    "version": "0.1.0"
+    "version": "0.2.0",
+    "entrypoint": "inventory_jushuitan_export_stock.cli:main"
+  },
+  "steps": [
+    {
+      "id": "Prepare",
+      "name": "确保目标账号登录并验证身份",
+      "action": "ensure_target_account_session",
+      "inputs": [
+        "account_id",
+        "persistent_profile",
+        "stores.<account_id>.login_url",
+        "credentials.<account_id>",
+        "stores.<account_id>.expected_identity"
+      ],
+      "outputs": [
+        "authenticated",
+        "identity_verified",
+        "login_performed",
+        "human_verification_required"
+      ],
+      "success_conditions": [
+        "authenticated is true",
+        "identity_verified is true",
+        "human_verification_required is false"
+      ],
+      "conditions": [],
+      "loop": null,
+      "element_refs": [
+        "jushuitan.erp.login.account_input",
+        "jushuitan.erp.login.password_input",
+        "jushuitan.erp.login.agreement_checkbox",
+        "jushuitan.erp.login.submit_button",
+        "jushuitan.erp.login.password_notice_confirm",
+        "jushuitan.erp.shell.authenticated_marker",
+        "jushuitan.erp.shell.account_identity_surface"
+      ],
+      "instruction_refs": [
+        "jushuitan.auth.login",
+        "jushuitan.auth.ensure_account_session"
+      ],
+      "pending_confirmation_ids": [],
+      "unresolved_element_ids": [
+        "UE-ACCOUNT-IDENTITY"
+      ],
+      "unresolved_instruction_ids": [
+        "UI-ENSURE-ACCOUNT-SESSION"
+      ],
+      "timeout_seconds": 60.0,
+      "retry": {
+        "max_attempts": 1,
+        "delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "retryable_errors": []
+      },
+      "resume": "verify_then_run",
+      "recovery": [
+        "capture sanitized evidence and stop before inventory navigation"
+      ],
+      "side_effect": "write"
+    },
+    {
+      "id": "S001",
+      "name": "打开库存模块",
+      "action": "open_inventory_module",
+      "inputs": [],
+      "outputs": [
+        "inventory_module_opened"
+      ],
+      "success_conditions": [
+        "inventory module marker is visible"
+      ],
+      "conditions": [],
+      "loop": null,
+      "element_refs": [
+        "jushuitan.erp.navigation.inventory_module",
+        "jushuitan.erp.inventory.module_marker"
+      ],
+      "instruction_refs": [
+        "jushuitan.inventory.open_module"
+      ],
+      "pending_confirmation_ids": [],
+      "unresolved_element_ids": [],
+      "unresolved_instruction_ids": [],
+      "timeout_seconds": 30.0,
+      "retry": {
+        "max_attempts": 2,
+        "delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "retryable_errors": [
+          "instruction_execution_failed",
+          "instruction_verification_failed"
+        ]
+      },
+      "resume": "verify_then_run",
+      "recovery": [
+        "verify module marker before repeating navigation"
+      ],
+      "side_effect": "read"
+    },
+    {
+      "id": "S002",
+      "name": "进入商品库存",
+      "action": "open_product_stock",
+      "inputs": [],
+      "outputs": [
+        "product_stock_opened"
+      ],
+      "success_conditions": [
+        "product stock page marker is visible"
+      ],
+      "conditions": [],
+      "loop": null,
+      "element_refs": [
+        "jushuitan.erp.inventory.product_stock_entry",
+        "jushuitan.erp.product_stock.page_marker"
+      ],
+      "instruction_refs": [
+        "jushuitan.inventory.open_product_stock"
+      ],
+      "pending_confirmation_ids": [],
+      "unresolved_element_ids": [],
+      "unresolved_instruction_ids": [],
+      "timeout_seconds": 30.0,
+      "retry": {
+        "max_attempts": 2,
+        "delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "retryable_errors": [
+          "instruction_execution_failed",
+          "instruction_verification_failed"
+        ]
+      },
+      "resume": "verify_then_run",
+      "recovery": [
+        "verify product stock marker before repeating navigation"
+      ],
+      "side_effect": "read"
+    },
+    {
+      "id": "S003",
+      "name": "根据本地配置精确选择品牌",
+      "action": "select_configured_brand",
+      "inputs": [
+        "stores.<account_id>.brand_value"
+      ],
+      "outputs": [
+        "selected_brand",
+        "selection_visible"
+      ],
+      "success_conditions": [
+        "only the configured brand is selected",
+        "brand popup is hidden before search"
+      ],
+      "conditions": [],
+      "loop": null,
+      "element_refs": [
+        "jushuitan.erp.product_stock.reset_button",
+        "jushuitan.erp.product_stock.brand_selector"
+      ],
+      "instruction_refs": [
+        "jushuitan.inventory.select_brand"
+      ],
+      "pending_confirmation_ids": [],
+      "unresolved_element_ids": [],
+      "unresolved_instruction_ids": [],
+      "timeout_seconds": 30.0,
+      "retry": {
+        "max_attempts": 2,
+        "delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "retryable_errors": [
+          "instruction_execution_failed",
+          "instruction_verification_failed"
+        ]
+      },
+      "resume": "verify_then_run",
+      "recovery": [
+        "normalize the real selected checkbox set before continuing"
+      ],
+      "side_effect": "read"
+    },
+    {
+      "id": "S004",
+      "name": "搜索并验证筛选完成",
+      "action": "search_inventory",
+      "inputs": [
+        "stores.<account_id>.brand_value"
+      ],
+      "outputs": [
+        "filter_applied"
+      ],
+      "success_conditions": [
+        "filtered result marker is visible",
+        "only the configured brand remains selected",
+        "brand popup is hidden"
+      ],
+      "conditions": [],
+      "loop": null,
+      "element_refs": [
+        "jushuitan.erp.product_stock.brand_selector",
+        "jushuitan.erp.product_stock.search_button",
+        "jushuitan.erp.product_stock.filter_applied_marker"
+      ],
+      "instruction_refs": [
+        "jushuitan.inventory.search"
+      ],
+      "pending_confirmation_ids": [],
+      "unresolved_element_ids": [],
+      "unresolved_instruction_ids": [],
+      "timeout_seconds": 60.0,
+      "retry": {
+        "max_attempts": 2,
+        "delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "retryable_errors": [
+          "instruction_execution_failed",
+          "instruction_verification_failed"
+        ]
+      },
+      "resume": "verify_then_run",
+      "recovery": [
+        "verify and normalize the exact filter before searching again"
+      ],
+      "side_effect": "read"
+    },
+    {
+      "id": "S005",
+      "name": "导出库存并验证下载",
+      "action": "export_inventory_file",
+      "inputs": [
+        "safe_export_filename",
+        "stores.<account_id>.brand_value"
+      ],
+      "outputs": [
+        "download_path",
+        "sha256",
+        "size_bytes"
+      ],
+      "success_conditions": [
+        "only the configured brand remains selected",
+        "brand popup is hidden",
+        "download path is inside the run directory",
+        "download is non-empty and hash is reproducible"
+      ],
+      "conditions": [],
+      "loop": null,
+      "element_refs": [
+        "jushuitan.erp.product_stock.brand_selector",
+        "jushuitan.erp.product_stock.export_menu",
+        "jushuitan.erp.product_stock.export_stock_option"
+      ],
+      "instruction_refs": [
+        "jushuitan.inventory.export_stock"
+      ],
+      "pending_confirmation_ids": [],
+      "unresolved_element_ids": [],
+      "unresolved_instruction_ids": [],
+      "timeout_seconds": 360.0,
+      "retry": {
+        "max_attempts": 1,
+        "delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "retryable_errors": []
+      },
+      "resume": "verify_then_run",
+      "recovery": [
+        "verify an existing completed download before downloading again"
+      ],
+      "side_effect": "read"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "OUT-001",
+      "name": "库存导出文件引用",
+      "target": "runs/<run_id>/downloads",
+      "write_mode": "local_download_path_only",
+      "fields": [
+        "download_path",
+        "sha256",
+        "size_bytes"
+      ],
+      "unique_keys": [
+        "sha256"
+      ],
+      "success_conditions": [
+        "CLI prints a verified local download path"
+      ],
+      "side_effect": "read"
+    }
+  ],
+  "pending_confirmations": [],
+  "unresolved_elements": [
+    {
+      "id": "UE-ACCOUNT-IDENTITY",
+      "requirement_step": "Prepare",
+      "platform": "jushuitan",
+      "page": "authenticated_shell",
+      "name": "当前账号身份文本载体",
+      "screenshot": null,
+      "reason": "现有公共元素只能证明页面已登录，不能证明当前会话属于命令指定账号。",
+      "resolution": "授权 Preview 已验证页面正文文本载体唯一、可见、可读、错误身份拒绝和跨恢复稳定性；已回灌公共元素库。",
+      "status": "resolved",
+      "resolved_element_ref": "jushuitan.erp.shell.account_identity_surface",
+      "tested": true,
+      "blocks_test": false,
+      "blocks_review": false,
+      "blocks_push": false
+    }
+  ],
+  "unresolved_instructions": [
+    {
+      "id": "UI-ENSURE-ACCOUNT-SESSION",
+      "requirement_step": "Prepare",
+      "platform": "jushuitan",
+      "capability": "在标准运行中确保目标账号登录并验证身份",
+      "reason": "既有 require_session 只检查当前标签页的库存菜单，不导航、不登录且不核对目标账号。",
+      "candidate_instruction_ref": "jushuitan.auth.ensure_account_session",
+      "candidate_implementation": "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/ensure_account_session/instruction.py",
+      "fake_test_ref": "tests/test_catalog_instructions.py",
+      "fake_test_status": "passed",
+      "real_test_status": "passed",
+      "real_test_evidence": "GENERATION_REPORT.md",
+      "status": "resolved",
+      "resolved_instruction_ref": "jushuitan.auth.ensure_account_session",
+      "blocks_offline_test": false,
+      "blocks_real_run": false,
+      "blocks_review": false,
+      "blocks_push": false
+    }
+  ],
+  "test_requirements": {
+    "required_suites": [
+      "unit",
+      "fake_browser",
+      "static",
+      "architecture_boundary",
+      "checkpoint_recovery",
+      "sensitive_data"
+    ],
+    "real_browser_required": true,
+    "real_browser_authorization_required": true,
+    "external_write_preview_required": false
   },
   "authorization_requirements": {
+    "real_browser_requires_authorization": true,
     "live_requires_separate_authorization": true,
     "live_scope_fields": [
       "app_id",
@@ -16,306 +366,6 @@
       "step_ids",
       "data_range",
       "expected_record_count"
-    ],
-    "real_browser_requires_authorization": true
-  },
-  "outputs": [
-    {
-      "fields": [
-        "download_path",
-        "sha256",
-        "size_bytes"
-      ],
-      "id": "OUT-001",
-      "name": "库存导出文件引用",
-      "side_effect": "read",
-      "success_conditions": [
-        "CLI prints a verified local download path"
-      ],
-      "target": "runs/<run_id>/downloads",
-      "unique_keys": [
-        "sha256"
-      ],
-      "write_mode": "local_download_path_only"
-    }
-  ],
-  "pending_confirmations": [],
-  "schema_version": 2,
-  "source": {
-    "document_id": "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722",
-    "document_url": "https://<tenant>.feishu.cn/docx/<redacted>",
-    "requirement_hash": "sha256:5d5392ab35e4263f015dd80e68aad443b6e5aba822b262a2babfc38c7b691ceb",
-    "revision": 107
-  },
-  "steps": [
-    {
-      "action": "require_authenticated_session",
-      "conditions": [],
-      "element_refs": [
-        "jushuitan.erp.login.account_input",
-        "jushuitan.erp.login.password_input",
-        "jushuitan.erp.login.agreement_checkbox",
-        "jushuitan.erp.login.submit_button",
-        "jushuitan.erp.login.password_notice_confirm",
-        "jushuitan.erp.shell.authenticated_marker"
-      ],
-      "id": "Prepare",
-      "inputs": [
-        "account_id",
-        "persistent_profile"
-      ],
-      "instruction_refs": [
-        "jushuitan.auth.login",
-        "jushuitan.auth.require_session"
-      ],
-      "loop": null,
-      "name": "验证指定 Profile 已登录",
-      "outputs": [
-        "authenticated"
-      ],
-      "pending_confirmation_ids": [],
-      "recovery": [
-        "stop and run the separately authorized login command"
-      ],
-      "resume": "verify_then_run",
-      "retry": {
-        "backoff_multiplier": 1.0,
-        "delay_seconds": 0.0,
-        "max_attempts": 1,
-        "retryable_errors": []
-      },
-      "side_effect": "read",
-      "success_conditions": [
-        "authenticated is true"
-      ],
-      "timeout_seconds": 30.0,
-      "unresolved_element_ids": [],
-      "unresolved_instruction_ids": []
-    },
-    {
-      "action": "open_inventory_module",
-      "conditions": [],
-      "element_refs": [
-        "jushuitan.erp.navigation.inventory_module",
-        "jushuitan.erp.inventory.module_marker"
-      ],
-      "id": "S001",
-      "inputs": [],
-      "instruction_refs": [
-        "jushuitan.inventory.open_module"
-      ],
-      "loop": null,
-      "name": "打开库存模块",
-      "outputs": [
-        "inventory_module_opened"
-      ],
-      "pending_confirmation_ids": [],
-      "recovery": [
-        "verify module marker before repeating navigation"
-      ],
-      "resume": "verify_then_run",
-      "retry": {
-        "backoff_multiplier": 1.0,
-        "delay_seconds": 0.0,
-        "max_attempts": 2,
-        "retryable_errors": [
-          "instruction_execution_failed",
-          "instruction_verification_failed"
-        ]
-      },
-      "side_effect": "read",
-      "success_conditions": [
-        "inventory module marker is visible"
-      ],
-      "timeout_seconds": 30.0,
-      "unresolved_element_ids": [],
-      "unresolved_instruction_ids": []
-    },
-    {
-      "action": "open_product_stock",
-      "conditions": [],
-      "element_refs": [
-        "jushuitan.erp.inventory.product_stock_entry",
-        "jushuitan.erp.product_stock.page_marker"
-      ],
-      "id": "S002",
-      "inputs": [],
-      "instruction_refs": [
-        "jushuitan.inventory.open_product_stock"
-      ],
-      "loop": null,
-      "name": "进入商品库存",
-      "outputs": [
-        "product_stock_opened"
-      ],
-      "pending_confirmation_ids": [],
-      "recovery": [
-        "verify product stock marker before repeating navigation"
-      ],
-      "resume": "verify_then_run",
-      "retry": {
-        "backoff_multiplier": 1.0,
-        "delay_seconds": 0.0,
-        "max_attempts": 2,
-        "retryable_errors": [
-          "instruction_execution_failed",
-          "instruction_verification_failed"
-        ]
-      },
-      "side_effect": "read",
-      "success_conditions": [
-        "product stock page marker is visible"
-      ],
-      "timeout_seconds": 30.0,
-      "unresolved_element_ids": [],
-      "unresolved_instruction_ids": []
-    },
-    {
-      "action": "select_configured_brand",
-      "conditions": [],
-      "element_refs": [
-        "jushuitan.erp.product_stock.reset_button",
-        "jushuitan.erp.product_stock.brand_selector"
-      ],
-      "id": "S003",
-      "inputs": [
-        "stores.<account_id>.brand_value"
-      ],
-      "instruction_refs": [
-        "jushuitan.inventory.select_brand"
-      ],
-      "loop": null,
-      "name": "根据本地配置精确选择品牌",
-      "outputs": [
-        "selected_brand",
-        "selection_visible"
-      ],
-      "pending_confirmation_ids": [],
-      "recovery": [
-        "normalize the real selected checkbox set before continuing"
-      ],
-      "resume": "verify_then_run",
-      "retry": {
-        "backoff_multiplier": 1.0,
-        "delay_seconds": 0.0,
-        "max_attempts": 2,
-        "retryable_errors": [
-          "instruction_execution_failed",
-          "instruction_verification_failed"
-        ]
-      },
-      "side_effect": "read",
-      "success_conditions": [
-        "only the configured brand is selected",
-        "brand popup is hidden before search"
-      ],
-      "timeout_seconds": 30.0,
-      "unresolved_element_ids": [],
-      "unresolved_instruction_ids": []
-    },
-    {
-      "action": "search_inventory",
-      "conditions": [],
-      "element_refs": [
-        "jushuitan.erp.product_stock.brand_selector",
-        "jushuitan.erp.product_stock.search_button",
-        "jushuitan.erp.product_stock.filter_applied_marker"
-      ],
-      "id": "S004",
-      "inputs": [
-        "stores.<account_id>.brand_value"
-      ],
-      "instruction_refs": [
-        "jushuitan.inventory.search"
-      ],
-      "loop": null,
-      "name": "搜索并验证筛选完成",
-      "outputs": [
-        "filter_applied"
-      ],
-      "pending_confirmation_ids": [],
-      "recovery": [
-        "verify and normalize the exact filter before searching again"
-      ],
-      "resume": "verify_then_run",
-      "retry": {
-        "backoff_multiplier": 1.0,
-        "delay_seconds": 0.0,
-        "max_attempts": 2,
-        "retryable_errors": [
-          "instruction_execution_failed",
-          "instruction_verification_failed"
-        ]
-      },
-      "side_effect": "read",
-      "success_conditions": [
-        "filtered result marker is visible",
-        "only the configured brand remains selected",
-        "brand popup is hidden"
-      ],
-      "timeout_seconds": 60.0,
-      "unresolved_element_ids": [],
-      "unresolved_instruction_ids": []
-    },
-    {
-      "action": "export_inventory_file",
-      "conditions": [],
-      "element_refs": [
-        "jushuitan.erp.product_stock.brand_selector",
-        "jushuitan.erp.product_stock.export_menu",
-        "jushuitan.erp.product_stock.export_stock_option"
-      ],
-      "id": "S005",
-      "inputs": [
-        "safe_export_filename",
-        "stores.<account_id>.brand_value"
-      ],
-      "instruction_refs": [
-        "jushuitan.inventory.export_stock"
-      ],
-      "loop": null,
-      "name": "导出库存并验证下载",
-      "outputs": [
-        "download_path",
-        "sha256",
-        "size_bytes"
-      ],
-      "pending_confirmation_ids": [],
-      "recovery": [
-        "verify an existing completed download before downloading again"
-      ],
-      "resume": "verify_then_run",
-      "retry": {
-        "backoff_multiplier": 1.0,
-        "delay_seconds": 0.0,
-        "max_attempts": 1,
-        "retryable_errors": []
-      },
-      "side_effect": "read",
-      "success_conditions": [
-        "only the configured brand remains selected",
-        "brand popup is hidden",
-        "download path is inside the run directory",
-        "download is non-empty and hash is reproducible"
-      ],
-      "timeout_seconds": 360.0,
-      "unresolved_element_ids": [],
-      "unresolved_instruction_ids": []
-    }
-  ],
-  "test_requirements": {
-    "external_write_preview_required": false,
-    "real_browser_authorization_required": true,
-    "real_browser_required": true,
-    "required_suites": [
-      "unit",
-      "fake_browser",
-      "static",
-      "architecture_boundary",
-      "checkpoint_recovery",
-      "sensitive_data"
     ]
-  },
-  "unresolved_elements": [],
-  "unresolved_instructions": []
+  }
 }

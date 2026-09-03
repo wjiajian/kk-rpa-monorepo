@@ -1,0 +1,29 @@
+schema_version = 1
+kind = "element"
+id = "jushuitan.erp.shell.account_identity_surface"
+version = "0.1.0"
+name = "已登录页面账号身份文本载体"
+platform = "jushuitan"
+product = "erp"
+page = "authenticated_shell"
+component = "account_identity_surface"
+status = "verified"
+dependencies = []
+locator_status = "verified"
+description = "已登录页面正文文本载体；只在内存中检查本地期望账号标识，不记录页面文本或真实身份。"
+
+[locator]
+value = "xpath://body"
+
+[verification]
+batch_id = "account-session-verify-20260903"
+run_id = "account-session-preview-20260903"
+mode = "preview"
+match_count = 1
+visible = true
+readable = true
+interaction = "read_only"
+wrong_identity_rejected = true
+refresh_stable = true
+evidence = "apps/inventory_jushuitan_export_stock/GENERATION_REPORT.md"
+external_business_writes_executed = false

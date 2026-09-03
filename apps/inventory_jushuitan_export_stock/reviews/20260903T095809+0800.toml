@@ -1,0 +1,65 @@
+schema_version = 1
+review_id = "review-20260903T095809+0800"
+app_id = "jushuitan.inventory.export_stock"
+app_version = "0.2.0"
+requirement_revision = 107
+requirement_hash = "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14"
+reviewer = "RPA_DEVELOPER_001"
+reviewed_at = "2026-09-03T09:58:09+08:00"
+decision = "approved"
+authorization = "explicit_natural_language"
+status_after_review = "ready_for_push"
+business_acceptance = "not_declared"
+
+review_scope = [
+  "current 0.2.0 application program, configuration contracts, tests, and V2 requirement files",
+  "17 verified public elements and 7 verified public instructions after catalog cleanup",
+  "account-session-preview-20260903 Preview evidence accepted for the current requirement hash",
+  "commit all current requirement-related changes and push main to origin/main",
+]
+
+[preview]
+authorization_batch = "account-session-verify-20260903"
+run_id = "account-session-preview-20260903"
+result = "succeeded"
+requirement_hash_at_execution = "sha256:30e0219675d5fdc4f568268e14a73b3e5bb49d17f701d68f9454e40c0f66dfc8"
+accepted_for_current_requirement_hash = true
+download_size_bytes = 218367
+download_sha256 = "sha256:bcd6cc8e21af97f2c81d8d2d75e7bdeb0955b5cb17fca3ef86d9448897ec9cc9"
+download_rows_including_header = 1331
+page_result_count = 1330
+resume_idempotency = "passed"
+external_business_writes_executed = false
+external_write_validation = "not_required_by_requirement"
+
+[tests]
+application = "26 passed"
+rpa_core = "138 passed"
+total = "164 passed"
+check = "passed"
+catalog_snapshot = "24/24 passed"
+public_catalog = "24 items; no unreferenced or unknown locked assets"
+memory_spec_differences = 0
+architecture_issues = 0
+sensitive_content_issues = 0
+uv_lock_check = "passed"
+git_diff_check = "passed"
+
+[reviewed_content]
+algorithm = "sha256"
+file_count = 38
+change_set_hash = "sha256:cdf75ec9d807aefb98e95958bdb9208de301fbcbd4a57e06554b588e1c368d65"
+review_record_excluded_from_change_set = true
+source_head = "5674fbef45605ea09855d45ad0d9a6b508a8098f"
+app_manifest = "sha256:7e8fde097d897ccbdc647a501316b89d9d38b997e968979458ad377e72ddf5c5"
+requirement_memory = "sha256:8b076ba502ba9020201cac5fad256bd87bbd530404b093006c2a938ac7755f38"
+requirement_spec = "sha256:7d83f7e08d9382a3905ed19c0c52fe31e30e368c4b94100ed6bdd811804e37c0"
+catalog_lock = "sha256:1cb599b6a4e40ae11654fc4888f6ef35dc1e8b82ad6406719ac8ffdb06076eeb"
+generation_report = "sha256:78bb5687086aecad2a25348090c3e446ec314af038b7cbfafa6cf8f36e3b36b3"
+
+non_blocking_notes = [
+  "The accepted Preview ran before candidate-resolution metadata was normalized to the current requirement hash; browser actions, locators, instruction contracts, and success conditions are unchanged.",
+  "The superseded require_session public instruction was removed only after application-lock and public-dependency audits found no references; the current application snapshot already used ensure_account_session.",
+  "No NAS, Feishu, database, formal Excel, or other external business write was executed or required by this application.",
+  "Developer review approval does not declare business acceptance.",
+]
