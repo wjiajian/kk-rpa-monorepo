@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 import re
-from typing import Iterable, Mapping, Protocol, runtime_checkable
+from typing import Callable, Iterable, Mapping, Protocol, runtime_checkable
 
 
 _ELEMENT_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]*$")
@@ -23,6 +23,16 @@ class BrowserError(RuntimeError):
 
     error_code = "browser_error"
     retryable = False
+
+
+class BrowserContextGuardError(BrowserError):
+    """Internal transport for a context guard rejection through an adapter."""
+
+    error_code = "browser_context_guard_rejected"
+
+    def __init__(self, cause: Exception) -> None:
+        self.cause = cause
+        super().__init__("browser context origin guard rejected the operation")
 
 
 class NavigationError(BrowserError):
@@ -143,6 +153,7 @@ class SecretValue:
 
 
 SecretLike = str | SecretValue
+BrowserContextGuard = Callable[[str | None], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +207,9 @@ class ArtifactRef:
 class BrowserActions(Protocol):
     """The only browser surface visible to business applications."""
 
+    @property
+    def current_url(self) -> str | None: ...
+
     def open(self, url: str, *, wait: str = "document") -> None: ...
 
     def exists(self, element: ElementSpec, *, timeout: float = 0.0) -> bool: ...
@@ -221,6 +235,57 @@ class BrowserActions(Protocol):
         name: str | None = None,
         full_page: bool = False,
     ) -> ArtifactRef: ...
+
+
+@runtime_checkable
+class ContextGuardedBrowserActions(BrowserActions, Protocol):
+    """Runtime adapter surface that accepts an origin guard per element call."""
+
+    def exists(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> bool: ...
+
+    def click(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None: ...
+
+    def input(
+        self,
+        element: ElementSpec,
+        value: SecretLike,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None: ...
+
+    def text(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> str: ...
+
+    def select(
+        self,
+        element: ElementSpec,
+        value: SecretLike,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None: ...
+
+    def download(
+        self,
+        element: ElementSpec,
+        *,
+        filename: str | None = None,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> DownloadRef: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +319,7 @@ class FakeBrowserActions:
     visible_element_ids: Iterable[str] = field(default_factory=tuple)
     downloads: Mapping[str, FakeDownload] = field(default_factory=dict)
     text_values: Mapping[str, str] = field(default_factory=dict)
+    context_urls: Mapping[str, str | None] = field(default_factory=dict)
     actions: list[BrowserActionRecord] = field(default_factory=list, init=False)
     current_url: str | None = field(default=None, init=False)
     _visible: frozenset[str] = field(init=False, repr=False)
@@ -278,7 +344,31 @@ class FakeBrowserActions:
             raise ValueError(f"invalid fake text element IDs: {invalid_text_ids!r}")
         if any(not isinstance(value, str) for value in self.text_values.values()):
             raise ValueError("fake text values must be strings")
+        invalid_context_ids = sorted(
+            element_id
+            for element_id in self.context_urls
+            if not _ELEMENT_ID_PATTERN.fullmatch(element_id)
+        )
+        if invalid_context_ids:
+            raise ValueError(
+                f"invalid fake context element IDs: {invalid_context_ids!r}"
+            )
+        if any(
+            value is not None and not isinstance(value, str)
+            for value in self.context_urls.values()
+        ):
+            raise ValueError("fake context URLs must be strings or None")
         self._text_values = dict(self.text_values)
+
+    def context_url(self, element: ElementSpec) -> str | None:
+        """Return the deterministic browsing context URL for one element.
+
+        Unconfigured fake elements share the fake tab's URL. Tests can supply
+        ``None`` to model a lost frame context or another URL to model a
+        cross-origin frame.
+        """
+
+        return self.context_urls.get(element.id, self.current_url)
 
     def open(self, url: str, *, wait: str = "document") -> None:
         if not url.strip():
@@ -288,64 +378,118 @@ class FakeBrowserActions:
         self.current_url = url
         self.actions.append(BrowserActionRecord("open", detail=wait))
 
-    def exists(self, element: ElementSpec, *, timeout: float = 0.0) -> bool:
+    def exists(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> bool:
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
-        found = element.id in self._visible
-        self.actions.append(
-            BrowserActionRecord("exists", element.id, "present" if found else "missing")
-        )
-        return found
-
-    def click(self, element: ElementSpec) -> None:
-        self._require_visible(element)
-        self.actions.append(BrowserActionRecord("click", element.id))
-
-    def input(self, element: ElementSpec, value: SecretLike) -> None:
-        self._require_visible(element)
-        _require_runtime_value(value)
-        self.actions.append(BrowserActionRecord("input", element.id, "<redacted>"))
-
-    def text(self, element: ElementSpec) -> str:
-        self._require_visible(element)
+        self._guard_context(element, context_guard)
         try:
+            found = element.id in self._visible
+            self.actions.append(
+                BrowserActionRecord(
+                    "exists", element.id, "present" if found else "missing"
+                )
+            )
+            return found
+        finally:
+            self._guard_context(element, context_guard)
+
+    def click(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        self._guard_context(element, context_guard)
+        try:
+            self._require_visible(element)
+            self.actions.append(BrowserActionRecord("click", element.id))
+        finally:
+            self._guard_context(element, context_guard)
+
+    def input(
+        self,
+        element: ElementSpec,
+        value: SecretLike,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        self._guard_context(element, context_guard)
+        try:
+            self._require_visible(element)
+            _require_runtime_value(value)
+            self.actions.append(BrowserActionRecord("input", element.id, "<redacted>"))
+        finally:
+            self._guard_context(element, context_guard)
+
+    def text(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> str:
+        self._guard_context(element, context_guard)
+        try:
+            self._require_visible(element)
             value = self._text_values[element.id]
+            self.actions.append(BrowserActionRecord("text", element.id, "<redacted>"))
+            return value
         except KeyError as error:
             raise ElementActionError(
                 f"no fake text configured for element {element.id!r}"
             ) from error
-        self.actions.append(BrowserActionRecord("text", element.id, "<redacted>"))
-        return value
+        finally:
+            self._guard_context(element, context_guard)
 
-    def select(self, element: ElementSpec, value: SecretLike) -> None:
-        self._require_visible(element)
-        _require_runtime_value(value)
-        self.actions.append(BrowserActionRecord("select", element.id, "<redacted>"))
+    def select(
+        self,
+        element: ElementSpec,
+        value: SecretLike,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        self._guard_context(element, context_guard)
+        try:
+            self._require_visible(element)
+            _require_runtime_value(value)
+            self.actions.append(BrowserActionRecord("select", element.id, "<redacted>"))
+        finally:
+            self._guard_context(element, context_guard)
 
     def download(
         self,
         element: ElementSpec,
         *,
         filename: str | None = None,
+        context_guard: BrowserContextGuard | None = None,
     ) -> DownloadRef:
-        self._require_visible(element)
+        self._guard_context(element, context_guard)
         try:
-            fixture = self.downloads[element.id]
-        except KeyError as error:
-            raise DownloadError(
-                f"no fake download configured for element {element.id!r}"
-            ) from error
-        target_name = filename or fixture.filename
-        _validate_filename(target_name)
-        target_dir = self.run_dir / "downloads"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / target_name
-        if target.exists() and (target.is_symlink() or not target.is_file()):
-            raise DownloadError("download target is not one regular file")
-        target.write_bytes(fixture.content)
-        reference = DownloadRef.from_path(target)
-        self.actions.append(BrowserActionRecord("download", element.id, target_name))
-        return reference
+            self._require_visible(element)
+            try:
+                fixture = self.downloads[element.id]
+            except KeyError as error:
+                raise DownloadError(
+                    f"no fake download configured for element {element.id!r}"
+                ) from error
+            target_name = filename or fixture.filename
+            _validate_filename(target_name)
+            target_dir = self.run_dir / "downloads"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / target_name
+            if target.exists() and (target.is_symlink() or not target.is_file()):
+                raise DownloadError("download target is not one regular file")
+            target.write_bytes(fixture.content)
+            reference = DownloadRef.from_path(target)
+            self.actions.append(BrowserActionRecord("download", element.id, target_name))
+            return reference
+        finally:
+            self._guard_context(element, context_guard)
 
     def screenshot(
         self,
@@ -369,6 +513,19 @@ class FakeBrowserActions:
         if element.id not in self._visible:
             raise ElementLookupError(f"fake element is not visible: {element.id}")
 
+    def _guard_context(
+        self,
+        element: ElementSpec,
+        context_guard: BrowserContextGuard | None,
+    ) -> None:
+        if context_guard is not None:
+            try:
+                context_guard(self.context_url(element))
+            except BrowserContextGuardError:
+                raise
+            except Exception as error:
+                raise BrowserContextGuardError(error) from error
+
 
 def _require_runtime_value(value: SecretLike) -> str:
     revealed = value.reveal() if isinstance(value, SecretValue) else value
@@ -386,6 +543,9 @@ __all__ = [
     "ArtifactRef",
     "BrowserActionRecord",
     "BrowserActions",
+    "BrowserContextGuard",
+    "BrowserContextGuardError",
+    "ContextGuardedBrowserActions",
     "BrowserError",
     "DownloadError",
     "DownloadRef",

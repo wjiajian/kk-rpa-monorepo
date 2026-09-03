@@ -146,6 +146,35 @@ def test_requirement_defaults_capture_runtime_contract() -> None:
     assert requirement.steps[1].resume is ResumePolicy.VERIFY_THEN_RUN
     assert requirement.steps[1].side_effect is SideEffect.WRITE
     assert requirement.authorization_requirements.live_requires_separate_authorization
+    assert requirement.authorization_requirements.live_scope_fields == [
+        "app_id",
+        "app_version",
+        "program_id",
+        "program_version",
+        "requirement_hash",
+        "catalog_digest",
+        "operation",
+        "mode",
+        "run_id",
+        "resume_checkpoint_digest",
+        "resume_step_id",
+        "account_id",
+        "profile_id",
+        "allowed_origins",
+        "step_ids",
+        "browser_actions",
+        "element_ids",
+        "candidate_asset_refs",
+        "external_writes",
+        "external_writes.write_id",
+        "external_writes.step_id",
+        "external_writes.adapter",
+        "external_writes.target",
+        "external_writes.data_scope",
+        "external_writes.expected_record_count",
+        "external_writes.payload_digest",
+        "source_preview_run_id",
+    ]
     assert "checkpoint_recovery" in requirement.test_requirements.required_suites
 
 
@@ -285,9 +314,19 @@ def test_checked_in_schema_export_is_json_and_contains_contracts(tmp_path) -> No
 
     assert {path.name for path in paths} == {
         "app-manifest.schema.json",
+        "authorization-record.schema.json",
         "catalog-lock.schema.json",
         "requirement-spec.schema.json",
     }
+    authorization_schema = json.loads(
+        (tmp_path / "authorization-record.schema.json").read_text(encoding="utf-8")
+    )
+    assert authorization_schema["properties"]["schema_version"]["const"] == 1
+    assert "AuthorizationScope" in authorization_schema["$defs"]
+    assert "ExternalWriteScope" in authorization_schema["$defs"]
+    scope_properties = authorization_schema["$defs"]["AuthorizationScope"]["properties"]
+    assert "resume_checkpoint_digest" in scope_properties
+    assert "resume_step_id" in scope_properties
     requirement_schema = json.loads(
         (tmp_path / "requirement-spec.schema.json").read_text(encoding="utf-8")
     )

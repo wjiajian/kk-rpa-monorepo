@@ -1,0 +1,560 @@
+{
+  "$defs": {
+    "AuthorizationClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claimed_at": {
+          "format": "date-time",
+          "title": "Claimed At",
+          "type": "string"
+        },
+        "process_id": {
+          "minimum": 1,
+          "title": "Process Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claimed_at",
+        "process_id"
+      ],
+      "title": "AuthorizationClaim",
+      "type": "object"
+    },
+    "AuthorizationOperation": {
+      "enum": [
+        "login",
+        "verify_candidates",
+        "run",
+        "resume"
+      ],
+      "title": "AuthorizationOperation",
+      "type": "string"
+    },
+    "AuthorizationOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "evidence_refs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "completed_at"
+      ],
+      "title": "AuthorizationOutcome",
+      "type": "object"
+    },
+    "AuthorizationScope": {
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "allowed_origins": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Origins",
+          "type": "array"
+        },
+        "app_id": {
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "App Id",
+          "type": "string"
+        },
+        "app_version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "App Version",
+          "type": "string"
+        },
+        "browser_actions": {
+          "items": {
+            "$ref": "#/$defs/BrowserAction"
+          },
+          "minItems": 1,
+          "title": "Browser Actions",
+          "type": "array"
+        },
+        "candidate_asset_refs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Candidate Asset Refs",
+          "type": "array"
+        },
+        "catalog_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Catalog Digest",
+          "type": "string"
+        },
+        "element_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Element Ids",
+          "type": "array"
+        },
+        "external_writes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ExternalWriteScope"
+          },
+          "title": "External Writes",
+          "type": "array"
+        },
+        "mode": {
+          "$ref": "#/$defs/RunMode"
+        },
+        "operation": {
+          "$ref": "#/$defs/AuthorizationOperation"
+        },
+        "profile_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "program_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+          "title": "Program Id",
+          "type": "string"
+        },
+        "program_version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Program Version",
+          "type": "string"
+        },
+        "requirement_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Requirement Hash",
+          "type": "string"
+        },
+        "resume_checkpoint_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resume Checkpoint Digest"
+        },
+        "resume_step_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resume Step Id"
+        },
+        "run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "source_preview_run_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Preview Run Id"
+        },
+        "step_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Step Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "app_id",
+        "app_version",
+        "program_id",
+        "program_version",
+        "requirement_hash",
+        "catalog_digest",
+        "operation",
+        "mode",
+        "run_id",
+        "account_id",
+        "profile_id",
+        "allowed_origins",
+        "step_ids",
+        "browser_actions"
+      ],
+      "title": "AuthorizationScope",
+      "type": "object"
+    },
+    "AuthorizationStatus": {
+      "enum": [
+        "requested",
+        "granted",
+        "claimed",
+        "succeeded",
+        "failed",
+        "unknown",
+        "revoked"
+      ],
+      "title": "AuthorizationStatus",
+      "type": "string"
+    },
+    "BrowserAction": {
+      "enum": [
+        "open",
+        "exists",
+        "click",
+        "input",
+        "text",
+        "select",
+        "download",
+        "screenshot"
+      ],
+      "title": "BrowserAction",
+      "type": "string"
+    },
+    "ExternalWriteClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "claimed_at": {
+          "format": "date-time",
+          "title": "Claimed At",
+          "type": "string"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "status": {
+          "$ref": "#/$defs/ExternalWriteStatus",
+          "default": "claimed"
+        },
+        "write_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Write Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "write_id",
+        "claimed_at"
+      ],
+      "title": "ExternalWriteClaim",
+      "type": "object"
+    },
+    "ExternalWriteScope": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "default": "external",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "data_scope": {
+          "additionalProperties": true,
+          "title": "Data Scope",
+          "type": "object"
+        },
+        "expected_record_count": {
+          "minimum": 0,
+          "title": "Expected Record Count",
+          "type": "integer"
+        },
+        "payload_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Payload Digest",
+          "type": "string"
+        },
+        "step_id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "target": {
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "write_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Write Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "write_id",
+        "step_id",
+        "target",
+        "expected_record_count",
+        "payload_digest"
+      ],
+      "title": "ExternalWriteScope",
+      "type": "object"
+    },
+    "ExternalWriteStatus": {
+      "enum": [
+        "claimed",
+        "succeeded",
+        "failed",
+        "unknown"
+      ],
+      "title": "ExternalWriteStatus",
+      "type": "string"
+    },
+    "RunMode": {
+      "enum": [
+        "preview",
+        "live"
+      ],
+      "title": "RunMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approval_reference": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approval Reference"
+    },
+    "authorization_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Authorization Id",
+      "type": "string"
+    },
+    "authorized_by": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Authorized By"
+    },
+    "claim": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthorizationClaim"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "granted_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Granted At"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthorizationOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requested_by": {
+      "minLength": 1,
+      "title": "Requested By",
+      "type": "string"
+    },
+    "revocation_reason": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revocation Reason"
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revoked At"
+    },
+    "revoked_by": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revoked By"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "scope": {
+      "$ref": "#/$defs/AuthorizationScope"
+    },
+    "scope_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Scope Digest",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/AuthorizationStatus"
+    },
+    "write_claims": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ExternalWriteClaim"
+      },
+      "title": "Write Claims",
+      "type": "array"
+    }
+  },
+  "required": [
+    "authorization_id",
+    "status",
+    "scope",
+    "scope_digest",
+    "requested_by",
+    "requested_at"
+  ],
+  "title": "AuthorizationRecord",
+  "type": "object"
+}

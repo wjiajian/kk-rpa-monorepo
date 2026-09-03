@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import errno
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ from .contracts import RetryPolicy, ResumePolicy, RunMode, SideEffect, StepStatu
 from .events import JsonlEventLogger, sanitize_event_value
 
 if TYPE_CHECKING:
+    from .authorization import AuthorizationSession
     from .instructions import InstructionRegistry
 
 
@@ -65,6 +67,10 @@ class CheckpointError(RuntimeError):
 
 class CheckpointIdentityError(CheckpointError):
     error_code = "checkpoint_identity_mismatch"
+
+
+class CheckpointAuthorizationMismatchError(CheckpointError):
+    error_code = "authorization_scope_mismatch"
 
 
 class InvalidStepTransition(CheckpointError):
@@ -346,6 +352,17 @@ class ExecutionContext:
         return self.service("browser")
 
     @property
+    def authorization(self) -> "AuthorizationSession":
+        from .authorization import AuthorizationSession
+
+        session = self.service("authorization")
+        if not isinstance(session, AuthorizationSession):
+            raise RuntimeContractError(
+                "service 'authorization' must be an AuthorizationSession"
+            )
+        return session
+
+    @property
     def instructions(self) -> "InstructionRegistry":
         from .instructions import InstructionRegistry
 
@@ -506,6 +523,22 @@ class CheckpointStore:
             )
 
 
+def checkpoint_digest(payload: Mapping[str, Any]) -> str:
+    """Return the canonical digest used to bind a Resume Authorization to state."""
+
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise CheckpointError("checkpoint must contain finite JSON values") from error
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
 @dataclass(frozen=True, slots=True)
 class RunResult:
     app_id: str
@@ -582,6 +615,7 @@ class Runner:
             store.validate_identity(existing, context)
             checkpoint = existing
             self._validate_checkpoint_steps(checkpoint, program)
+            self._validate_resume_authorization(checkpoint, program, context)
             event_type = "run.resumed"
         else:
             if existing is not None:
@@ -915,6 +949,69 @@ class Runner:
             unexpected = sorted(stored_ids - expected_ids)
             raise CheckpointError(
                 f"checkpoint step set mismatch; missing={missing}, unexpected={unexpected}"
+            )
+
+    @staticmethod
+    def _validate_resume_authorization(
+        checkpoint: Mapping[str, Any],
+        program: BaseProgram,
+        context: ExecutionContext,
+    ) -> None:
+        """Recheck the claimed Resume scope against the state read under the run lock."""
+
+        if "authorization" not in context.services:
+            return
+
+        from .authorization import AuthorizationOperation
+
+        authorization = context.authorization
+        authorization.assert_active()
+        scope = authorization.scope
+        expected_identity = {
+            "app_id": context.app_id,
+            "program_id": context.program_id,
+            "program_version": context.program_version,
+            "requirement_hash": context.requirement_hash,
+            "run_id": context.run_id,
+            "account_id": context.account_id,
+            "mode": _value(context.mode),
+        }
+        scoped_identity = {
+            "app_id": scope.app_id,
+            "program_id": scope.program_id,
+            "program_version": scope.program_version,
+            "requirement_hash": scope.requirement_hash,
+            "run_id": scope.run_id,
+            "account_id": scope.account_id,
+            "mode": _value(scope.mode),
+        }
+        if (
+            scope.operation is not AuthorizationOperation.RESUME
+            or scoped_identity != expected_identity
+        ):
+            raise CheckpointAuthorizationMismatchError(
+                "claimed authorization does not match the Resume execution context"
+            )
+
+        steps = checkpoint.get("steps")
+        assert isinstance(steps, Mapping)  # checked by _validate_checkpoint_steps
+        actual_resume_step_id: str | None = None
+        for step in program.steps:
+            record = steps.get(step.spec.step_id)
+            if not isinstance(record, Mapping) or "status" not in record:
+                raise CheckpointError(
+                    f"checkpoint step record is invalid: {step.spec.step_id}"
+                )
+            if _value(record["status"]) != _value(StepStatus.SUCCEEDED):
+                actual_resume_step_id = step.spec.step_id
+                break
+
+        if (
+            checkpoint_digest(checkpoint) != scope.resume_checkpoint_digest
+            or actual_resume_step_id != scope.resume_step_id
+        ):
+            raise CheckpointAuthorizationMismatchError(
+                "checkpoint no longer matches the claimed Resume authorization"
             )
 
     def _recover_or_prepare(

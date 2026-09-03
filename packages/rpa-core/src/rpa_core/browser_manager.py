@@ -48,6 +48,15 @@ class BrowserPortLeaseError(BrowserManagerError):
 class BrowserStartError(BrowserManagerError):
     error_code = "browser_start_failed"
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        real_browser_launched: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.real_browser_launched = real_browser_launched
+
 
 class BrowserLifecycleError(BrowserManagerError):
     error_code = "browser_lifecycle_failed"
@@ -265,6 +274,12 @@ class BrowserManager:
             raise BrowserProfileActiveError(
                 f"profile is already active in this manager: {spec.profile_id}"
             )
+        run_path = Path(run_dir)
+        _ensure_safe_run_directory(run_path, run_id)
+        if action_timeout <= 0 or download_timeout <= 0:
+            raise BrowserConfigurationError(
+                "browser action and download timeouts must be positive"
+            )
         _ensure_directory(self.runtime_root, "browser runtime root")
         _ensure_directory(spec.profile_dir, "browser profile")
         profile_lock = RunDirectoryLock(
@@ -303,7 +318,7 @@ class BrowserManager:
                 lifecycle=spec.lifecycle,
                 actions=DrissionBrowserActions(
                     tab,
-                    run_dir,
+                    run_path,
                     action_timeout=action_timeout,
                     download_timeout=download_timeout,
                 ),
@@ -323,9 +338,19 @@ class BrowserManager:
             if port_lease is not None:
                 port_lease.release()
             profile_lock.release()
+            if isinstance(error, BrowserStartError):
+                if browser is not None and not error.real_browser_launched:
+                    raise BrowserStartError(
+                        str(error),
+                        real_browser_launched=True,
+                    ) from error
+                raise
             if isinstance(error, BrowserManagerError):
                 raise
-            raise BrowserStartError(f"cannot start profile: {spec.profile_id}") from error
+            raise BrowserStartError(
+                f"cannot start profile: {spec.profile_id}",
+                real_browser_launched=browser is not None,
+            ) from error
 
     def finish(self, session: BrowserSession) -> None:
         self._require_owned_active(session)
@@ -404,6 +429,23 @@ def _ensure_directory(path: Path, label: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     if path.is_symlink() or not path.is_dir():
         raise BrowserConfigurationError(f"{label} must be one directory")
+
+
+def _ensure_safe_run_directory(path: Path, run_id: str) -> None:
+    if not _RUN_ID_PATTERN.fullmatch(run_id):
+        raise BrowserConfigurationError(f"invalid run_id: {run_id!r}")
+    if path.name != run_id:
+        raise BrowserConfigurationError("run directory name must match run_id")
+    parent = path.parent
+    if parent.is_symlink() or path.is_symlink():
+        raise BrowserConfigurationError(
+            "browser run directory paths must not be symbolic links"
+        )
+    _ensure_directory(path, "browser run directory")
+    if parent.is_symlink() or path.is_symlink():
+        raise BrowserConfigurationError(
+            "browser run directory paths changed while creating them"
+        )
 
 
 def _port_is_available(port: int) -> bool:

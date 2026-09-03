@@ -4,7 +4,7 @@
 
 ## 当前实现基线
 
-截至 2026-09-02，`rpa-core 0.6.0` 已落地无副作用契约和 DrissionPage 4.1.1.4 动作适配器：
+截至 2026-09-03，`rpa-core 0.7.0` 已落地无副作用契约和 DrissionPage 4.1.1.4 动作适配器：
 
 - `BrowserActions`：`open`、`exists`、`click`、`input`、`text`、`select`、`download`、`screenshot`；
 - `ElementSpec`：稳定元素 ID，允许目标 locator 为空以显式表达未解析元素，并支持可选 `frame_locator`、`option_locator`、`selected_option_locator`、`popup_locator` 与 `dismiss_locator`；适配器在每次动作前重新解析 iframe，不把 frame 对象暴露给应用；所有 locator 只描述通用节点，不包含运行时业务值；
@@ -17,10 +17,11 @@
 - 适配器把底层导航、查找、动作和下载失败转换为公共稳定异常，不把 Tab、元素或 `DownloadMission` 暴露给应用。
 - `BrowserManager`：为每个 Profile 持有 OS 排他锁，通过机器级租约目录动态选择未监听端口，创建 `ChromiumOptions` 和 `Chromium`，并把 Tab 绑定为当前运行的 `DrissionBrowserActions`。
 - `BrowserLifecyclePolicy`：实现 `keep_open`、`reuse_until_idle` 和 `terminate_on_finish`；保留会话时 Profile 锁与端口租约持续由 Manager 持有，`shutdown()` 才统一释放。
+- `AuthorizedBrowserActions`：每次边界都校验 active Authorization Session、Step、Action、Element，并在调用前后校验 top-level Origin；固定内部工具流程中的 iframe 由冻结的 `ElementSpec.frame_locator` 约束，不再逐个执行 Origin allowlist。DrissionPage adapter 仍保留可选的 `ContextGuardedBrowserActions` 能力，供更严格的集成显式使用。
 
 生产适配器必须调用 `ElementSpec.require_locator()`；Fake 可以在 locator 尚未补抓时使用稳定 ID，从而验证完整流程而不伪造 CSS/XPath。应用通过 `ExecutionContext.browser` 获取该能力。
 
-当前已有一个应用完成 Fake 测试和一次已授权的 S001–S005 Preview 下载及幂等恢复验证；其中 16 个元素和 7 条指令已显式晋升顶层公共库并重新锁定到应用快照。指令目录的内容哈希排除 Python 自动生成的 `__pycache__`、`.pyc` 和 `.pyo`，其他额外文件仍会触发完整性失败。业务验收状态以应用生成报告和开发人员审核记录为准。公共授权契约要求 Preview 精确匹配 `app_id + run_id + account_id + mode`。协议扩展仍缺少 `find`、`find_all`、受控标签页、显式 frame 上下文管理器和统一动作事件；以下仍是目标协议，而不是已经全部交付的接口。
+当前已有一个应用完成 Fake 测试；其 17 个元素和 7 条指令已显式晋升顶层公共库并重新锁定到应用快照。0.3.0 已在授权运行 `preview-20260903T062356Z-df357a62` 完成 S001–S005 和本地下载，Developer Review 已通过，当前为 `ready_for_push`。指令目录的内容哈希排除 Python 自动生成的 `__pycache__`、`.pyc` 和 `.pyo`，其他额外文件仍会触发完整性失败。业务验收状态以应用 Generation Report 和 Developer Review Record 为准。公共 `AuthorizationScope` 精确绑定 Application/Program Version、Requirement/Catalog Digest、Operation、Mode、Run、Account、Profile fingerprint、Allowed Origins、Steps、Browser Actions、Elements、Candidate Assets 与 External Writes；Resume 还绑定 Checkpoint Digest 和 recovery Step。协议扩展仍缺少 `find`、`find_all`、受控标签页、显式 frame 上下文管理器和统一动作事件；以下仍是目标协议，而不是已经全部交付的接口。
 
 ## 目标协议
 
@@ -47,10 +48,10 @@ class BrowserActions(Protocol):
 ```text
 校验当前授权和运行状态
 → 记录 action.started
-→ 按 ElementSpec 重新定位
+→ 按 ElementSpec 解析实际 tab/frame context
 → 等待目标状态
 → 执行动作
-→ 验证动作后条件
+→ 复核 top-level Origin 和动作后条件
 → 记录耗时和脱敏结果
 → 返回框架引用
 ```

@@ -42,9 +42,21 @@
 - 未沉淀项：人机验证专用标识未在真实登录中出现，不生成定位器；登录未达到认证标识时统一截图并失败转人工。旧的独立品牌选中标识已由品牌选择器内部的真实选中集合契约替代。
 - 离线测试：通过。
 - 真实候选验证：批次 `account-session-verify-20260903`、运行 `account-session-preview-20260903` 已通过；登录用户名与页面租户身份语义不同的问题已通过本地 `identity_env` 映射解决，真实值未进入可提交文件。
-- 真实 Preview：同一运行完成 Prepare、S001–S005；页面显示目标品牌筛选和 1,330 条结果，下载 XLSX 为 1,331 行（含表头）、47 列、218,367 字节，未执行外部业务写入。
-- 幂等恢复：同一运行 ID 再次恢复时 S001–S005 全部跳过，下载文件未变化。
+- 真实 Preview：0.3.0 运行 `preview-20260903T062356Z-df357a62` 完成 Prepare、S001–S005，验证本地配置目标品牌并下载 218,378 字节的 XLSX，SHA-256 为 `sha256:b39e6b23dda9bf1f8415ab2d524afa2435ae9126aca33f9542cc19f4412e29c6`；未执行外部业务写入。
+- 幂等恢复：0.2.0 历史运行使用同一 Run ID 恢复时 S001–S005 全部跳过，下载文件未变化；0.3.0 本次完整 Preview 没有执行 Resume。
 - 详细证据、产物哈希和授权范围见 `GENERATION_REPORT.md`。
+
+## Authorization contract
+
+- 日常 Preview 可以执行 `rpa-app preview --account STORE_001`：CLI 自动生成 `run_id`/`authorization_id`，只展示账号、真实动作和 `external_writes`，以一次交互式 `y` 完成 grant 后立即 claim/run。该命令不提供非交互绕过；取消会把 request 标记为 `REVOKED`。完整 `authorization request|grant` 保留给 CI、自动化和排障。
+- `login`、`verify-candidates`、`run`、`resume` 都要求显式的 `run_id` 和 `authorization_id`。应用不再接受静态 Batch Constants。
+- 开发人员先用 `authorization request` 生成不可变的 `AuthorizationScope` 和 `scope_digest`，检查 `app_id`、`app_version`、`program_id`、`program_version`、`requirement_hash`、`catalog_digest`、`operation`、`mode`、`run_id`、`resume_checkpoint_digest`、`resume_step_id`、`account_id`、`profile_id`、`allowed_origins`、`step_ids`、`browser_actions`、`element_ids`、`candidate_asset_refs`、`external_writes` 和 `source_preview_run_id`，再用 exact `scope_digest`、`authorized_by`、`approval_reference` 和 `ttl_seconds` 执行 `authorization grant`。
+- `profile_id` 是实际 Profile directory 的本地 SHA-256 fingerprint，不是账号别名，也不暴露本机路径；配置在 request 后变化会造成 exact-scope mismatch。
+- `AuthorizationStore.claim()` 必须在创建 run directory 和构造 `BrowserManager` 之前完成；store 受 Application directory boundary 约束并拒绝 symlink ancestor。scope 必须 exact match，record 只能 claim 一次；Browser 启动前再次校验 expiry。`AuthorizedBrowserActions` 在每次 Browser Boundary 前后校验顶层 Origin，并校验 Step、Action 和 Element；固定业务 iframe 不单独执行 Origin allowlist。
+- `resume` 沿用原 `run_id` 和 checkpoint，但必须创建新的 `operation=resume` Authorization Record，并绑定 canonical `resume_checkpoint_digest` 与首个待恢复 `resume_step_id`。checkpoint 在 claim 前变化时 record 保持 `granted`；claim 后变化则由 Runner 在持有 `.run.lock`、重新读取 checkpoint 后且在 `Program.prepare()` 前拒绝，record 最终为 `failed`。旧 record 无论成功、失败或进程中断都不能复用。
+- `verify-candidates` 的 Authorization Record 必须绑定当时 `catalog.lock.json` 中全部 `candidate_asset_refs`；当前快照无 candidate，因此该命令会以 `candidate_scope_empty` 失败关闭，直到应用再次引入候选资产。Candidate verification 只允许 fresh run，不提供语义含混的 `--resume`。
+- Core 的 Live adapter 还会逐条 claim `external_writes.write_id`、`external_writes.step_id`、`external_writes.adapter`、`external_writes.target`、`external_writes.data_scope`、`external_writes.expected_record_count` 和 `external_writes.payload_digest`，随后按 exact `target` 和 `data_scope` 独立 read back；只有 `record_count` 与 canonical `payload_digest` 都匹配才写入 `SUCCEEDED` receipt。旧的进程内 `LiveWriteGrant` 单独不能越过 External Write boundary。
+- 当前应用没有 external business write，`live` request 和 execution 始终以 `application_live_unsupported` 失败关闭。0.2.0 的真实 Preview 与审核记录只作为历史证据，不授权 0.3.0 执行。
 
 ## 变更与测试历史
 
@@ -55,8 +67,13 @@
 - 2026-09-03：开发人员根据实际调用结果明确修正登录需求：标准 `run/resume` 必须自行确保会话并验证目标账号，不能只检查当前标签页的通用登录标识。旧审核随需求哈希和代码变化失效，但历史记录保留。
 - 2026-09-03：开发人员授权 `STORE_001` 账号身份候选验证和一次 Preview；同一运行经检查点恢复完成目标品牌筛选与一次库存下载，随后将两个新增稳定资产回灌公共库。
 - 2026-09-03：开发人员确认审核通过 0.2.0，接受运行 `account-session-preview-20260903` 的既有 Preview 证据覆盖当前需求哈希，并授权提交及推送；审核记录为 `reviews/20260903T095809+0800.toml`。
-- 程序版本：`0.2.0`。
-- 当前状态：`ready_for_push`；真实测试、自动测试和当前版本开发人员审核均已通过。
+- 2026-09-03：0.3.0 移除静态 Batch Constants，改为持久化、exact-scope、single-use Authorization Record；旧审核随版本和需求哈希变化失效，但历史记录保留。
+- 2026-09-03：在不改变底层 Authorization Contract 的前提下增加交互式 `preview` 快捷入口，把 request、scope review、grant 和 run 合并为一条命令与一次确认；非交互调用继续失败关闭。
+- 2026-09-03：0.3.0 首次真实 Preview `preview-20260903-001` 完成 S001、S002，S003 两次返回 `instruction_execution_failed`，S004、S005 未执行；Authorization Record 已 `failed`，未执行 external business write。
+- 2026-09-03：开发人员确认按内部工具边界移除逐 iframe Origin Gate 后，0.3.0 运行 `preview-20260903T062356Z-df357a62` 完成 S001–S005、本地 XLSX 下载和成功截图；Authorization Record 为 `succeeded`，未执行 external business write。
+- 2026-09-03：开发人员明确审核通过应用 0.3.0、当前 Requirement Hash 和运行 `preview-20260903T062356Z-df357a62`，同意进入 `ready_for_push` 并提交推送；审核记录为 `reviews/20260903T143849+0800.toml`。
+- 程序版本：`0.3.0`。
+- 当前状态：`ready_for_push`；当前 Developer Review 已完成。
 
 ## 机器可读规范
 
@@ -103,14 +120,14 @@ blocks_push = false
 [source]
 document_id = "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722"
 revision = 107
-requirement_hash = "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14"
+requirement_hash = "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e"
 document_url = "https://<tenant>.feishu.cn/docx/<redacted>"
 
 [application]
 app_id = "jushuitan.inventory.export_stock"
 app_slug = "inventory_jushuitan_export_stock"
 name = "聚水潭库存导出"
-version = "0.2.0"
+version = "0.3.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
 
 [[steps]]
@@ -264,5 +281,5 @@ external_write_preview_required = false
 [authorization_requirements]
 real_browser_requires_authorization = true
 live_requires_separate_authorization = true
-live_scope_fields = ["app_id", "run_id", "account_id", "target", "step_ids", "data_range", "expected_record_count"]
+live_scope_fields = ["app_id", "app_version", "program_id", "program_version", "requirement_hash", "catalog_digest", "operation", "mode", "run_id", "resume_checkpoint_digest", "resume_step_id", "account_id", "profile_id", "allowed_origins", "step_ids", "browser_actions", "element_ids", "candidate_asset_refs", "external_writes", "external_writes.write_id", "external_writes.step_id", "external_writes.adapter", "external_writes.target", "external_writes.data_scope", "external_writes.expected_record_count", "external_writes.payload_digest", "source_preview_run_id"]
 ```

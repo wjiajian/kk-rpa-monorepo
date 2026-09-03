@@ -3,14 +3,14 @@
   "source": {
     "document_id": "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722",
     "revision": 107,
-    "requirement_hash": "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14",
+    "requirement_hash": "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e",
     "document_url": "https://<tenant>.feishu.cn/docx/<redacted>"
   },
   "application": {
     "app_id": "jushuitan.inventory.export_stock",
     "app_slug": "inventory_jushuitan_export_stock",
     "name": "聚水潭库存导出",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "entrypoint": "inventory_jushuitan_export_stock.cli:main"
   },
   "steps": [
@@ -360,12 +360,32 @@
     "live_requires_separate_authorization": true,
     "live_scope_fields": [
       "app_id",
+      "app_version",
+      "program_id",
+      "program_version",
+      "requirement_hash",
+      "catalog_digest",
+      "operation",
+      "mode",
       "run_id",
+      "resume_checkpoint_digest",
+      "resume_step_id",
       "account_id",
-      "target",
+      "profile_id",
+      "allowed_origins",
       "step_ids",
-      "data_range",
-      "expected_record_count"
+      "browser_actions",
+      "element_ids",
+      "candidate_asset_refs",
+      "external_writes",
+      "external_writes.write_id",
+      "external_writes.step_id",
+      "external_writes.adapter",
+      "external_writes.target",
+      "external_writes.data_scope",
+      "external_writes.expected_record_count",
+      "external_writes.payload_digest",
+      "source_preview_run_id"
     ]
   }
 }

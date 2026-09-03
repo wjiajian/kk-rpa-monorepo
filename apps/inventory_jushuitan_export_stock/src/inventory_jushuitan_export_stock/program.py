@@ -13,7 +13,7 @@ from .steps import build_steps
 
 APP_ID = "jushuitan.inventory.export_stock"
 PROGRAM_ID = "jushuitan-inventory-export-stock"
-PROGRAM_VERSION = "0.2.0"
+PROGRAM_VERSION = "0.3.0"
 
 
 class InventoryExportProgram(BaseProgram):

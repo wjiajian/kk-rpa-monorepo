@@ -806,7 +806,7 @@ apps 目录不能直接导入 DrissionPage、底层飞书客户端、Excel 驱�
 
 ## 17. 浏览器包装和 DrissionPage
 
-当前项目使用 DrissionPage 4.x。`rpa-core 0.6.0` 已落地的公共 BrowserActions 为：
+当前项目使用 DrissionPage 4.x。`rpa-core 0.7.0` 已落地的公共 BrowserActions 为：
 
 ~~~python
 class BrowserActions(Protocol):
@@ -820,7 +820,7 @@ class BrowserActions(Protocol):
     def screenshot(self, *, name=None, full_page=False) -> ArtifactRef: ...
 ~~~
 
-`ElementSpec.frame_locator` 提供受控 iframe 上下文：每次元素动作先从托管 Tab 重新获取 frame，再在 frame 内重新定位目标。`text()` 对普通元素返回可见文本，对 `input` 返回当前 `value`。`select()` 对原生 `select` 使用精确文本选择；输入型自定义下拉若配置 `option_locator`，则在同一 frame 内等待选项并按“显示、启用、可点击、可见文本完全一致”筛选，只有唯一命中才点击；未配置时保留 Enter 兼容行为。多选组件可同时配置 `selected_option_locator`、`popup_locator` 和 `dismiss_locator`：适配器按真实 checkbox 状态移除所有非目标项、补选唯一目标项，随后点击不受浮层遮挡的安全关闭目标，并确认浮层不可见后才返回。0 命中、多命中、额外选中项无法清除、浮层未关闭和未知标签都失败关闭，运行时值不写入日志或定位器。`find`、`find_all`、标签页和显式 frame 上下文管理器仍属于后续扩展。
+`ElementSpec.frame_locator` 提供受控 iframe 上下文：每次元素动作先从托管 Tab 重新获取 frame，再在 frame 内重新定位目标。标准 `AuthorizedBrowserActions` 会在调用前后校验 top-level Origin，并校验 active Session、Step、Action 和 Element；固定内部工具流程中的 iframe 由冻结 locator 约束，不再单独执行 Origin allowlist。DrissionPage adapter 仍保留可选的 same-context guard 能力，供风险模型更严格的集成显式使用，但标准 wrapper 不注入。`text()` 对普通元素返回可见文本，对 `input` 返回当前 `value`。`select()` 对原生 `select` 使用精确文本选择；输入型自定义下拉若配置 `option_locator`，则在同一 frame 内等待选项并按“显示、启用、可点击、可见文本完全一致”筛选，只有唯一命中才点击；未配置时保留 Enter 兼容行为。多选组件可同时配置 `selected_option_locator`、`popup_locator` 和 `dismiss_locator`：适配器按真实 checkbox 状态移除所有非目标项、补选唯一目标项，随后点击不受浮层遮挡的安全关闭目标，并确认浮层不可见后才返回。0 命中、多命中、额外选中项无法清除、浮层未关闭和未知标签都失败关闭，运行时值不写入日志或定位器。`find`、`find_all`、标签页和显式 frame 上下文管理器仍属于后续扩展。
 
 包装器自动完成：
 
@@ -1025,6 +1025,10 @@ AI 生成后可自动运行：
 
 未授权时报告必须写“等待开发人员授权”，不能声明真实测试通过。
 
+所有 Real Browser invocation 使用 application-local `AuthorizationRecord`：先 request 不可变的 exact `AuthorizationScope`，Developer 核对 `scope_digest` 后短时 grant，执行入口在 Browser launch 前 atomic claim。Record 是 single-use；Scope 固定 Application/Program Version、Requirement/Catalog Digest、Operation、Mode、Run、Account、Profile fingerprint、Allowed Origins、Steps、Browser Actions、Elements、Candidate Assets 与 External Writes。Resume 必须使用新的 Record，并绑定 canonical Checkpoint Digest 和首个 recovery Step；Runner 在持有 run lock、重新读取 Checkpoint 后且在 `Program.prepare()` 前再次核对。完整决策见 ADR-027。
+
+应用可以额外提供面向开发人员的交互式 Preview convenience command。它把 `request → grant → claim → run` 编排成一条命令和一次 TTY 确认；确认页只需显示 Account、会发生的真实动作和 `external_writes`。完整 exact scope 仍持久化在 Authorization Record，并可通过显式 request 命令检查。快捷入口不得创建可复用 grant、接受 `--yes` 或供无人值守流程自动授权；取消必须 revoke request，CI 和 Scheduler 仍使用显式 request/grant。
+
 ### 21.3 Preview 模式
 
 开发人员首次授权真实流程测试后默认使用 preview：
@@ -1053,7 +1057,7 @@ runs/<run_id>/write-previews/
 - 数据范围和预计记录数；
 - 仅本次运行有效。
 
-写入后必须回读验证，记录实际数量、成功条件和证据。生成了预览不能写成真实写入成功。
+Live invocation 使用与 Preview 分开的 Developer grant，并包含 exact nested External Write scopes；adapter 在真正写入前逐条 atomic claim。写入后必须按 exact Target 与 Data Scope 独立 Read-back，只有 Record Count 与 canonical Payload Digest 都匹配才标记 `SUCCEEDED`；缺少回读能力时写前拒绝，写后无法确定结果时持久化 `UNKNOWN` 且不可重放。生成了预览不能写成真实写入成功。
 
 ## 22. 标准命令
 
@@ -1071,6 +1075,7 @@ uv sync
 uv run rpa-app doctor
 uv run rpa-app check
 uv run rpa-app test
+uv run rpa-app preview --account <account>  # optional interactive convenience command
 uv run rpa-app login
 uv run rpa-app verify-candidates
 uv run rpa-app run --mode preview
@@ -1084,6 +1089,7 @@ uv run rpa-app resume --run-id <run_id> --mode live
 | doctor | 检查 Python、Chrome、配置、目录、依赖和本地权限 |
 | check | 检查需求一致性、待确认项、元素、指令、快照哈希和架构边界 |
 | test | 运行无外部副作用测试 |
+| preview convenience | 交互展示 Account、真实动作和 `external_writes`，经一次明确确认后编排单次 Preview Authorization 与执行 |
 | login | 在单独授权下建立或确认指定持久化 Profile 的登录态 |
 | verify-candidates | 在单独授权下逐条验证候选元素和候选指令 |
 | preview | 执行已授权的真实读取和下载，拦截业务写入 |
@@ -1177,7 +1183,8 @@ run.cleaned
 - 页面截图；
 - URL 和标题；
 - 失败步骤和元素；
-- 脱敏堆栈；
+- 脱敏 Root Cause、Exception Chain 和结构化 Traceback；
+- repo-relative `file`、`line`、`function` 和安全 `code`；
 - 最近动作；
 - 下载状态；
 - 可选脱敏页面信息。
@@ -1446,7 +1453,7 @@ D:\RPAData\
 
 ## 34. 实施顺序
 
-> 2026-09-02 状态：`rpa-core 0.6.0` 已具备 V1 运行契约、V2 指令/快照契约、含 iframe、只读文本、精确集合选择和统一下载预算的 BrowserActions、Fake Browser、DrissionPage 动作适配器和 BrowserManager。首个独立应用已完成授权 Preview，并将实际流程验证的 16 个元素和 7 条指令显式晋升顶层公共库；业务验收状态仍以应用生成报告和开发人员审核记录为准。
+> 2026-09-03 状态：`rpa-core 0.7.0` 已具备 V1/V2 Contract、Instruction/Catalog Snapshot、Checkpoint/Resume、BrowserActions/BrowserManager，以及 durable exact-scope Authorization 和 Live independent Read-back Verification。标准 Browser Authorization 校验 top-level Origin、Step、Action 和 Element，固定内部业务 iframe 不再逐 Origin 授权。首个 Application 当前为 0.3.0，冻结 17 个 verified elements 和 7 个 verified instructions；运行 `preview-20260903T062356Z-df357a62` 已完成 S001–S005 和本地下载，Developer Review 已通过，状态为 `ready_for_push`。
 
 ### 阶段 1：需求协议和应用骨架
 
@@ -1457,7 +1464,7 @@ D:\RPAData\
 - 实现脱敏和误提交扫描；
 - 保留用假需求生成完整示例应用的验收任务。
 
-当前：公共契约和扫描器已实现；首个独立应用已完成真实 Preview、资产晋升和应用快照重建，当前处于 `ready_for_review`，尚未形成开发人员审核通过记录。
+当前：公共 Contract 和 scanner 已实现；首个独立 Application 已完成资产晋升和 Snapshot 重建。0.2.0 历史 Review Record 保留；0.3.0 Real Preview 和 Developer Review 已完成，因此处于 `ready_for_push`。
 
 ### 阶段 2：核心运行闭环
 
@@ -1467,7 +1474,7 @@ D:\RPAData\
 - 实现 preview/live 授权上下文；
 - 实现 JSON 日志和生成报告。
 
-当前：公共运行时已有相应实现和包级回归；应用级离线门禁已验证，真实 Preview/Resume/Live 尚未完成。
+当前：公共 Runtime、durable Authorization 和 redacted source-level Error Diagnostics 已完成包级回归；Application 0.3.0 的离线 Gate 与 Real Preview 已验证，Live 在该 Application 中保持 fail closed。
 
 ### 阶段 3：浏览器和元素
 
@@ -1480,7 +1487,7 @@ D:\RPAData\
 - 实现候选元素/指令到顶层源库的显式升级流程；
 - 保留本地浏览器 KEEP_OPEN。
 
-当前验收边界：无副作用测试覆盖公共契约、快照完整性和架构扫描；一个应用已完成 Profile 登录复用、S001–S005 Preview 下载和幂等恢复。双账号并发、开发人员审核及提交推送仍未完成，也不由单次 Preview 自动推定通过。
+当前验收边界：229 项无副作用测试覆盖公共 Contract、Snapshot Integrity、Architecture scan、top-level Origin 前后校验、固定 iframe 不单独授权、Resume under-lock binding、Live Read-back、Interactive Preview Authorization 编排，以及 Error Diagnostics 的 compact summary、full run-local JSON、Root Cause/Source Line 输出与 secret/path redaction。Application 0.3.0 运行 `preview-20260903T062356Z-df357a62` 已完成 S001–S005、本地下载和成功截图，且未执行 external business write；Developer Review 已通过。双账号并发和 Live 未验证，不属于当前应用提交范围。
 
 ### 阶段 4：Excel、飞书和告警
 

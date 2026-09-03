@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 import multiprocessing
 import os
@@ -9,10 +10,17 @@ import time
 import pytest
 
 from rpa_core import runtime as runtime_module
+from rpa_core.authorization import (
+    AuthorizationOperation,
+    AuthorizationScope,
+    AuthorizationStore,
+    BrowserAction,
+)
 from rpa_core.contracts import RetryPolicy, RunMode, SideEffect
 from rpa_core.events import JsonlEventLogger
 from rpa_core.runtime import (
     BaseProgram,
+    CheckpointAuthorizationMismatchError,
     CheckpointError,
     CheckpointIdentityError,
     CheckpointStore,
@@ -27,6 +35,7 @@ from rpa_core.runtime import (
     Step,
     StepRunError,
     StepSpec,
+    checkpoint_digest,
 )
 from rpa_core.services import FakeFeishuBackend, PreviewFeishuService
 
@@ -209,6 +218,84 @@ def test_resume_skips_successful_steps_and_continues_from_failure(tmp_path: Path
         "succeeded",
         "succeeded",
     ]
+
+
+def test_resume_rechecks_authorized_checkpoint_under_run_lock_before_prepare(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    initial_program = make_program(
+        [
+            RecordingStep("STEP-001", calls),
+            RecordingStep("STEP-002", calls, fail_times=1),
+        ]
+    )
+    run_dir = make_run_dir(tmp_path)
+    with pytest.raises(StepRunError):
+        Runner().run(initial_program, make_context(run_dir))
+
+    checkpoint_path = run_dir / "checkpoint.json"
+    checkpoint = read_json(checkpoint_path)
+    now = datetime.now(UTC)
+    scope = AuthorizationScope(
+        app_id="example.offline.export",
+        app_version="0.1.0",
+        program_id="offline-export",
+        program_version="0.1.0",
+        requirement_hash=REQUIREMENT_HASH,
+        catalog_digest="sha256:" + ("1" * 64),
+        operation=AuthorizationOperation.RESUME,
+        mode=RunMode.PREVIEW,
+        run_id="run-001",
+        resume_checkpoint_digest=checkpoint_digest(checkpoint),
+        resume_step_id="STEP-002",
+        account_id="STORE_001",
+        profile_id="PROFILE_001",
+        allowed_origins=("https://example.invalid",),
+        step_ids=("STEP-001", "STEP-002"),
+        browser_actions=(BrowserAction.EXISTS,),
+    )
+    store = AuthorizationStore(tmp_path / "authorizations")
+    request = store.create_request(scope, authorization_id="auth-resume-001", now=now)
+    store.grant(
+        request.authorization_id,
+        scope_digest=request.scope_digest,
+        authorized_by="developer",
+        approval_reference="approval-001",
+        expires_at=now + timedelta(minutes=10),
+        now=now + timedelta(seconds=1),
+    )
+    authorization = store.claim(
+        request.authorization_id,
+        scope,
+        now=now + timedelta(seconds=2),
+    )
+
+    checkpoint["updated_at"] = "changed-after-authorization"
+    CheckpointStore(checkpoint_path).save(checkpoint)
+    calls.clear()
+
+    class PrepareRecordingProgram(BaseProgram):
+        def prepare(self, context: ExecutionContext) -> None:
+            calls.append("prepare")
+
+    resumed_program = PrepareRecordingProgram(
+        initial_program.spec,
+        [
+            RecordingStep("STEP-001", calls),
+            RecordingStep("STEP-002", calls),
+        ],
+    )
+    resumed_context = make_context(run_dir)
+    resumed_context.services["authorization"] = authorization
+
+    with pytest.raises(
+        CheckpointAuthorizationMismatchError,
+        match="checkpoint no longer matches",
+    ):
+        Runner().run(resumed_program, resumed_context, resume=True)
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(

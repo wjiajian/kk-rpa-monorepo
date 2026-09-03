@@ -18,7 +18,7 @@ from inventory_jushuitan_export_stock.program import (
 )
 
 
-REQUIREMENT_HASH = "sha256:2ecfe62d15e2cbc3ae180b4e0acf3ca3cd3e1b5aa6bab1e330f41ba4c8687f14"
+REQUIREMENT_HASH = "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e"
 EXPORT_ELEMENT_ID = "jushuitan.erp.product_stock.export_stock_option"
 ACCOUNT_IDENTITY_ELEMENT_ID = "jushuitan.erp.shell.account_identity_surface"
 FIXTURE_IDENTITY = "fixture-user"

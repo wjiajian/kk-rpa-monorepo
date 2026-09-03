@@ -8,6 +8,7 @@ from DrissionPage.common import Keys
 from DrissionPage.errors import ContextLostError
 
 from rpa_core.browser import (
+    BrowserContextGuardError,
     DownloadError,
     ElementActionError,
     ElementLookupError,
@@ -75,6 +76,13 @@ DOWNLOAD = ElementSpec(
     "库存页",
     locator=Locator("text=导出库存"),
 )
+FRAMED_DOWNLOAD = ElementSpec(
+    "example.inventory.framed_download",
+    "frame 下载",
+    "库存页",
+    locator=Locator("text=导出库存"),
+    frame_locator=Locator("#product-stock-frame"),
+)
 
 
 class FakeElementWait:
@@ -83,6 +91,8 @@ class FakeElementWait:
 
     def clickable(self, **kwargs):
         self.element.wait_calls.append(kwargs)
+        if self.element.on_wait is not None:
+            self.element.on_wait()
         return self.element.clickable
 
 
@@ -142,6 +152,8 @@ class FakeClicker:
         by_js: bool,
         timeout: float,
     ) -> FakeMission:
+        if self.element.on_download is not None:
+            self.element.on_download()
         target = Path(save_path) / (rename or "download.fixture.csv")
         target.write_bytes(b"sku,stock\nSKU_001,12\n")
         self.element.download_args = {
@@ -164,6 +176,8 @@ class FakeElement:
         text: str = "",
         value: str | None = None,
         on_click: Callable[[], None] | None = None,
+        on_wait: Callable[[], None] | None = None,
+        on_download: Callable[[], None] | None = None,
     ) -> None:
         self.clickable = clickable
         self.displayed = displayed
@@ -172,6 +186,8 @@ class FakeElement:
         self.text = text
         self.value = value
         self.on_click = on_click
+        self.on_wait = on_wait
+        self.on_download = on_download
         self.wait = FakeElementWait(self)
         self.states = FakeElementStates(self)
         self.click = FakeClicker(self)
@@ -255,6 +271,40 @@ class FakeTab:
         target = Path(path) / name
         target.write_bytes(b"fake png bytes")
         return str(target)
+
+
+def test_current_url_exposes_adapter_boundary_value(tmp_path: Path) -> None:
+    tab = FakeTab()
+    tab.url = "https://example.invalid/inventory"
+    browser = DrissionBrowserActions(tab, tmp_path)
+
+    assert browser.current_url == "https://example.invalid/inventory"
+
+    del tab.url
+    assert browser.current_url is None
+
+
+def test_context_url_exposes_actual_frame_url_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    frame = FakeTab({"#framed-brand": FakeElement()})
+    frame.url = "https://embedded.example.invalid/inventory"
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+    tab.url = "https://example.invalid/inventory"
+    browser = DrissionBrowserActions(tab, tmp_path)
+
+    assert browser.context_url(USERNAME) == "https://example.invalid/inventory"
+    assert (
+        browser.context_url(FRAMED_INPUT)
+        == "https://embedded.example.invalid/inventory"
+    )
+    assert tab.frame_lookups == [("#product-stock-frame", 10.0)]
+
+    del frame.url
+    assert browser.context_url(FRAMED_INPUT) is None
+
+    tab.frames.clear()
+    assert browser.context_url(FRAMED_INPUT) is None
 
 
 def test_adapter_opens_page_and_waits_for_document(tmp_path: Path) -> None:
@@ -386,18 +436,40 @@ def test_adapter_exclusive_custom_select_removes_extra_checked_option(
                 return [popup]
             return []
 
+    events: list[str] = []
+
+    def dismiss_popup() -> None:
+        events.append("dismiss-click")
+        popup.displayed = False
+
     custom = FakeElement(tag="input")
-    dismiss = FakeElement(on_click=lambda: setattr(popup, "displayed", False))
+    dismiss = FakeElement(
+        on_click=dismiss_popup,
+        on_wait=lambda: events.append("dismiss-wait"),
+    )
     frame = ExclusiveFrame(
         {"#custom-brand": custom, "#dismiss-anchor": dismiss}
     )
+    frame.url = "https://example.invalid/embedded"
+    guarded_urls: list[str | None] = []
+
+    def guard(url: str | None) -> None:
+        assert url == "https://example.invalid/embedded"
+        guarded_urls.append(url)
+        events.append("guard")
+
+    tab = FakeTab(frames={"#product-stock-frame": frame})
     browser = DrissionBrowserActions(
-        FakeTab(frames={"#product-stock-frame": frame}),
+        tab,
         tmp_path,
         action_timeout=0.5,
     )
 
-    browser.select(CUSTOM_EXCLUSIVE_INPUT, "FIXTURE_BRAND")
+    browser.select(
+        CUSTOM_EXCLUSIVE_INPUT,
+        "FIXTURE_BRAND",
+        context_guard=guard,
+    )
 
     assert selected == ["FIXTURE_BRAND"]
     assert options["UNSET"].click_count == 1
@@ -405,6 +477,14 @@ def test_adapter_exclusive_custom_select_removes_extra_checked_option(
     assert custom.inputs == [("FIXTURE_BRAND", False, False)]
     assert dismiss.click_count == 1
     assert popup.displayed is False
+    assert len(guarded_urls) >= 10
+    assert len(tab.frame_lookups) == 7
+    dismiss_index = events.index("dismiss-click")
+    assert events[dismiss_index - 1 : dismiss_index + 2] == [
+        "guard",
+        "dismiss-click",
+        "guard",
+    ]
 
 
 def test_adapter_exclusive_custom_select_adds_missing_target_after_cleanup(
@@ -542,15 +622,21 @@ def test_adapter_rejects_obstructed_exact_custom_option(tmp_path: Path) -> None:
 def test_adapter_relocates_frame_before_each_element_action(tmp_path: Path) -> None:
     framed = FakeElement(tag="input", value="FIXTURE_BRAND")
     frame = FakeTab({"#framed-brand": framed})
+    frame.url = "https://example.invalid/embedded"
     tab = FakeTab(frames={"#product-stock-frame": frame})
     browser = DrissionBrowserActions(tab, tmp_path)
 
-    assert browser.exists(FRAMED_INPUT, timeout=2.0) is True
-    assert browser.text(FRAMED_INPUT) == "FIXTURE_BRAND"
-    browser.select(FRAMED_INPUT, "FIXTURE_BRAND")
+    def guard(url: str | None) -> None:
+        assert url == "https://example.invalid/embedded"
+
+    assert browser.exists(FRAMED_INPUT, timeout=2.0, context_guard=guard) is True
+    assert browser.text(FRAMED_INPUT, context_guard=guard) == "FIXTURE_BRAND"
+    browser.input(FRAMED_INPUT, "FIXTURE_BRAND", context_guard=guard)
+    browser.select(FRAMED_INPUT, "FIXTURE_BRAND", context_guard=guard)
 
     assert tab.frame_lookups == [
         ("#product-stock-frame", 2.0),
+        ("#product-stock-frame", 10.0),
         ("#product-stock-frame", 10.0),
         ("#product-stock-frame", 10.0),
     ]
@@ -558,7 +644,170 @@ def test_adapter_relocates_frame_before_each_element_action(tmp_path: Path) -> N
         ("#framed-brand", 2.0),
         ("#framed-brand", 10.0),
         ("#framed-brand", 10.0),
+        ("#framed-brand", 10.0),
     ]
+
+
+def test_adapter_guards_the_same_resolved_frame_before_and_after_click(
+    tmp_path: Path,
+) -> None:
+    allowed = "https://example.invalid/embedded"
+    unauthorized = "https://unexpected.invalid/embedded"
+
+    def guard(url: str | None) -> None:
+        if url != allowed:
+            raise RuntimeError("origin rejected")
+
+    blocked = FakeElement()
+    blocked_frame = FakeTab({"#framed-brand": blocked})
+    blocked_frame.url = unauthorized
+    blocked_tab = FakeTab(frames={"#product-stock-frame": blocked_frame})
+    blocked_browser = DrissionBrowserActions(blocked_tab, tmp_path / "blocked")
+
+    with pytest.raises(BrowserContextGuardError):
+        blocked_browser.click(FRAMED_INPUT, context_guard=guard)
+    assert blocked.click_count == 0
+    assert len(blocked_tab.frame_lookups) == 1
+
+    waiting_frame = FakeTab()
+    waiting_frame.url = allowed
+    waiting = FakeElement(
+        on_wait=lambda: setattr(waiting_frame, "url", unauthorized)
+    )
+    waiting_frame.elements["#framed-brand"] = waiting
+    waiting_tab = FakeTab(frames={"#product-stock-frame": waiting_frame})
+    waiting_browser = DrissionBrowserActions(
+        waiting_tab,
+        tmp_path / "waiting",
+    )
+
+    with pytest.raises(BrowserContextGuardError):
+        waiting_browser.click(FRAMED_INPUT, context_guard=guard)
+    assert waiting.click_count == 0
+    assert len(waiting_tab.frame_lookups) == 1
+
+    navigating_frame = FakeTab()
+    navigating_frame.url = allowed
+    navigating = FakeElement(
+        on_click=lambda: setattr(navigating_frame, "url", unauthorized)
+    )
+    navigating_frame.elements["#framed-brand"] = navigating
+    navigating_tab = FakeTab(
+        frames={"#product-stock-frame": navigating_frame}
+    )
+    navigating_browser = DrissionBrowserActions(
+        navigating_tab,
+        tmp_path / "navigating",
+    )
+
+    with pytest.raises(BrowserContextGuardError):
+        navigating_browser.click(FRAMED_INPUT, context_guard=guard)
+    assert navigating.click_count == 1
+    assert len(navigating_tab.frame_lookups) == 1
+
+
+def test_adapter_waits_for_transient_blank_frame_before_click(
+    tmp_path: Path,
+) -> None:
+    allowed = "https://example.invalid/embedded"
+
+    class LoadingFrame(FakeTab):
+        url_reads = 0
+
+        @property
+        def url(self) -> str:
+            self.url_reads += 1
+            return "about:blank" if self.url_reads == 1 else allowed
+
+    target = FakeElement()
+    frame = LoadingFrame({"#framed-brand": target})
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+    guarded_urls: list[str | None] = []
+
+    def guard(url: str | None) -> None:
+        guarded_urls.append(url)
+        if url != allowed:
+            raise RuntimeError("origin rejected")
+
+    browser = DrissionBrowserActions(tab, tmp_path, action_timeout=0.2)
+
+    browser.click(FRAMED_INPUT, context_guard=guard)
+
+    assert target.click_count == 1
+    assert len(tab.frame_lookups) == 2
+    assert [locator for locator, _ in frame.lookups] == ["#framed-brand"]
+    assert guarded_urls
+    assert set(guarded_urls) == {allowed}
+
+
+def test_adapter_keeps_persistent_blank_frame_fail_closed(
+    tmp_path: Path,
+) -> None:
+    target = FakeElement()
+    frame = FakeTab({"#framed-brand": target})
+    frame.url = "about:blank"
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+
+    def guard(url: str | None) -> None:
+        raise RuntimeError(f"origin rejected: {url}")
+
+    browser = DrissionBrowserActions(tab, tmp_path, action_timeout=0.01)
+
+    with pytest.raises(BrowserContextGuardError):
+        browser.click(FRAMED_INPUT, context_guard=guard)
+
+    assert target.click_count == 0
+    assert frame.lookups == []
+    assert len(tab.frame_lookups) >= 1
+
+
+def test_adapter_rechecks_after_input_and_option_waits_before_effect(
+    tmp_path: Path,
+) -> None:
+    allowed = "https://example.invalid/embedded"
+    unauthorized = "https://unexpected.invalid/embedded"
+
+    def guard(url: str | None) -> None:
+        if url != allowed:
+            raise RuntimeError("origin rejected")
+
+    input_frame = FakeTab()
+    input_frame.url = allowed
+    field = FakeElement(on_wait=lambda: setattr(input_frame, "url", unauthorized))
+    input_frame.elements["#framed-brand"] = field
+    input_tab = FakeTab(frames={"#product-stock-frame": input_frame})
+    input_browser = DrissionBrowserActions(input_tab, tmp_path / "input")
+
+    with pytest.raises(BrowserContextGuardError):
+        input_browser.input(FRAMED_INPUT, "FIXTURE_BRAND", context_guard=guard)
+    assert field.clear_calls == []
+    assert field.inputs == []
+    assert len(input_tab.frame_lookups) == 1
+
+    option_frame = FakeTab()
+    option_frame.url = allowed
+    option = FakeElement(
+        tag="div",
+        text="FIXTURE_BRAND",
+        on_wait=lambda: setattr(option_frame, "url", unauthorized),
+    )
+    option_frame.elements["#custom-brand"] = FakeElement(tag="input")
+    option_frame.element_lists["css:.brand-option"] = [[option]]
+    option_tab = FakeTab(frames={"#product-stock-frame": option_frame})
+    option_browser = DrissionBrowserActions(
+        option_tab,
+        tmp_path / "option",
+        action_timeout=0.2,
+    )
+
+    with pytest.raises(BrowserContextGuardError):
+        option_browser.select(
+            CUSTOM_INPUT_WITH_OPTIONS,
+            "FIXTURE_BRAND",
+            context_guard=guard,
+        )
+    assert option.click_count == 0
+    assert len(option_tab.frame_lookups) == 2
 
 
 def test_adapter_re_resolves_frame_after_transient_context_loss(tmp_path: Path) -> None:
@@ -605,13 +854,33 @@ def test_adapter_exists_and_unresolved_lookup_fail_closed(tmp_path: Path) -> Non
 
 
 def test_adapter_download_is_isolated_and_hashed(tmp_path: Path) -> None:
-    element = FakeElement()
+    events: list[str] = []
+
+    class ObservedFrame(FakeTab):
+        @property
+        def url(self) -> str:
+            events.append("guard")
+            return "https://example.invalid/embedded"
+
+    element = FakeElement(on_download=lambda: events.append("download"))
+    frame = ObservedFrame({"text=导出库存": element})
+    guarded_urls: list[str | None] = []
+
+    def guard(url: str | None) -> None:
+        assert url == "https://example.invalid/embedded"
+        guarded_urls.append(url)
+
+    tab = FakeTab(frames={"#product-stock-frame": frame})
     browser = DrissionBrowserActions(
-        FakeTab({"text=导出库存": element}),
+        tab,
         tmp_path,
     )
 
-    result = browser.download(DOWNLOAD, filename="inventory.fixture.csv")
+    result = browser.download(
+        FRAMED_DOWNLOAD,
+        filename="inventory.fixture.csv",
+        context_guard=guard,
+    )
 
     assert result.path == tmp_path / "downloads" / "inventory.fixture.csv"
     assert result.status == "completed"
@@ -623,6 +892,14 @@ def test_adapter_download_is_isolated_and_hashed(tmp_path: Path) -> None:
         "by_js": False,
         "timeout": 120.0,
     }
+    assert len(guarded_urls) >= 4
+    assert len(tab.frame_lookups) == 1
+    trigger_index = events.index("download")
+    assert events[trigger_index - 1 : trigger_index + 2] == [
+        "guard",
+        "download",
+        "guard",
+    ]
 
 
 def test_adapter_rejects_unsafe_download_name(tmp_path: Path) -> None:

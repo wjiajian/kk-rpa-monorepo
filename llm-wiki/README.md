@@ -14,7 +14,7 @@
 8. [指令、元素分析与应用快照](07-instructions-and-snapshots.md)
 9. [官方资料索引](sources.md)
 
-正式选型记录见 [ADR-025](decisions/ADR-025-browser-automation-drissionpage.md) 和 [ADR-026](decisions/ADR-026-application-catalog-snapshots.md)。
+正式选型记录见 [ADR-025](decisions/ADR-025-browser-automation-drissionpage.md)、[ADR-026](decisions/ADR-026-application-catalog-snapshots.md) 和 [ADR-027](decisions/ADR-027-unified-real-run-authorization.md)。
 
 ## 信息优先级
 
@@ -41,10 +41,10 @@
 
 - Wiki 建立日期：2026-08-31
 - 浏览器底层：DrissionPage
-- 当前实现状态：`rpa-core 0.2.0` 已实现 V1 运行契约、V2 指令/快照契约、BrowserActions、DrissionPage 动作适配器和 BrowserManager 的包级能力
-- 当前应用状态：`apps/` 为空，没有可执行的独立业务应用
-- 当前能力边界：无副作用公共包测试已通过；DrissionPage 真实登录、登录后流程、下载、Preview 和真实外部写入均未测试
-- 公开页面观察：Codex 内置浏览器只检查过公开登录页，未输入凭据或登录，不属于 DrissionPage 集成验证
-- 当前验收证据：[测试与证据](06-testing-and-evidence.md#2026-09-01-核心指令与快照补丁)
-- 官方文档核验日期：2026-09-01
+- 当前实现状态：`rpa-core 0.7.0` 已实现 V1/V2 Contract、Instruction/Catalog Snapshot、Checkpoint/Resume、BrowserActions/BrowserManager、redacted source-level Error Diagnostics，以及 durable、exact-scope、single-use Authorization Record；Live adapter 还要求 nested External Write claim 和 independent Read-back Verification
+- 当前应用状态：首个 V2 Application `jushuitan.inventory.export_stock` 为 `0.3.0 / ready_for_push`；0.3.0 Developer Review 已通过，0.2.0 Review Record 仅保留为历史证据
+- 当前能力边界：229 项 side-effect-free tests 通过（Application 51、Core 178）；0.3.0 Real Browser Preview `preview-20260903T062356Z-df357a62` 已完成 S001–S005、本地下载和成功截图，未执行 External Business Write；当前 Application 不支持 Live
+- 真实历史边界：0.2.0 曾在明确授权下完成 Profile Session、S001–S005、本地库存下载和 Resume；版本与 Authorization boundary 已变化，不能替代 0.3.0 验证
+- 当前验收证据：[Application Generation Report](../apps/inventory_jushuitan_export_stock/GENERATION_REPORT.md)
+- 官方文档核验日期：2026-09-03
 - 官方文档标注版本：DrissionPage 4.1.1.4

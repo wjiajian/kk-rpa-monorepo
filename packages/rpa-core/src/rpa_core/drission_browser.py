@@ -18,6 +18,8 @@ from DrissionPage.errors import ContextLostError, ElementLostError, GetDocumentE
 
 from .browser import (
     ArtifactRef,
+    BrowserContextGuard,
+    BrowserContextGuardError,
     DownloadError,
     DownloadRef,
     ElementActionError,
@@ -37,9 +39,19 @@ class _TransientScopeUnavailable(RuntimeError):
     """An iframe is temporarily absent while its context is refreshing."""
 
 
+class _TransientScopeOriginUnavailable(RuntimeError):
+    """An iframe exists but has not committed its HTTP(S) document yet."""
+
+
 _RETRYABLE_LOOKUP_ERRORS = _TRANSIENT_LOOKUP_ERRORS + (
     _TransientScopeUnavailable,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _LocatedElement:
+    scope: Any
+    target: Any
 
 
 @dataclass(slots=True)
@@ -65,6 +77,33 @@ class DrissionBrowserActions:
         if self.run_dir.is_symlink():
             raise ValueError("run_dir must not be a symbolic link")
 
+    @property
+    def current_url(self) -> str | None:
+        """Expose only the current URL needed by the authorization boundary."""
+
+        try:
+            value = self.tab.url
+        except Exception:
+            return None
+        return value if isinstance(value, str) and value.strip() else None
+
+    def context_url(self, element: ElementSpec) -> str | None:
+        """Return a freshly resolved browsing context URL for diagnostics.
+
+        DrissionPage 4.1 exposes ``url`` on both ``ChromiumTab`` and
+        ``ChromiumFrame``. Authorization does not rely on this separate lookup;
+        guarded element calls validate the same scope object they act through.
+        """
+
+        if element.frame_locator is None:
+            return self.current_url
+        try:
+            scope = self._scope(element, timeout=self.action_timeout)
+            value = scope.url
+        except Exception:
+            return None
+        return value if isinstance(value, str) and value.strip() else None
+
     def open(self, url: str, *, wait: str = "document") -> None:
         if not isinstance(url, str) or not url.strip():
             raise NavigationError("browser URL must not be empty")
@@ -84,13 +123,34 @@ class DrissionBrowserActions:
         except Exception as error:
             raise NavigationError("browser navigation failed") from error
 
-    def exists(self, element: ElementSpec, *, timeout: float = 0.0) -> bool:
+    def exists(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> bool:
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
-        return self._locate(element, timeout=timeout, required=False) is not None
+        return (
+            self._locate(
+                element,
+                timeout=timeout,
+                required=False,
+                context_guard=context_guard,
+            )
+            is not None
+        )
 
-    def click(self, element: ElementSpec) -> None:
-        target = self._find(element)
+    def click(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        located = self._find(element, context_guard=context_guard)
+        target = located.target
+        self._guard_scope_origin(located.scope, context_guard)
         try:
             if not target.wait.clickable(
                 wait_moved=True,
@@ -98,24 +158,54 @@ class DrissionBrowserActions:
                 raise_err=False,
             ):
                 raise ElementActionError(f"element is not clickable: {element.id}")
+            self._guard_scope_origin(located.scope, context_guard)
             target.click(by_js=False)
+        except BrowserContextGuardError:
+            raise
         except ElementActionError:
             raise
         except Exception as error:
             raise ElementActionError(f"element click failed: {element.id}") from error
+        finally:
+            self._guard_scope_origin(located.scope, context_guard)
 
-    def input(self, element: ElementSpec, value: SecretLike) -> None:
-        target = self._find(element)
+    def input(
+        self,
+        element: ElementSpec,
+        value: SecretLike,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        located = self._find(element, context_guard=context_guard)
+        target = located.target
         revealed = _reveal(value)
+        self._guard_scope_origin(located.scope, context_guard)
         try:
-            self._input_value(target, revealed, element)
+            self._input_value(
+                target,
+                revealed,
+                element,
+                scope=located.scope,
+                context_guard=context_guard,
+            )
+        except BrowserContextGuardError:
+            raise
         except ElementActionError:
             raise
         except Exception as error:
             raise ElementActionError(f"element input failed: {element.id}") from error
+        finally:
+            self._guard_scope_origin(located.scope, context_guard)
 
-    def text(self, element: ElementSpec) -> str:
-        target = self._find(element)
+    def text(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> str:
+        located = self._find(element, context_guard=context_guard)
+        target = located.target
+        self._guard_scope_origin(located.scope, context_guard)
         try:
             value = target.attr("value") if str(target.tag).lower() == "input" else target.text
             if value is None:
@@ -127,14 +217,26 @@ class DrissionBrowserActions:
             raise
         except Exception as error:
             raise ElementActionError(f"element text read failed: {element.id}") from error
+        finally:
+            self._guard_scope_origin(located.scope, context_guard)
 
-    def select(self, element: ElementSpec, value: SecretLike) -> None:
-        target = self._find(element)
+    def select(
+        self,
+        element: ElementSpec,
+        value: SecretLike,
+        *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        located = self._find(element, context_guard=context_guard)
+        target = located.target
         revealed = _reveal(value)
+        self._guard_scope_origin(located.scope, context_guard)
         try:
             tag = str(target.tag).lower()
             if tag == "select":
+                self._guard_scope_origin(located.scope, context_guard)
                 target.select.by_text(revealed, timeout=self.action_timeout)
+                self._guard_scope_origin(located.scope, context_guard)
             elif tag == "input":
                 if not target.wait.clickable(
                     wait_moved=True,
@@ -144,34 +246,59 @@ class DrissionBrowserActions:
                     raise ElementActionError(
                         f"custom select trigger is not clickable: {element.id}"
                     )
+                self._guard_scope_origin(located.scope, context_guard)
                 target.click(by_js=False)
-                self._input_value(target, revealed, element)
+                self._guard_scope_origin(located.scope, context_guard)
+                self._input_value(
+                    target,
+                    revealed,
+                    element,
+                    scope=located.scope,
+                    context_guard=context_guard,
+                )
+                self._guard_scope_origin(located.scope, context_guard)
                 if element.option_locator is None:
                     target.input(Keys.ENTER, clear=False, by_js=False)
+                    self._guard_scope_origin(located.scope, context_guard)
                 elif element.selected_option_locator is not None:
-                    self._ensure_exact_custom_selection(element, revealed)
+                    self._ensure_exact_custom_selection(
+                        element,
+                        revealed,
+                        context_guard=context_guard,
+                    )
                 else:
-                    self._click_exact_option(element, revealed)
+                    self._click_exact_option(
+                        element,
+                        revealed,
+                        context_guard=context_guard,
+                    )
             else:
                 raise ElementActionError(
                     f"unsupported select element tag for {element.id}: {tag!r}"
                 )
+        except BrowserContextGuardError:
+            raise
         except ElementActionError:
             raise
         except Exception as error:
             raise ElementActionError(f"element select failed: {element.id}") from error
+        finally:
+            self._guard_scope_origin(located.scope, context_guard)
 
     def download(
         self,
         element: ElementSpec,
         *,
         filename: str | None = None,
+        context_guard: BrowserContextGuard | None = None,
     ) -> DownloadRef:
         if filename is not None:
             _validate_filename(filename)
-        target = self._find(element)
+        located = self._find(element, context_guard=context_guard)
+        target = located.target
         download_dir = self._artifact_directory("downloads")
         started = monotonic()
+        self._guard_scope_origin(located.scope, context_guard)
         try:
             mission = target.click.to_download(
                 str(download_dir),
@@ -179,6 +306,7 @@ class DrissionBrowserActions:
                 by_js=False,
                 timeout=self.download_timeout,
             )
+            self._guard_scope_origin(located.scope, context_guard)
             if not mission:
                 raise DownloadError("download did not start")
             # One bounded budget covers both server-side export preparation and
@@ -196,10 +324,14 @@ class DrissionBrowserActions:
             if not _is_within(final_path, download_dir):
                 raise DownloadError("download escaped the run download directory")
             return DownloadRef.from_path(final_path)
+        except BrowserContextGuardError:
+            raise
         except DownloadError:
             raise
         except Exception as error:
             raise DownloadError(f"download action failed: {element.id}") from error
+        finally:
+            self._guard_scope_origin(located.scope, context_guard)
 
     def screenshot(
         self,
@@ -225,14 +357,20 @@ class DrissionBrowserActions:
         except Exception as error:
             raise ElementActionError("browser screenshot failed") from error
 
-    def _find(self, element: ElementSpec) -> Any:
-        target = self._locate(
+    def _find(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None,
+    ) -> _LocatedElement:
+        located = self._locate(
             element,
             timeout=self.action_timeout,
             required=True,
+            context_guard=context_guard,
         )
-        assert target is not None
-        return target
+        assert located is not None
+        return located
 
     def _locate(
         self,
@@ -240,10 +378,12 @@ class DrissionBrowserActions:
         *,
         timeout: float,
         required: bool,
-    ) -> Any | None:
+        context_guard: BrowserContextGuard | None,
+    ) -> _LocatedElement | None:
         locator = element.require_locator().value
         deadline = monotonic() + timeout
         first_attempt = True
+        last_transient_scope = None
         while first_attempt or monotonic() < deadline:
             lookup_timeout = (
                 timeout
@@ -253,23 +393,47 @@ class DrissionBrowserActions:
             first_attempt = False
             try:
                 scope = self._scope(element, timeout=lookup_timeout)
+            except _RETRYABLE_LOOKUP_ERRORS:
+                if timeout == 0 or monotonic() >= deadline:
+                    break
+                sleep(min(0.05, max(0.0, deadline - monotonic())))
+                continue
+            except ElementLookupError:
+                raise
+            try:
+                self._guard_scope_origin(
+                    scope,
+                    context_guard,
+                    allow_transient_blank=element.frame_locator is not None,
+                )
+            except _TransientScopeOriginUnavailable:
+                last_transient_scope = scope
+                if timeout == 0 or monotonic() >= deadline:
+                    self._guard_scope_origin(scope, context_guard)
+                    break
+                sleep(min(0.05, max(0.0, deadline - monotonic())))
+                continue
+            last_transient_scope = None
+            try:
                 target = scope.ele(locator, timeout=lookup_timeout)
                 if target:
-                    return target
+                    return _LocatedElement(scope=scope, target=target)
                 # DrissionPage already waited for the supplied timeout. A
                 # normal miss is final; only context-refresh errors are retried.
                 break
             except _RETRYABLE_LOOKUP_ERRORS:
                 pass
-            except ElementLookupError:
-                raise
             except Exception as error:
                 raise ElementLookupError(
                     f"element lookup failed: {element.id}"
                 ) from error
+            finally:
+                self._guard_scope_origin(scope, context_guard)
             if timeout == 0 or monotonic() >= deadline:
                 break
             sleep(min(0.05, max(0.0, deadline - monotonic())))
+        if last_transient_scope is not None:
+            self._guard_scope_origin(last_transient_scope, context_guard)
         if required:
             raise ElementLookupError(f"element was not found: {element.id}")
         return None
@@ -287,7 +451,40 @@ class DrissionBrowserActions:
             raise _TransientScopeUnavailable(element.id)
         return frame
 
-    def _input_value(self, target: Any, value: str, element: ElementSpec) -> None:
+    @staticmethod
+    def _guard_scope_origin(
+        scope: Any,
+        context_guard: BrowserContextGuard | None,
+        *,
+        allow_transient_blank: bool = False,
+    ) -> None:
+        if context_guard is None:
+            return
+        try:
+            value = scope.url
+        except Exception:
+            value = None
+        normalized = value if isinstance(value, str) and value.strip() else None
+        if allow_transient_blank and (
+            normalized is None or normalized.strip().casefold() == "about:blank"
+        ):
+            raise _TransientScopeOriginUnavailable()
+        try:
+            context_guard(normalized)
+        except BrowserContextGuardError:
+            raise
+        except Exception as error:
+            raise BrowserContextGuardError(error) from error
+
+    def _input_value(
+        self,
+        target: Any,
+        value: str,
+        element: ElementSpec,
+        *,
+        scope: Any,
+        context_guard: BrowserContextGuard | None,
+    ) -> None:
         if not target.wait.clickable(
             wait_moved=False,
             timeout=self.action_timeout,
@@ -296,11 +493,21 @@ class DrissionBrowserActions:
             raise ElementActionError(f"element is not ready for input: {element.id}")
         # DrissionPage 4.1.1.4 uses JS clear on macOS internally. Calling it
         # explicitly keeps behavior deterministic across platforms.
+        self._guard_scope_origin(scope, context_guard)
         target.clear(by_js=True)
+        self._guard_scope_origin(scope, context_guard)
         target.focus()
+        self._guard_scope_origin(scope, context_guard)
         target.input(value, clear=False, by_js=False)
+        self._guard_scope_origin(scope, context_guard)
 
-    def _click_exact_option(self, element: ElementSpec, value: str) -> None:
+    def _click_exact_option(
+        self,
+        element: ElementSpec,
+        value: str,
+        *,
+        context_guard: BrowserContextGuard | None,
+    ) -> None:
         option_locator = element.option_locator
         if option_locator is None:
             raise ElementActionError(
@@ -316,33 +523,43 @@ class DrissionBrowserActions:
             lookup_timeout = min(0.2, max(0.01, remaining))
             try:
                 scope = self._scope(element, timeout=lookup_timeout)
-                candidates = scope.eles(option_locator.value, timeout=lookup_timeout)
             except _RETRYABLE_LOOKUP_ERRORS:
                 continue
             except ElementLookupError:
                 raise
+            self._guard_scope_origin(scope, context_guard)
+            try:
+                candidates = scope.eles(option_locator.value, timeout=lookup_timeout)
+
+                matches = []
+                for candidate in candidates:
+                    try:
+                        states = candidate.states
+                        if not (
+                            states.is_displayed
+                            and states.is_enabled
+                            and states.is_clickable
+                        ):
+                            continue
+                        candidate_text = candidate.text
+                        if (
+                            isinstance(candidate_text, str)
+                            and candidate_text.strip() == value
+                        ):
+                            matches.append(candidate)
+                    except Exception:
+                        # Dynamic dropdown options may disappear while being
+                        # inspected. Re-querying the locator is safer than
+                        # retaining a stale object.
+                        continue
+            except _RETRYABLE_LOOKUP_ERRORS:
+                continue
             except Exception as error:
                 raise ElementActionError(
                     f"custom select option lookup failed: {element.id}"
                 ) from error
-
-            matches = []
-            for candidate in candidates:
-                try:
-                    states = candidate.states
-                    if not (
-                        states.is_displayed
-                        and states.is_enabled
-                        and states.is_clickable
-                    ):
-                        continue
-                    candidate_text = candidate.text
-                    if isinstance(candidate_text, str) and candidate_text.strip() == value:
-                        matches.append(candidate)
-                except Exception:
-                    # Dynamic dropdown options may disappear while being inspected.
-                    # Re-querying the locator is safer than retaining a stale object.
-                    continue
+            finally:
+                self._guard_scope_origin(scope, context_guard)
 
             if len(matches) > 1:
                 raise ElementActionError(
@@ -350,22 +567,30 @@ class DrissionBrowserActions:
                 )
             if len(matches) == 1:
                 option = matches[0]
-                if not option.wait.clickable(
-                    wait_moved=True,
-                    timeout=min(remaining, self.action_timeout),
-                    raise_err=False,
-                ):
-                    raise ElementActionError(
-                        f"exact custom select option is no longer clickable: {element.id}"
-                    )
-                option.click(by_js=False)
-                return
+                self._guard_scope_origin(scope, context_guard)
+                try:
+                    if not option.wait.clickable(
+                        wait_moved=True,
+                        timeout=min(remaining, self.action_timeout),
+                        raise_err=False,
+                    ):
+                        raise ElementActionError(
+                            "exact custom select option is no longer clickable: "
+                            f"{element.id}"
+                        )
+                    self._guard_scope_origin(scope, context_guard)
+                    option.click(by_js=False)
+                    return
+                finally:
+                    self._guard_scope_origin(scope, context_guard)
             sleep(min(0.05, remaining))
 
     def _ensure_exact_custom_selection(
         self,
         element: ElementSpec,
         value: str,
+        *,
+        context_guard: BrowserContextGuard | None,
     ) -> None:
         """Make one custom multi-select contain exactly ``value``.
 
@@ -383,6 +608,7 @@ class DrissionBrowserActions:
             selected = self._selected_custom_option_values(
                 element,
                 timeout=min(0.5, max(0.01, deadline - monotonic())),
+                context_guard=context_guard,
             )
             target_count = sum(candidate == value for candidate in selected)
             if target_count > 1 or len(selected) != len(set(selected)):
@@ -391,18 +617,30 @@ class DrissionBrowserActions:
                 )
             extras = [candidate for candidate in selected if candidate != value]
             if not extras and target_count == 1:
-                self._dismiss_custom_select(element)
+                self._dismiss_custom_select(
+                    element,
+                    context_guard=context_guard,
+                )
                 return
 
             previous = selected
             if extras:
-                self._click_exact_option(element, extras[0])
+                self._click_exact_option(
+                    element,
+                    extras[0],
+                    context_guard=context_guard,
+                )
             else:
-                self._click_exact_option(element, value)
+                self._click_exact_option(
+                    element,
+                    value,
+                    context_guard=context_guard,
+                )
             self._wait_for_custom_selection_change(
                 element,
                 previous=previous,
                 deadline=deadline,
+                context_guard=context_guard,
             )
         raise ElementActionError(
             f"custom select did not reach one exact selection: {element.id}"
@@ -413,6 +651,7 @@ class DrissionBrowserActions:
         element: ElementSpec,
         *,
         timeout: float,
+        context_guard: BrowserContextGuard | None,
     ) -> tuple[str, ...]:
         option_locator = element.option_locator
         selected_locator = element.selected_option_locator
@@ -428,6 +667,14 @@ class DrissionBrowserActions:
             lookup_timeout = min(0.2, max(0.01, remaining))
             try:
                 scope = self._scope(element, timeout=lookup_timeout)
+            except _RETRYABLE_LOOKUP_ERRORS:
+                if monotonic() < deadline:
+                    sleep(min(0.05, max(0.0, deadline - monotonic())))
+                continue
+            except ElementLookupError:
+                raise
+            self._guard_scope_origin(scope, context_guard)
+            try:
                 options = scope.eles(option_locator.value, timeout=lookup_timeout)
                 if not options:
                     sleep(min(0.05, remaining))
@@ -455,6 +702,8 @@ class DrissionBrowserActions:
                 raise ElementActionError(
                     f"custom select selected-option lookup failed: {element.id}"
                 ) from error
+            finally:
+                self._guard_scope_origin(scope, context_guard)
             if monotonic() < deadline:
                 sleep(min(0.05, max(0.0, deadline - monotonic())))
         raise ElementActionError(
@@ -467,11 +716,13 @@ class DrissionBrowserActions:
         *,
         previous: tuple[str, ...],
         deadline: float,
+        context_guard: BrowserContextGuard | None,
     ) -> None:
         while monotonic() < deadline:
             current = self._selected_custom_option_values(
                 element,
                 timeout=min(0.2, max(0.01, deadline - monotonic())),
+                context_guard=context_guard,
             )
             if current != previous:
                 return
@@ -480,7 +731,12 @@ class DrissionBrowserActions:
             f"custom select state did not change after option click: {element.id}"
         )
 
-    def _dismiss_custom_select(self, element: ElementSpec) -> None:
+    def _dismiss_custom_select(
+        self,
+        element: ElementSpec,
+        *,
+        context_guard: BrowserContextGuard | None,
+    ) -> None:
         popup_locator = element.popup_locator
         dismiss_locator = element.dismiss_locator
         if popup_locator is None or dismiss_locator is None:
@@ -489,11 +745,19 @@ class DrissionBrowserActions:
             )
         deadline = monotonic() + self.action_timeout
         dismiss_target = None
+        dismiss_scope = None
         while monotonic() < deadline:
             remaining = deadline - monotonic()
             lookup_timeout = min(0.2, max(0.01, remaining))
             try:
                 scope = self._scope(element, timeout=lookup_timeout)
+            except _RETRYABLE_LOOKUP_ERRORS:
+                sleep(min(0.05, max(0.0, deadline - monotonic())))
+                continue
+            except ElementLookupError:
+                raise
+            self._guard_scope_origin(scope, context_guard)
+            try:
                 if not self._visible_popup_exists(
                     scope,
                     popup_locator.value,
@@ -505,6 +769,7 @@ class DrissionBrowserActions:
                     timeout=lookup_timeout,
                 )
                 if dismiss_target:
+                    dismiss_scope = scope
                     break
             except _RETRYABLE_LOOKUP_ERRORS:
                 pass
@@ -514,11 +779,14 @@ class DrissionBrowserActions:
                 raise ElementActionError(
                     f"custom select dismiss target lookup failed: {element.id}"
                 ) from error
+            finally:
+                self._guard_scope_origin(scope, context_guard)
             sleep(min(0.05, max(0.0, deadline - monotonic())))
-        if dismiss_target is None:
+        if dismiss_target is None or dismiss_scope is None:
             raise ElementActionError(
                 f"custom select dismiss target was not found: {element.id}"
             )
+        self._guard_scope_origin(dismiss_scope, context_guard)
         try:
             if not dismiss_target.wait.clickable(
                 wait_moved=True,
@@ -528,6 +796,7 @@ class DrissionBrowserActions:
                 raise ElementActionError(
                     f"custom select dismiss target is not clickable: {element.id}"
                 )
+            self._guard_scope_origin(dismiss_scope, context_guard)
             dismiss_target.click(by_js=False)
         except ElementActionError:
             raise
@@ -535,6 +804,8 @@ class DrissionBrowserActions:
             raise ElementActionError(
                 f"custom select could not be dismissed safely: {element.id}"
             ) from error
+        finally:
+            self._guard_scope_origin(dismiss_scope, context_guard)
 
         # Never issue a second click after the dismiss action. Only re-query
         # the popup until it is observably hidden or the bounded wait expires.
@@ -543,6 +814,13 @@ class DrissionBrowserActions:
             lookup_timeout = min(0.2, max(0.01, remaining))
             try:
                 scope = self._scope(element, timeout=lookup_timeout)
+            except _RETRYABLE_LOOKUP_ERRORS:
+                sleep(min(0.05, max(0.0, deadline - monotonic())))
+                continue
+            except ElementLookupError:
+                raise
+            self._guard_scope_origin(scope, context_guard)
+            try:
                 if not self._visible_popup_exists(
                     scope,
                     popup_locator.value,
@@ -557,6 +835,8 @@ class DrissionBrowserActions:
                 raise ElementActionError(
                     f"custom select popup verification failed: {element.id}"
                 ) from error
+            finally:
+                self._guard_scope_origin(scope, context_guard)
             sleep(min(0.05, max(0.0, deadline - monotonic())))
         raise ElementActionError(
             f"custom select popup remained visible after dismissal: {element.id}"

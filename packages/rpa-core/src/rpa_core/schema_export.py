@@ -7,12 +7,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from rpa_core.authorization import AuthorizationRecord
 from rpa_core.catalog import CatalogLock
 from rpa_core.contracts import AppManifest, RequirementSpec
 
 
 SCHEMA_FILENAMES = {
     "app-manifest.schema.json": AppManifest,
+    "authorization-record.schema.json": AuthorizationRecord,
     "catalog-lock.schema.json": CatalogLock,
     "requirement-spec.schema.json": RequirementSpec,
 }

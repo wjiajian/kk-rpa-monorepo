@@ -6,6 +6,7 @@ import pytest
 
 from rpa_core.browser_manager import (
     BrowserLaunchSpec,
+    BrowserConfigurationError,
     BrowserLifecycleError,
     BrowserLifecyclePolicy,
     BrowserManager,
@@ -181,14 +182,71 @@ def test_start_failure_releases_profile_and_port(tmp_path: Path) -> None:
     )
     spec = make_spec(tmp_path)
 
-    with pytest.raises(BrowserStartError):
+    with pytest.raises(BrowserStartError) as caught:
         manager.start(spec, run_id="run-fail", run_dir=tmp_path / "runs" / "run-fail")
 
+    assert caught.value.real_browser_launched is False
     assert not (tmp_path / "runtime" / "port-leases" / "29620.json").exists()
     browsers: list[FakeBrowser] = []
     retry = make_manager(tmp_path, browsers, ports=(29620, 29620))
     session = retry.start(spec, run_id="run-retry", run_dir=tmp_path / "runs" / "run-retry")
     retry.close(session)
+
+
+def test_symlink_run_directory_fails_before_chromium_factory(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    linked_run = runs / "run-linked"
+    try:
+        linked_run.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlinks are unavailable in this test environment: {error}")
+    browsers: list[FakeBrowser] = []
+    manager = make_manager(tmp_path, browsers)
+
+    with pytest.raises(BrowserConfigurationError, match="symbolic links"):
+        manager.start(
+            make_spec(tmp_path),
+            run_id="run-linked",
+            run_dir=linked_run,
+        )
+
+    assert browsers == []
+    assert list(outside.iterdir()) == []
+
+
+def test_post_launch_tab_failure_is_audited_and_browser_is_closed(
+    tmp_path: Path,
+) -> None:
+    browsers: list[FakeBrowser] = []
+
+    def create_browser(options: FakeOptions) -> FakeBrowser:
+        browser = FakeBrowser(options, tab=False)
+        browsers.append(browser)
+        return browser
+
+    manager = BrowserManager(
+        tmp_path / "runtime",
+        port_range=(29621, 29621),
+        options_factory=FakeOptions,
+        chromium_factory=create_browser,
+        port_available=lambda _: True,
+    )
+
+    with pytest.raises(BrowserStartError) as caught:
+        manager.start(
+            make_spec(tmp_path),
+            run_id="run-no-tab",
+            run_dir=tmp_path / "runs" / "run-no-tab",
+        )
+
+    assert caught.value.real_browser_launched is True
+    assert browsers[0].quit_calls == 1
+    assert not (tmp_path / "runtime" / "port-leases" / "29621.json").exists()
 
 
 def test_manager_rejects_foreign_or_closed_session(tmp_path: Path) -> None:
