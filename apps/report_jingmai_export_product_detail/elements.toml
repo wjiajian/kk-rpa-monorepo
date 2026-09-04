@@ -1,0 +1,231 @@
+schema_version = 2
+
+[elements."jingmai.login.username_input"]
+name = "京麦登录账号输入框"
+page = "https://passport.shop.jd.com/login/index.action"
+locator = "css:#loginname"
+expect_count = 1
+check_at = "S001-login-page"
+note = "京麦专用登录页的稳定账号输入框，placeholder 为“请输入账号名/邮箱”。"
+
+[elements."jingmai.login.password_input"]
+name = "京麦登录密码输入框"
+page = "https://passport.shop.jd.com/login/index.action"
+locator = 'css:input[type="password"][placeholder="请输入登录密码"]'
+expect_count = 1
+check_at = "S001-login-page"
+note = "元素 id 每次加载变化，使用稳定类型与 placeholder 组合定位。"
+
+[elements."jingmai.login.submit_button"]
+name = "京麦立即登录按钮"
+page = "https://passport.shop.jd.com/login/index.action"
+locator = "css:button.password__submit"
+expect_count = 1
+check_at = "S001-login-page"
+note = "密码登录表单的唯一主按钮，文本为“立即登录”。"
+
+[elements."jingmai.shell.authenticated_marker"]
+name = "京麦已登录标识"
+page = "https://shop.jd.com/jdm/home"
+locator = "css:.shop-menu-account__account-dropdown-bottom-link"
+expect_count = 1
+check_at = "S001"
+note = "账号菜单中的退出登录入口；未登录页不匹配。"
+
+[elements."jingmai.shell.account_identity_surface"]
+name = "当前账号身份文本"
+page = "https://shop.jd.com/jdm/home"
+locator = "css:.shop-menu-account .user-base-info > .name"
+expect_count = 1
+check_at = "S001"
+note = "账号菜单内唯一身份文本，与 Git 忽略的 stores.local.toml 精确比对。"
+
+[elements."jdsz.reports.product_detail_entry"]
+name = "经营状况-商品明细报表查看详情"
+page = "https://jdsz.jd.com/szweb/view/reports-center/recommend-report-temp.html"
+locator = "css:.report-container-float > .report-container-list:first-child > .list-more"
+frame = "#brand"
+expect_count = 1
+check_at = "S002-before-click"
+note = "推荐报表页第一个经营状况商品明细卡片的查看详情；点击后以目标页业务标题再次校验。"
+
+[elements."jdsz.product_detail.page_marker"]
+name = "经营状况-商品明细页面标识"
+page = "https://jdsz.jd.com/szweb/view/reports-center/recommend-report-detail-temp.html"
+locator = "css:.preview-table .table-top > .tip-title"
+frame = "#brand"
+expect_count = 1
+check_at = "S002"
+note = "唯一文本为“经营状况-商品明细报表”，用于排除打开其他推荐报表。"
+
+[elements."jdsz.product_detail.start_date_input"]
+name = "统计日期范围控件"
+page = "jdsz-product-detail"
+locator = "css:.preview-select-section .input-calendar > input.ic-input"
+frame = "#brand"
+option_locator = 'css:.grace-sz-date-picker.multi-datepicker .grace-datepicker[style*="display: block"] .cur-month-td > .date-item:not(.dis-select)'
+expect_count = 1
+check_at = "S003"
+note = "真实页面只有一个组合日期范围输入；select 按可见月份中的两位日期精确点击。"
+
+[elements."jdsz.product_detail.end_date_input"]
+name = "统计结束日期（组合控件兼容标识）"
+page = "jdsz-product-detail"
+locator = "css:.preview-select-section .input-calendar > input.ic-input"
+frame = "#brand"
+expect_count = 1
+check_at = "S003"
+note = "需求原先按起止两个输入描述，真实页面为一个组合控件；保留该 ID 兼容需求基线。"
+
+[elements."jdsz.product_detail.date_values"]
+name = "统计日期范围回读值"
+page = "jdsz-product-detail"
+locator = "css:.preview-select-section .input-calendar > input.ic-input"
+frame = "#brand"
+expect_count = 1
+check_at = "S003"
+note = "回读组合输入的 value，并解析两个 ISO 日期，不能使用程序输入值代替。"
+
+[elements."jdsz.product_detail.calendar_month"]
+name = "日期面板当前月份"
+page = "jdsz-product-detail"
+locator = 'css:.grace-sz-date-picker.multi-datepicker .grace-datepicker[style*="display: block"] .gdhc-nav-li.nav-date'
+frame = "#brand"
+expect_count = 1
+check_at = "S003-date-picker-open"
+note = "日期面板打开后回读 YYYY-MM，用于跨月恢复。"
+
+[elements."jdsz.product_detail.calendar_previous_month"]
+name = "日期面板上一月"
+page = "jdsz-product-detail"
+locator = 'css:.grace-sz-date-picker.multi-datepicker .grace-datepicker[style*="display: block"] .month-prev-arrow'
+frame = "#brand"
+expect_count = 1
+check_at = "S003-date-picker-open"
+note = "跨月恢复时逐月导航到检查点目标日期。"
+
+[elements."jdsz.product_detail.calendar_next_month"]
+name = "日期面板下一月"
+page = "jdsz-product-detail"
+locator = 'css:.grace-sz-date-picker.multi-datepicker .grace-datepicker[style*="display: block"] .month-next-arrow'
+frame = "#brand"
+expect_count = 1
+check_at = "S003-date-picker-open"
+note = "跨月恢复时逐月导航到检查点目标日期。"
+
+[elements."jdsz.product_detail.report_rows"]
+name = "商品明细报表结果行"
+page = "jdsz-product-detail"
+locator = "css:.preview-table table.grace-grid-fixed > tbody > tr"
+frame = "#brand"
+expect_count = ">0"
+check_at = "S003"
+note = "目标日期生效后至少存在一行结果。"
+
+[elements."jdsz.product_detail.report_row_dates"]
+name = "商品明细结果行日期"
+page = "jdsz-product-detail"
+locator = "css:.preview-table table.grace-grid-fixed > tbody > tr > td:first-child"
+frame = "#brand"
+expect_count = ">0"
+check_at = "S003"
+note = "逐行回读第一列日期，所有返回行都必须等于目标日期。"
+
+[elements."jdsz.product_detail.download_report_button"]
+name = "下载报表按钮"
+page = "jdsz-product-detail"
+locator = "css:.preview-table .download-btn .grace-down-load > span.download-data:first-child"
+frame = "#brand"
+expect_count = 1
+check_at = "S004-before-click"
+note = "点击文字 span 才会创建离线导出任务；外层 grace-down-load div 不触发动作。"
+
+[elements."jdsz.product_detail.export_ready_dialog"]
+name = "报表生成完成弹窗"
+page = "jdsz-product-detail"
+locator = "css:.grace-common-modal.open .confirm-modal"
+frame = "#brand"
+expect_count = 1
+check_at = "S004"
+note = "下载报表后出现的打开态确认弹窗。"
+
+[elements."jdsz.product_detail.dialog_report_name"]
+name = "弹窗报表名称"
+page = "jdsz-product-detail"
+locator = "css:.grace-common-modal.open .confirm-warning-text"
+frame = "#brand"
+expect_count = 1
+check_at = "S004"
+note = "从提示句的中文书名号中解析完整报表名称并精确比对目标日期。"
+
+[elements."jdsz.product_detail.view_exports_button"]
+name = "弹窗查看按钮"
+page = "jdsz-product-detail"
+locator = "css:.grace-common-modal.open button.r-modal-btn-save"
+frame = "#brand"
+expect_count = 1
+check_at = "S005-before-click"
+note = "唯一文本为“查看”；点击后打开新的我的报表标签页。"
+
+[elements."jdsz.downloads.page_marker"]
+name = "报表下载页标识"
+page = "https://jdsz.jd.com/szweb/view/reports-center/my-report-temp.html"
+locator = "css:.content > .header"
+frame = "#brand"
+expect_count = 1
+check_at = "S005"
+note = "唯一文本为“报表列表”，用于证明新激活标签页正确。"
+
+[elements."jdsz.downloads.refresh_button"]
+name = "刷新报表列表按钮"
+page = "jdsz-downloads"
+locator = "css:.content > .content-fresh"
+frame = "#brand"
+expect_count = 1
+check_at = "S006"
+note = "搜索前刷新服务端任务状态。"
+
+[elements."jdsz.downloads.search_input"]
+name = "报表名称搜索框"
+page = "jdsz-downloads"
+locator = "css:.search-container > input.search-input"
+frame = "#brand"
+expect_count = 1
+check_at = "S006"
+note = "输入完整预期源文件名，避免误用未筛选列表。"
+
+[elements."jdsz.downloads.search_button"]
+name = "搜索报表按钮"
+page = "jdsz-downloads"
+locator = "css:.search-container > .searh-icon-done"
+frame = "#brand"
+expect_count = 1
+check_at = "S006"
+note = "页面实际类名为 searh-icon-done。"
+
+[elements."jdsz.downloads.report_names"]
+name = "报表下载列表文件名"
+page = "jdsz-downloads"
+locator = "css:.grace-grid-tbody > tr.grace-grid-row .reportName"
+frame = "#brand"
+expect_count = ">0"
+check_at = "S006"
+note = "按 DOM 行顺序回读搜索结果文件名。"
+
+[elements."jdsz.downloads.report_statuses"]
+name = "报表下载列表状态"
+page = "jdsz-downloads"
+locator = "css:.grace-grid-tbody > tr.grace-grid-row .tag-status"
+frame = "#brand"
+expect_count = ">0"
+check_at = "S006"
+note = "与文件名同序；首行必须精确匹配且为“已生成”。"
+
+[elements."jdsz.downloads.first_matching_download_button"]
+name = "首个匹配报表下载按钮"
+page = "jdsz-downloads"
+locator = "css:.grace-grid-tbody > tr.grace-grid-row:first-child .grid-operator-btn > span:first-child"
+frame = "#brand"
+expect_count = 1
+check_at = "S006"
+note = "完整文件名筛选后第一行的“下载”span；外层 div 同时含下载、删除，不能直接点击。"

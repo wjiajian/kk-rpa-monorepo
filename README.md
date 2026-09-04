@@ -82,7 +82,8 @@ kk-rpa-monorepo/
 │   ├── rpa-core/                   # BrowserActions / Element / Step / Runner
 │   └── rpa-integrations/           # 外部系统适配器
 └── apps/
-    └── inventory_jushuitan_export_stock/
+    ├── inventory_jushuitan_export_stock/
+    └── report_jingmai_export_product_detail/
 ```
 
 ## 快速开始
@@ -90,7 +91,7 @@ kk-rpa-monorepo/
 前置条件：Python 3.12、[uv](https://docs.astral.sh/uv/getting-started/installation/)。真实运行还需要本机 Chrome、应用本地配置和一次明确确认。
 
 ```bash
-cd apps/inventory_jushuitan_export_stock
+cd apps/report_jingmai_export_product_detail
 uv sync --locked
 uv run --locked rpa-app doctor
 uv run --locked rpa-app test
@@ -140,10 +141,12 @@ CAPTCHA、滑块、短信验证只检测、留证据、转人工，不绕过。
 
 配套纪律：**任何"跨应用共享"的机制，在第三个应用真的重复了同一段代码之前，不许建。** 第二个应用只用来证伪，不用来抽象。
 
-## 当前状态（2026-09-03）
+## 当前状态（2026-09-04）
 
 - 首个应用 `apps/inventory_jushuitan_export_stock/` 已按 V2 迁移：5 个 Step 全部改为可证伪断言并配套反例
 - `verify-elements` 已在真实浏览器上跑通：6 个阶段全部到达，19 个元素 0 失效，2 条标记为断言过弱
 - 真实 Preview 已通过：S001–S005 全部完成，S003/S004 从 DOM 回读到的选中品牌恰好等于配置品牌，无外部业务写入
-- `rpa-core` 中 `authorization.py`、`catalog.py`、`instructions.py`、`requirements.py`、`discovery.py` 已判定为不需要，**尚未删除** —— 等第二个应用（换平台）证明未被使用后再删。新应用不要使用这些模块
-- 下一步：写第二个应用，用它决定 `rpa-core` 里哪些代码是税
+- 第二个应用 `apps/report_jingmai_export_product_detail/` 已按精简结构完成实际开发：6 个 Step、26 个真实定位器、离线反例和仓库发现门禁均通过
+- 京麦完整链路已用全新隔离 Profile 验证：从专用稳定入口完成密码登录并回读目标身份，再打开报表、选择跨月日期、导出、查看报表和下载；`STORE_001` 账号边界已确认，26 个真实定位器均有页面或动作证据，下载包内容及 SHA-256 已核验
+- 第二个应用证明新应用不需要 catalog/instruction 快照和应用内运行时；公共 CLI 已进入 `rpa-core`，发现器已兼容精简应用，并修复了点击后新标签页被 SSO 替换时的切换竞态
+- 旧授权、catalog、instruction、双份 requirement 等模块仍被首个应用引用，暂不删除；先迁移真实调用方，再由测试证明可删

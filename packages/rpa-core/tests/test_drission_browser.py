@@ -14,6 +14,7 @@ from rpa_core.browser import (
     ElementLookupError,
     ElementSpec,
     Locator,
+    NavigationError,
     SecretValue,
     UnresolvedElementError,
 )
@@ -245,6 +246,7 @@ class FakeTab:
         self.lookups: list[tuple[str, float]] = []
         self.frame_lookups: list[tuple[str, float]] = []
         self.multi_lookups: list[tuple[str, float]] = []
+        self.browser = None
 
     def get(self, url: str) -> bool:
         self.opened.append(url)
@@ -271,6 +273,56 @@ class FakeTab:
         target = Path(path) / name
         target.write_bytes(b"fake png bytes")
         return str(target)
+
+
+class FakeBrowserWait:
+    def __init__(self, owner: "FakeBrowser") -> None:
+        self.owner = owner
+        self.calls: list[dict[str, object]] = []
+
+    def new_tab(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.owner.new_tab_id
+
+
+class FakeBrowser:
+    def __init__(self, tabs: dict[str, FakeTab], new_tab_id: str | bool) -> None:
+        self.tabs = tabs
+        self.new_tab_id = new_tab_id
+        self.wait = FakeBrowserWait(self)
+        for tab in tabs.values():
+            tab.browser = self
+
+    def get_tab(self, tab_id: str):
+        return self.tabs.get(tab_id, False)
+
+    @property
+    def tab_ids(self) -> list[str]:
+        return list(self.tabs)
+
+
+class ReplacingTabBrowser(FakeBrowser):
+    """Model a site that replaces the initially signalled target tab."""
+
+    def __init__(
+        self,
+        source: FakeTab,
+        replacement: FakeTab,
+        *,
+        signalled_tab_id: str | bool = "transient-target",
+    ) -> None:
+        super().__init__(
+            {"source": source, "replacement": replacement},
+            signalled_tab_id,
+        )
+        self.tab_id_reads = 0
+
+    @property
+    def tab_ids(self) -> list[str]:
+        self.tab_id_reads += 1
+        if self.tab_id_reads == 1:
+            return ["source"]
+        return ["source", "replacement"]
 
 
 def test_current_url_exposes_adapter_boundary_value(tmp_path: Path) -> None:
@@ -344,6 +396,91 @@ def test_adapter_click_and_native_select_use_bounded_waits(tmp_path: Path) -> No
         {"wait_moved": True, "timeout": 7.0, "raise_err": False}
     ]
     assert select.selected == ("FIXTURE_BRAND", 7.0)
+
+
+def test_adapter_clicks_waits_and_switches_to_new_tab(tmp_path: Path) -> None:
+    view = ElementSpec(
+        "example.report.view",
+        "查看",
+        "report",
+        locator=Locator("#view"),
+    )
+    button = FakeElement()
+    source = FakeTab({"#view": button})
+    source.url = "https://example.invalid/report"
+    target = FakeTab()
+    target.url = "https://example.invalid/downloads"
+    owner = FakeBrowser({"new-tab": target}, "new-tab")
+    source.browser = owner
+    browser = DrissionBrowserActions(source, tmp_path, action_timeout=7.0)
+
+    browser.click_and_switch_to_new_tab(view, timeout=5.0)
+
+    assert button.click_count == 1
+    assert browser.tab is target
+    assert owner.wait.calls == [
+        {"timeout": 1.0, "curr_tab": source, "raise_err": False}
+    ]
+    assert target.wait.calls == [{"timeout": 5.0, "raise_err": False}]
+
+
+def test_adapter_rejects_click_when_no_new_tab_appears(tmp_path: Path) -> None:
+    view = ElementSpec(
+        "example.report.view",
+        "查看",
+        "report",
+        locator=Locator("#view"),
+    )
+    source = FakeTab({"#view": FakeElement()})
+    source.url = "https://example.invalid/report"
+    source.browser = FakeBrowser({}, False)
+    browser = DrissionBrowserActions(source, tmp_path)
+
+    with pytest.raises(NavigationError, match="did not open a new tab"):
+        browser.click_and_switch_to_new_tab(view)
+
+
+def test_adapter_recovers_when_site_replaces_signalled_new_tab(
+    tmp_path: Path,
+) -> None:
+    view = ElementSpec(
+        "example.report.view",
+        "查看",
+        "report",
+        locator=Locator("#view"),
+    )
+    source = FakeTab({"#view": FakeElement()})
+    target = FakeTab()
+    owner = ReplacingTabBrowser(source, target)
+    browser = DrissionBrowserActions(source, tmp_path)
+
+    browser.click_and_switch_to_new_tab(view, timeout=1.0)
+
+    assert browser.tab is target
+    assert owner.wait.calls == [
+        {"timeout": 1.0, "curr_tab": source, "raise_err": False}
+    ]
+    assert owner.tab_id_reads >= 2
+
+
+def test_adapter_uses_tab_inventory_when_new_tab_wait_misses_replacement(
+    tmp_path: Path,
+) -> None:
+    view = ElementSpec(
+        "example.report.view",
+        "查看",
+        "report",
+        locator=Locator("#view"),
+    )
+    source = FakeTab({"#view": FakeElement()})
+    target = FakeTab()
+    owner = ReplacingTabBrowser(source, target, signalled_tab_id=False)
+    browser = DrissionBrowserActions(source, tmp_path)
+
+    browser.click_and_switch_to_new_tab(view, timeout=1.0)
+
+    assert browser.tab is target
+    assert owner.tab_id_reads >= 2
 
 
 def test_adapter_selects_custom_input_and_reads_exact_values(tmp_path: Path) -> None:

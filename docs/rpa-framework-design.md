@@ -91,6 +91,11 @@ class BrowserActions(Protocol):
     # V2 新增 —— 没有这两个就写不出真断言
     def count(self, el: ElementSpec) -> int: ...
     def texts(self, el: ElementSpec) -> list[str]: ...
+
+    # 点击后由浏览器级等待发现新标签页，并把后续动作绑定到新页
+    def click_and_switch_to_new_tab(
+        self, el: ElementSpec, *, timeout: float | None = None
+    ) -> None: ...
 ```
 
 这是唯一 import DrissionPage 的地方（`rpa_core/drission.py`）。业务代码只见 `ctx.browser`。
@@ -152,6 +157,7 @@ class FakeState:
     counts: Mapping[str, int] = ...              # count() 的返回值
     texts: Mapping[str, tuple[str, ...]] = ...   # texts() 的返回值
     downloads_available: bool = True
+    new_tabs_available: bool = True              # 点击后是否出现预期新标签页
 
 @dataclass(frozen=True)
 class Counterexample:
@@ -346,11 +352,11 @@ V2 的迭代规则：
 
 1. ~~**给现有 5 个 Step 补 `verify()` + `counterexamples`。**~~（已完成 2026-09-03）
    最便宜，且立刻产生价值 —— 它会当场暴露 S003（`bool(True)`）和 S004（`exists(table tbody)`，实测搜索前后同为 21 行）是假断言，以及 S003→S004→S005 整条链路从未确认过品牌筛选生效。
-2. **给 `BrowserActions` 加 `count()` 和 `texts()`。** 没有它们，第 1 步写不出真断言。
+2. ~~**给 `BrowserActions` 加 `count()` 和 `texts()`。**~~（已完成）没有它们，第 1 步写不出真断言。
 3. **把 `real_runtime.py` + `cli.py` 的通用部分上提到 `rpa_core.cli`。**
-   这 1657 行不解决，第二个应用会照抄。
-4. **元素合并为 `elements.toml`，加 `expect_count`，实现 `verify-elements`。**
-5. **第二个应用（非聚水潭）用新结构写。**
-6. **按实际使用情况删。** 第二个应用写完后，`rpa-core` 里没被它用到的代码就是税 —— `authorization.py`、`catalog.py`、`instructions.py`、`requirements.py` 预计全部落在这一档。
+   第二个应用已使用共享 CLI；首个应用的旧入口尚待迁移。
+4. ~~**元素合并为 `elements.toml`，加 `expect_count`，实现 `verify-elements`。**~~（已完成；共享 CLI 调用应用阶段导航并逐项报告）
+5. ~~**第二个应用（非聚水潭）用新结构写。**~~（2026-09-04 已完成京麦商品明细报表导出应用；登录、筛选、导出、查看与下载链路已在真实页面验证）
+6. **按实际使用情况删。** 第二个应用没有使用 catalog/instruction 快照和应用内运行时；旧模块仍有首个应用调用，迁移调用方并由回归测试证明后再删。
 
 **让证据决定删什么。** 第 6 步不要提前做。

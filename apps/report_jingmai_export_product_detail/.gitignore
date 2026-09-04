@@ -1,0 +1,11 @@
+.venv/
+config/stores.local.toml
+profiles/
+runs/
+runtime/
+requirement/assets/*
+!requirement/assets/.gitkeep
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/

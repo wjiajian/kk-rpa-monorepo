@@ -1,0 +1,11 @@
+schema_version = 1
+app_id = "jingmai.reports.export_product_detail"
+app_slug = "report_jingmai_export_product_detail"
+name = "京麦商品明细报表导出"
+version = "0.1.0"
+entrypoint = "report_jingmai_export_product_detail.cli:main"
+python = "3.12"
+requirement_revision = 164
+requirement_hash = "sha256:e230ef486a961af966bcf7e80be44810b946a079ad82c9614f8070127541c1aa"
+configuration_schema = "config/stores.example.toml"
+status = "ready_for_review"

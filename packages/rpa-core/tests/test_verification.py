@@ -138,6 +138,11 @@ def test_counterexample_must_change_something():
     # A metadata-only counterexample is legitimate: some failures are input-driven.
     assert Counterexample("输入非法", metadata={"brand": ""}).metadata == {"brand": ""}
 
+    assert not Counterexample(
+        "新标签页未出现",
+        FakeState(new_tabs_available=False),
+    ).state.new_tabs_available
+
 
 def test_empty_label_is_rejected():
     with pytest.raises(ValueError, match="label must not be empty"):

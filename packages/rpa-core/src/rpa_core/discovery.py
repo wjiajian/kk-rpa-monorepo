@@ -23,9 +23,12 @@ from .contracts import (
     InstructionResolutionStatus,
     RequirementSpec,
 )
+from .elements import load_element_catalog
 from .requirements import (
     RequirementConsistencyError,
+    compute_requirement_hash,
     load_app_manifest,
+    load_requirement_memory,
     load_requirement_spec,
     validate_requirement_consistency,
 )
@@ -70,6 +73,7 @@ SENSITIVE_PATH_PARTS = {
     "logs",
     "port-leases",
     "profiles",
+    "runtime",
     "runs",
     "stores.local.toml",
 }
@@ -224,19 +228,34 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
 
     app_dir = app_dir.resolve()
     report = ValidationReport()
-    required = [
+    manifest_path = app_dir / "app.toml"
+    manifest: AppManifest | None = None
+    if manifest_path.is_file():
+        try:
+            manifest = load_app_manifest(manifest_path)
+        except Exception as exc:
+            report.add("APP_MANIFEST_INVALID", str(exc), manifest_path)
+
+    common_required = [
         "app.toml",
         "pyproject.toml",
         ".python-version",
-        ".env.example",
         ".gitignore",
         "README.md",
-        "GENERATION_REPORT.md",
-        "config/config.schema.json",
         "config/stores.example.toml",
-        "requirement/REQUIREMENT_MEMORY.md",
-        "requirement/requirement.spec.json",
     ]
+    if manifest is not None and manifest.schema_version == 2:
+        required = common_required + [
+            ".env.example",
+            "GENERATION_REPORT.md",
+            "config/config.schema.json",
+            "requirement/REQUIREMENT_MEMORY.md",
+            "requirement/requirement.spec.json",
+        ]
+        required_directories = ("config", "requirement/assets", "reviews", "src", "tests")
+    else:
+        required = common_required + ["requirement.md", "elements.toml"]
+        required_directories = ("config", "src", "tests")
     if require_lock:
         required.append("uv.lock")
     for relative in required:
@@ -244,7 +263,7 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
         if not path.is_file():
             report.add("APP_REQUIRED_FILE_MISSING", f"missing required file: {relative}", path)
 
-    for relative in ("config", "requirement/assets", "reviews", "src", "tests"):
+    for relative in required_directories:
         path = app_dir / relative
         if not path.is_dir():
             report.add(
@@ -253,13 +272,7 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                 path,
             )
 
-    manifest_path = app_dir / "app.toml"
-    if not manifest_path.is_file():
-        return report
-    try:
-        manifest = load_app_manifest(manifest_path)
-    except Exception as exc:
-        report.add("APP_MANIFEST_INVALID", str(exc), manifest_path)
+    if manifest is None:
         return report
     report.applications.append(manifest.app_id)
 
@@ -293,14 +306,12 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                 module_path,
             )
         source_package = app_dir / "src" / root_package
-        for filename in (
-            "__init__.py",
-            "cli.py",
-            "models.py",
-            "program.py",
-            "steps.py",
-            "validators.py",
-        ):
+        source_files = (
+            ("__init__.py", "cli.py", "models.py", "program.py", "steps.py", "validators.py")
+            if manifest.schema_version == 2
+            else ("__init__.py", "cli.py", "program.py")
+        )
+        for filename in source_files:
             path = source_package / filename
             if not path.is_file():
                 report.add(
@@ -308,15 +319,7 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                     f"missing required source file: src/{root_package}/{filename}",
                     path,
                 )
-        if manifest.schema_version == 1:
-            candidate_elements = source_package / "candidate_elements"
-            if not candidate_elements.is_dir():
-                report.add(
-                    "APP_CANDIDATE_ELEMENTS_DIRECTORY_MISSING",
-                    "missing application candidate_elements directory",
-                    candidate_elements,
-                )
-        else:
+        if manifest.schema_version == 2:
             for catalog_directory in ("elements", "instructions"):
                 path = source_package / catalog_directory
                 if not path.is_dir():
@@ -326,15 +329,15 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                         path,
                     )
 
-    command_data = manifest.commands.model_dump(mode="python")
-    for name, expected in STANDARD_COMMANDS.items():
-        if command_data.get(name) != expected:
-            report.add(
-                "APP_STANDARD_COMMAND_INVALID",
-                f"command {name!r} must equal {expected!r}",
-                manifest_path,
-            )
     if manifest.schema_version == 2:
+        command_data = manifest.commands.model_dump(mode="python")
+        for name, expected in STANDARD_COMMANDS.items():
+            if command_data.get(name) != expected:
+                report.add(
+                    "APP_STANDARD_COMMAND_INVALID",
+                    f"command {name!r} must equal {expected!r}",
+                    manifest_path,
+                )
         for name, expected in V2_STANDARD_COMMANDS.items():
             if command_data.get(name) != expected:
                 report.add(
@@ -357,7 +360,10 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                 report.add("APP_CATALOG_SNAPSHOT_INVALID", str(exc), lock_path)
 
     _validate_pyproject(app_dir, manifest, report)
-    _validate_requirement_pair(app_dir, manifest, report)
+    if manifest.schema_version == 2:
+        _validate_requirement_pair(app_dir, manifest, report)
+    else:
+        _validate_compact_requirement(app_dir, manifest, report)
     _validate_review_state(app_dir, manifest, report)
     report.issues.extend(scan_application_architecture(app_dir))
     report.issues.extend(scan_sensitive_content(app_dir))
@@ -513,14 +519,14 @@ def scan_application_architecture(app_dir: Path) -> list[ValidationIssue]:
 
 def scan_sensitive_content(app_dir: Path) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    excluded_parts = {".venv", "runs", "__pycache__", ".pytest_cache"}
+    excluded_parts = {part.lower() for part in SENSITIVE_PATH_PARTS}
     allowed_suffixes = {".py", ".md", ".toml", ".json", ".yaml", ".yml"}
     for path in sorted(app_dir.rglob("*")):
         if not path.is_file() or (
             path.suffix.lower() not in allowed_suffixes and path.name != ".env.example"
         ):
             continue
-        if any(part in excluded_parts for part in path.parts):
+        if any(part.lower() in excluded_parts for part in path.parts):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for pattern in SECRET_VALUE_PATTERNS:
@@ -609,6 +615,96 @@ def _validate_pyproject(
             "APP_CORE_PATH_SOURCE_MISSING",
             "tool.uv.sources must map rpa-core to a local path dependency",
             path,
+        )
+
+
+def _validate_compact_requirement(
+    app_dir: Path,
+    manifest: AppManifest,
+    report: ValidationReport,
+) -> None:
+    """Validate the single-file requirement used by compact applications."""
+
+    requirement_path = app_dir / "requirement.md"
+    elements_path = app_dir / "elements.toml"
+    if not requirement_path.is_file():
+        return
+    try:
+        requirement = load_requirement_memory(requirement_path)
+    except Exception as exc:
+        report.add("REQUIREMENT_INVALID", str(exc), requirement_path)
+        return
+
+    computed_hash = compute_requirement_hash(requirement)
+    if requirement.source.requirement_hash != computed_hash:
+        report.add(
+            "REQUIREMENT_GATE_FAILED",
+            "requirement.md hash does not match its canonical content",
+            requirement_path,
+        )
+    if manifest.requirement_hash != computed_hash:
+        report.add(
+            "REQUIREMENT_GATE_FAILED",
+            "manifest requirement_hash does not match requirement.md",
+            app_dir / "app.toml",
+        )
+    if manifest.requirement_revision != requirement.source.revision:
+        report.add(
+            "REQUIREMENT_GATE_FAILED",
+            "manifest requirement_revision does not match requirement.md",
+            app_dir / "app.toml",
+        )
+
+    manifest_identity = {
+        "app_id": manifest.app_id,
+        "app_slug": manifest.app_slug,
+        "name": manifest.name,
+        "version": manifest.version,
+        "entrypoint": manifest.entrypoint,
+    }
+    requirement_identity = requirement.application.model_dump(mode="python")
+    for field_name, expected in manifest_identity.items():
+        if requirement_identity.get(field_name) != expected:
+            report.add(
+                "REQUIREMENT_GATE_FAILED",
+                f"requirement application.{field_name} does not match manifest",
+                requirement_path,
+            )
+
+    if requirement.unresolved_instructions or any(
+        step.instruction_refs or step.unresolved_instruction_ids
+        for step in requirement.steps
+    ):
+        report.add(
+            "APP_COMPACT_INSTRUCTION_REFERENCE",
+            "compact applications implement browser flow directly in Step code",
+            requirement_path,
+        )
+
+    if elements_path.is_file():
+        try:
+            element_ids = set(load_element_catalog(elements_path))
+        except Exception as exc:
+            report.add("APP_ELEMENT_CATALOG_INVALID", str(exc), elements_path)
+        else:
+            for step in requirement.steps:
+                missing = sorted(set(step.element_refs) - element_ids)
+                if missing:
+                    report.add(
+                        "APP_ELEMENT_REFERENCE_MISSING",
+                        f"step {step.id!r} references missing elements: {', '.join(missing)}",
+                        requirement_path,
+                    )
+
+    if requirement.has_blockers and manifest.status in {
+        AppStatus.READY_FOR_REVIEW,
+        AppStatus.APPROVED,
+        AppStatus.READY_FOR_PUSH,
+    }:
+        report.add(
+            "APP_STATUS_BLOCKER_CONFLICT",
+            "application status is too advanced while requirement blockers remain",
+            app_dir / "app.toml",
         )
 
 

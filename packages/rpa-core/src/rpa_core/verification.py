@@ -38,12 +38,14 @@ class FakeState:
     * ``counts`` — match counts returned by ``count()``
     * ``texts`` — text values returned by ``texts()``
     * ``downloads_available`` — whether a download fixture is offered at all
+    * ``new_tabs_available`` — whether a click can open its expected new tab
     """
 
     hidden: tuple[str, ...] = ()
     counts: Mapping[str, int] = field(default_factory=dict)
     texts: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     downloads_available: bool = True
+    new_tabs_available: bool = True
 
     @property
     def is_default(self) -> bool:
@@ -52,6 +54,7 @@ class FakeState:
             and not self.counts
             and not self.texts
             and self.downloads_available
+            and self.new_tabs_available
         )
 
 

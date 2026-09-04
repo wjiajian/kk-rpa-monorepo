@@ -1,0 +1,8 @@
+schema_version = 1
+
+[stores.STORE_001]
+platform = "jingmai"
+profile_directory = "profiles/STORE_001"
+debug_port = 0
+expected_identity = "<target account identity>"
+read_only_export_account = false

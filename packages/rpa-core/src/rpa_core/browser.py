@@ -218,6 +218,13 @@ class BrowserActions(Protocol):
 
     def click(self, element: ElementSpec) -> None: ...
 
+    def click_and_switch_to_new_tab(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float | None = None,
+    ) -> None: ...
+
     def input(self, element: ElementSpec, value: SecretLike) -> None: ...
 
     def text(self, element: ElementSpec) -> str: ...
@@ -265,6 +272,14 @@ class ContextGuardedBrowserActions(BrowserActions, Protocol):
         self,
         element: ElementSpec,
         *,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None: ...
+
+    def click_and_switch_to_new_tab(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float | None = None,
         context_guard: BrowserContextGuard | None = None,
     ) -> None: ...
 
@@ -342,6 +357,7 @@ class FakeBrowserActions:
     context_urls: Mapping[str, str | None] = field(default_factory=dict)
     counts: Mapping[str, int] = field(default_factory=dict)
     text_lists: Mapping[str, Iterable[str]] = field(default_factory=dict)
+    new_tab_urls: Mapping[str, str] = field(default_factory=dict)
     actions: list[BrowserActionRecord] = field(default_factory=list, init=False)
     current_url: str | None = field(default=None, init=False)
     _visible: frozenset[str] = field(init=False, repr=False)
@@ -409,6 +425,20 @@ class FakeBrowserActions:
             if any(not isinstance(item, str) for item in items):
                 raise ValueError("fake text list values must be strings")
             self._text_lists[element_id] = items
+        invalid_new_tab_ids = sorted(
+            element_id
+            for element_id in self.new_tab_urls
+            if not _ELEMENT_ID_PATTERN.fullmatch(element_id)
+        )
+        if invalid_new_tab_ids:
+            raise ValueError(
+                f"invalid fake new-tab element IDs: {invalid_new_tab_ids!r}"
+            )
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in self.new_tab_urls.values()
+        ):
+            raise ValueError("fake new-tab URLs must be non-empty strings")
 
     def context_url(self, element: ElementSpec) -> str | None:
         """Return the deterministic browsing context URL for one element.
@@ -516,6 +546,27 @@ class FakeBrowserActions:
             self.actions.append(BrowserActionRecord("click", element.id))
         finally:
             self._guard_context(element, context_guard)
+
+    def click_and_switch_to_new_tab(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float | None = None,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        if timeout is not None and timeout <= 0:
+            raise ValueError("new-tab timeout must be positive")
+        self.click(element, context_guard=context_guard)
+        try:
+            target_url = self.new_tab_urls[element.id]
+        except KeyError as error:
+            raise NavigationError(
+                f"no fake new tab configured for element {element.id!r}"
+            ) from error
+        self.current_url = target_url
+        self.actions.append(
+            BrowserActionRecord("switch_new_tab", element.id, target_url)
+        )
 
     def input(
         self,

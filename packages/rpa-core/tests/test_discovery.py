@@ -7,6 +7,7 @@ from rpa_core.catalog import CatalogLock, hash_catalog_path
 from rpa_core.contracts import AppManifest, RequirementSpec
 from rpa_core.discovery import (
     ValidationReport,
+    _validate_compact_requirement,
     _validate_requirement_pair,
     _validate_v2_catalog_references,
     discover_applications,
@@ -77,17 +78,110 @@ def test_identity_guard_rejects_existing_directory(tmp_path: Path) -> None:
         raise AssertionError("existing directory was not rejected")
 
 
-def test_application_validation_requires_safe_standard_skeleton(tmp_path: Path) -> None:
+def test_application_validation_requires_compact_standard_skeleton(tmp_path: Path) -> None:
     from rpa_core.discovery import validate_application
 
     report = validate_application(tmp_path, require_lock=True)
     missing = {issue.message for issue in report.issues}
 
-    assert "missing required file: .env.example" in missing
     assert "missing required file: .gitignore" in missing
+    assert "missing required file: elements.toml" in missing
+    assert "missing required file: requirement.md" in missing
     assert "missing required file: config/stores.example.toml" in missing
-    assert "missing required directory: requirement/assets" in missing
-    assert "missing required directory: reviews" in missing
+    assert "missing required directory: config" in missing
+    assert "missing required directory: src" in missing
+    assert "missing required directory: tests" in missing
+
+
+def test_compact_requirement_validates_one_memory_and_element_catalog(
+    tmp_path: Path,
+) -> None:
+    document = {
+        "schema_version": 1,
+        "source": {"document_id": "redacted-doc", "revision": 3},
+        "application": {
+            "app_id": "example.compact",
+            "app_slug": "example_compact",
+            "name": "Compact example",
+            "version": "0.1.0",
+            "entrypoint": "example_compact.cli:main",
+        },
+        "steps": [
+            {
+                "id": "S001",
+                "name": "Read marker",
+                "action": "read_marker",
+                "success_conditions": ["marker exists"],
+                "element_refs": ["example.page.marker"],
+            }
+        ],
+        "outputs": [],
+        "pending_confirmations": [],
+        "unresolved_elements": [],
+        "unresolved_instructions": [],
+    }
+    digest = compute_requirement_hash(document)
+    (tmp_path / "requirement.md").write_text(
+        f'''# Compact requirement
+
+```toml requirement-canonical
+schema_version = 1
+pending_confirmations = []
+unresolved_elements = []
+unresolved_instructions = []
+outputs = []
+
+[source]
+document_id = "redacted-doc"
+revision = 3
+requirement_hash = "{digest}"
+
+[application]
+app_id = "example.compact"
+app_slug = "example_compact"
+name = "Compact example"
+version = "0.1.0"
+entrypoint = "example_compact.cli:main"
+
+[[steps]]
+id = "S001"
+name = "Read marker"
+action = "read_marker"
+success_conditions = ["marker exists"]
+element_refs = ["example.page.marker"]
+```
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "elements.toml").write_text(
+        '''schema_version = 2
+
+[elements."example.page.marker"]
+name = "Marker"
+page = "example"
+locator = "#marker"
+expect_count = 1
+check_at = "S001"
+''',
+        encoding="utf-8",
+    )
+    manifest = AppManifest.model_validate(
+        {
+            "app_id": "example.compact",
+            "app_slug": "example_compact",
+            "name": "Compact example",
+            "version": "0.1.0",
+            "entrypoint": "example_compact.cli:main",
+            "python": "3.12",
+            "requirement_revision": 3,
+            "requirement_hash": digest,
+        }
+    )
+    report = ValidationReport()
+
+    _validate_compact_requirement(tmp_path, manifest, report)
+
+    assert report.issues == []
 
 
 def test_architecture_scan_rejects_direct_driver_and_element_click(
@@ -174,6 +268,12 @@ def test_sensitive_scan_includes_fixtures_and_env_example(tmp_path: Path) -> Non
     fixture.write_text('{"api_key": "real-looking-secret-value"}\n', encoding="utf-8")
     env_example = tmp_path / ".env.example"
     env_example.write_text("TOKEN=real-looking-token-value\n", encoding="utf-8")
+    runtime = tmp_path / "runtime" / "handoffs" / "STORE_001.json"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text('{"token": "local-runtime-secret-value"}\n', encoding="utf-8")
+    local_store = tmp_path / "config" / "stores.local.toml"
+    local_store.parent.mkdir(parents=True)
+    local_store.write_text('password = "local-store-secret-value"\n', encoding="utf-8")
 
     issues = scan_sensitive_content(tmp_path)
 

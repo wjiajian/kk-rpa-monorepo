@@ -1407,6 +1407,20 @@ class AuthorizedBrowserActions:
         self._authorize(BrowserAction.CLICK, element=element)
         self._call_browser(lambda: self._delegate.click(element))
 
+    def click_and_switch_to_new_tab(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        self._authorize(BrowserAction.CLICK, element=element)
+        self._call_browser(
+            lambda: self._delegate.click_and_switch_to_new_tab(
+                element,
+                timeout=timeout,
+            )
+        )
+
     def input(self, element: ElementSpec, value: SecretLike) -> None:
         self._authorize(BrowserAction.INPUT, element=element)
         self._call_browser(lambda: self._delegate.input(element, value))

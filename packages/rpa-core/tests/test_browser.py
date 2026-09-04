@@ -12,6 +12,7 @@ from rpa_core.browser import (
     FakeBrowserActions,
     FakeDownload,
     Locator,
+    NavigationError,
     SecretValue,
     UnresolvedElementError,
 )
@@ -150,3 +151,24 @@ def test_fake_multi_reads_validate_their_fixtures(tmp_path: Path) -> None:
         FakeBrowserActions(tmp_path, text_lists={"demo.page.rows": [1, 2]})
     with pytest.raises(ValueError, match="invalid fake count element IDs"):
         FakeBrowserActions(tmp_path, counts={"1-bad-id": 1})
+
+
+def test_fake_click_switches_only_when_a_new_tab_fixture_exists(tmp_path: Path) -> None:
+    view = ElementSpec("demo.report.view", "查看", "report")
+    browser = FakeBrowserActions(
+        tmp_path,
+        visible_element_ids=(view.id,),
+        new_tab_urls={view.id: "https://example.invalid/downloads"},
+    )
+
+    browser.click_and_switch_to_new_tab(view, timeout=3.0)
+
+    assert browser.current_url == "https://example.invalid/downloads"
+    assert [item.action for item in browser.actions] == ["click", "switch_new_tab"]
+
+    missing = FakeBrowserActions(
+        tmp_path / "missing",
+        visible_element_ids=(view.id,),
+    )
+    with pytest.raises(NavigationError, match="no fake new tab"):
+        missing.click_and_switch_to_new_tab(view)

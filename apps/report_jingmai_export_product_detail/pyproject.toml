@@ -1,0 +1,31 @@
+[project]
+name = "report-jingmai-export-product-detail"
+version = "0.1.0"
+description = "Independent RPA application for exporting the previous day's Jingmai product-detail report."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "rpa-core==0.7.0",
+]
+
+[project.scripts]
+rpa-app = "report_jingmai_export_product_detail.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+rpa-core = { path = "../../packages/rpa-core", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]

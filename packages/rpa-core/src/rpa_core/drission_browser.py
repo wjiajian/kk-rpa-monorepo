@@ -245,6 +245,74 @@ class DrissionBrowserActions:
         finally:
             self._guard_scope_origin(located.scope, context_guard)
 
+    def click_and_switch_to_new_tab(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float | None = None,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> None:
+        """Click an element, wait for one new tab, and bind later calls to it."""
+
+        wait_timeout = self.action_timeout if timeout is None else timeout
+        if wait_timeout <= 0:
+            raise ValueError("new-tab timeout must be positive")
+        source_tab = self.tab
+        browser = getattr(source_tab, "browser", None)
+        if browser is None:
+            raise NavigationError("current tab does not expose its browser")
+        try:
+            previous_tab_ids = {str(item) for item in browser.tab_ids}
+        except Exception:
+            previous_tab_ids = set()
+        self.click(element, context_guard=context_guard)
+        try:
+            tab_id = browser.wait.new_tab(
+                timeout=min(1.0, wait_timeout),
+                curr_tab=source_tab,
+                raise_err=False,
+            )
+            target_tab = None
+            if tab_id:
+                try:
+                    target_tab = browser.get_tab(tab_id)
+                except Exception:
+                    target_tab = None
+            deadline = monotonic() + wait_timeout
+            while not target_tab and previous_tab_ids and monotonic() < deadline:
+                try:
+                    new_ids = [
+                        str(item)
+                        for item in browser.tab_ids
+                        if str(item) not in previous_tab_ids
+                    ]
+                except Exception:
+                    break
+                if len(new_ids) == 1:
+                    try:
+                        target_tab = browser.get_tab(new_ids[0])
+                    except Exception:
+                        target_tab = None
+                if not target_tab:
+                    sleep(min(0.05, max(0.0, deadline - monotonic())))
+            if not target_tab:
+                if not tab_id:
+                    raise NavigationError("click did not open a new tab before timeout")
+                raise NavigationError("new browser tab is unavailable")
+            self.tab = target_tab
+            if not target_tab.wait.doc_loaded(
+                timeout=wait_timeout,
+                raise_err=False,
+            ):
+                raise NavigationError("new tab did not finish loading before timeout")
+            self._guard_scope_origin(target_tab, context_guard)
+        except BrowserContextGuardError:
+            raise
+        except NavigationError:
+            raise
+        except Exception as error:
+            raise NavigationError("new browser tab switch failed") from error
+
     def input(
         self,
         element: ElementSpec,
