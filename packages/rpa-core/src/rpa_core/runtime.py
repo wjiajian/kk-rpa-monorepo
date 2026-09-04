@@ -299,6 +299,16 @@ class BaseProgram:
                 return candidate
         raise KeyError(step_id)
 
+    def prepare_is_satisfied(self, context: "ExecutionContext") -> bool:
+        """Return true when resume may skip prepare because its effect holds.
+
+        Default false, so prepare always runs.  A program overrides this to let
+        an adopted browser keep the page it is already on instead of being
+        navigated away from the state resume is about to read back.
+        """
+
+        return False
+
     def prepare(self, context: "ExecutionContext") -> None:
         """Validate run inputs and resources before the first business step."""
 
@@ -583,7 +593,8 @@ _ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     },
     _value(StepStatus.RETRY_WAIT): {_value(StepStatus.RUNNING), _value(StepStatus.FAILED)},
     _value(StepStatus.FAILED): {_value(StepStatus.RUNNING), _value(StepStatus.VERIFYING)},
-    _value(StepStatus.SUCCEEDED): set(),
+    # Resume re-reads a succeeded step before trusting its checkpoint.
+    _value(StepStatus.SUCCEEDED): {_value(StepStatus.VERIFYING)},
 }
 
 
@@ -660,48 +671,70 @@ class Runner:
         skipped: list[str] = []
         cleanup_started = False
         try:
-            program.prepare(context)
-            logger.emit(
-                "run.prepared",
-                app_id=context.app_id,
-                run_id=context.run_id,
-                program_id=context.program_id,
-                program_version=context.program_version,
-                status="running",
-            )
+            # Resume may keep the page an adopted browser is already on:
+            # prepare would navigate away from the very state the recovery
+            # checks below are about to read back.
+            if resume and self._prepare_is_satisfied(program, context, logger):
+                logger.emit(
+                    "run.prepare_skipped",
+                    app_id=context.app_id,
+                    run_id=context.run_id,
+                    program_id=context.program_id,
+                    program_version=context.program_version,
+                    status="running",
+                )
+            else:
+                program.prepare(context)
+                logger.emit(
+                    "run.prepared",
+                    app_id=context.app_id,
+                    run_id=context.run_id,
+                    program_id=context.program_id,
+                    program_version=context.program_version,
+                    status="running",
+                )
             for step in program.steps:
                 step_id = step.spec.step_id
                 record = checkpoint["steps"][step_id]
                 if _value(record["status"]) == _value(StepStatus.SUCCEEDED):
-                    if (
-                        resume
-                        and _value(step.spec.resume_policy)
-                        == _value(ResumePolicy.VERIFY_THEN_RUN)
-                        and _value(step.spec.side_effect) == _value(SideEffect.WRITE)
-                    ):
-                        self._start_step_deadline(context, step, record["attempts"])
-                        try:
-                            checkpoint_valid = bool(
-                                step.verify_recovery(context, record)
+                    # A checkpoint records what happened, not what is still
+                    # true.  On resume the page may be somewhere else entirely,
+                    # so a stored success is re-read before it is trusted.
+                    stale: dict[str, object] | None = None
+                    if resume:
+                        stale = self._reverify_checkpointed_step(
+                            step, context, checkpoint, record, store, logger
+                        )
+                    if stale is not None:
+                        if _value(step.spec.resume_policy) == _value(ResumePolicy.MANUAL):
+                            raise ResumeBlockedError(
+                                f"succeeded step {step_id} needs manual confirmation "
+                                "because its recorded state no longer holds"
                             )
-                            context.ensure_step_within_deadline()
-                        finally:
-                            self._clear_step_deadline(context)
-                        if not checkpoint_valid:
+                        if _value(step.spec.side_effect) == _value(SideEffect.WRITE):
+                            # Repeating an external write is never silently safe.
                             raise ResumeBlockedError(
                                 f"succeeded step {step_id} failed recovery verification"
                             )
+                        # A read-only step is safe to redo, and redoing it is
+                        # what puts the page back where later steps expect it.
                         logger.emit(
-                            "step.checkpoint_verified",
+                            "step.checkpoint_stale",
                             app_id=context.app_id,
                             run_id=context.run_id,
                             program_id=context.program_id,
                             program_version=context.program_version,
                             step_id=step_id,
-                            status=StepStatus.SUCCEEDED,
+                            status=StepStatus.FAILED,
                             attempt=record["attempts"],
-                            evidence_refs=record.get("evidence_refs", []),
+                            details=stale,
                         )
+                        result = self._run_step(
+                            step, context, checkpoint, record, store, logger
+                        )
+                        context.outputs[step_id] = result
+                        completed.append(step_id)
+                        continue
                     skipped.append(step_id)
                     if record.get("result") is not None:
                         context.outputs[step_id] = record["result"]
@@ -1032,6 +1065,90 @@ class Runner:
             raise CheckpointAuthorizationMismatchError(
                 "checkpoint no longer matches the claimed Resume authorization"
             )
+
+    @staticmethod
+    def _prepare_is_satisfied(
+        program: BaseProgram,
+        context: ExecutionContext,
+        logger: JsonlEventLogger,
+    ) -> bool:
+        """Ask the program whether prepare can be skipped on this resume.
+
+        Any failure to answer counts as "not satisfied", so an unreadable page
+        costs one redundant prepare rather than skipping a required one.
+        """
+
+        try:
+            return bool(program.prepare_is_satisfied(context))
+        except Exception as error:
+            logger.emit(
+                "run.prepare_check_failed",
+                app_id=context.app_id,
+                run_id=context.run_id,
+                program_id=context.program_id,
+                program_version=context.program_version,
+                status="running",
+                details={"exception_type": type(error).__name__},
+            )
+            return False
+
+    def _reverify_checkpointed_step(
+        self,
+        step: Step,
+        context: ExecutionContext,
+        checkpoint: dict[str, Any],
+        record: dict[str, Any],
+        store: CheckpointStore,
+        logger: JsonlEventLogger,
+    ) -> dict[str, object] | None:
+        """Re-read a succeeded step's effect; return None when it still holds.
+
+        A non-None return describes why the checkpoint is stale.  A raising
+        recovery check counts as stale rather than fatal: ``texts``/``count``
+        raise when their frame is absent, which is precisely the "the page is
+        not there any more" signal this is looking for.
+        """
+
+        self._transition(record, StepStatus.VERIFYING)
+        checkpoint["updated_at"] = _utc_now()
+        store.save(checkpoint)
+        self._start_step_deadline(context, step, record["attempts"])
+        stale: dict[str, object] | None = None
+        try:
+            if bool(step.verify_recovery(context, record)):
+                context.ensure_step_within_deadline()
+            else:
+                stale = {"reason": "recovery_unverified"}
+        except Exception as error:
+            stale = {
+                "reason": "recovery_error",
+                "exception_type": type(error).__name__,
+            }
+        finally:
+            self._clear_step_deadline(context)
+
+        if stale is None:
+            self._transition(record, StepStatus.SUCCEEDED)
+            checkpoint["updated_at"] = _utc_now()
+            store.save(checkpoint)
+            logger.emit(
+                "step.checkpoint_verified",
+                app_id=context.app_id,
+                run_id=context.run_id,
+                program_id=context.program_id,
+                program_version=context.program_version,
+                step_id=step.spec.step_id,
+                status=StepStatus.SUCCEEDED,
+                attempt=record["attempts"],
+                evidence_refs=record.get("evidence_refs", []),
+            )
+            return None
+
+        # FAILED is the only state _run_step can pick up from.
+        self._transition(record, StepStatus.FAILED)
+        checkpoint["updated_at"] = _utc_now()
+        store.save(checkpoint)
+        return stale
 
     def _recover_or_prepare(
         self,

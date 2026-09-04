@@ -27,6 +27,7 @@ from rpa_core.runtime import (
     ExecutionContext,
     ProgramVerificationError,
     ProgramSpec,
+    ResumeBlockedError,
     RunAlreadyActiveError,
     RunDirectoryLock,
     RunLockUnsupportedError,
@@ -196,7 +197,8 @@ def test_succeeded_is_never_written_when_verification_fails(tmp_path: Path) -> N
 def test_resume_skips_successful_steps_and_continues_from_failure(tmp_path: Path) -> None:
     calls: list[str] = []
     steps = [
-        RecordingStep("STEP-001", calls),
+        # Resume only skips a succeeded step that can still prove its effect.
+        RecordingStep("STEP-001", calls, recovery_verification=True),
         RecordingStep("STEP-002", calls, fail_times=1),
         RecordingStep("STEP-003", calls),
     ]
@@ -908,3 +910,190 @@ def test_recovery_exception_replaces_old_error_and_emits_step_failed(tmp_path: P
     assert recovery_failure["details"]["exception_type"] == "RecoveryProbeError"
     assert events[-1]["event_type"] == "run.failed"
     assert events[-1]["error_code"] == "recovery_probe_failed"
+
+
+class RaisingRecoveryStep(RecordingStep):
+    """A step whose recovery read blows up, the way texts() does off-page."""
+
+    def verify_recovery(self, context: ExecutionContext, checkpoint: object) -> bool:
+        raise RuntimeError("frame is not on this page")
+
+
+class PrepareProbeProgram(BaseProgram):
+    """Records prepare activity and answers the resume satisfaction hook."""
+
+    def __init__(self, *args, satisfied: object = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.satisfied = satisfied
+        self.prepare_calls = 0
+        self.satisfaction_calls = 0
+
+    def prepare_is_satisfied(self, context: ExecutionContext) -> bool:
+        self.satisfaction_calls += 1
+        if isinstance(self.satisfied, Exception):
+            raise self.satisfied
+        return bool(self.satisfied)
+
+    def prepare(self, context: ExecutionContext) -> None:
+        self.prepare_calls += 1
+
+
+def make_prepare_program(steps: list[Step], *, satisfied: object = False):
+    return PrepareProbeProgram(
+        ProgramSpec(
+            app_id="example.offline.export",
+            program_id="offline-export",
+            version="0.1.0",
+            requirement_hash=REQUIREMENT_HASH,
+            name="offline test",
+        ),
+        steps,
+        satisfied=satisfied,
+    )
+
+
+def run_then_resume(tmp_path: Path, program, run_id: str = "run-001"):
+    """Fail one run, then resume the same program, returning the resume result."""
+
+    with pytest.raises(StepRunError):
+        Runner().run(program, make_context(make_run_dir(tmp_path, run_id)))
+    return Runner().run(
+        program,
+        make_context(make_run_dir(tmp_path, run_id)),
+        resume=True,
+    )
+
+
+def test_resume_replays_a_succeeded_step_whose_state_is_gone(tmp_path: Path) -> None:
+    """A checkpoint records what happened, not what is still true."""
+
+    calls: list[str] = []
+    program = make_program(
+        [
+            RecordingStep("STEP-001", calls, recovery_verification=False),
+            RecordingStep("STEP-002", calls, fail_times=1),
+        ]
+    )
+
+    result = run_then_resume(tmp_path, program)
+
+    assert result.status == "succeeded"
+    # STEP-001 cannot prove its effect survived, so it is redone rather than
+    # leaving STEP-002 without the state it depends on.
+    assert result.skipped_steps == ()
+    assert "STEP-001" in result.completed_steps
+    assert calls == ["STEP-001", "STEP-002", "STEP-001", "STEP-002"]
+    events = read_events(make_run_dir(tmp_path) / "events.jsonl")
+    stale = [event for event in events if event["event_type"] == "step.checkpoint_stale"]
+    assert [event["step_id"] for event in stale] == ["STEP-001"]
+    assert stale[0]["details"]["reason"] == "recovery_unverified"
+
+
+def test_resume_treats_a_raising_recovery_check_as_stale(tmp_path: Path) -> None:
+    """texts()/count() raise when their frame is absent; that means gone, not crash."""
+
+    calls: list[str] = []
+    program = make_program(
+        [
+            RaisingRecoveryStep("STEP-001", calls),
+            RecordingStep("STEP-002", calls, fail_times=1),
+        ]
+    )
+
+    result = run_then_resume(tmp_path, program)
+
+    assert result.status == "succeeded"
+    assert "STEP-001" in result.completed_steps
+    events = read_events(make_run_dir(tmp_path) / "events.jsonl")
+    stale = [event for event in events if event["event_type"] == "step.checkpoint_stale"]
+    assert stale[0]["details"] == {
+        "reason": "recovery_error",
+        "exception_type": "RuntimeError",
+    }
+
+
+def test_resume_blocks_a_succeeded_write_step_that_cannot_be_reverified(
+    tmp_path: Path,
+) -> None:
+    """Redoing an external write is never silently safe."""
+
+    calls: list[str] = []
+    program = make_program(
+        [
+            RecordingStep(
+                "STEP-001",
+                calls,
+                recovery_verification=False,
+                side_effect=SideEffect.WRITE,
+            ),
+            RecordingStep("STEP-002", calls, fail_times=1),
+        ]
+    )
+    with pytest.raises(StepRunError):
+        Runner().run(program, make_context(make_run_dir(tmp_path)))
+
+    with pytest.raises(ResumeBlockedError):
+        Runner().run(program, make_context(make_run_dir(tmp_path)), resume=True)
+
+    assert calls == ["STEP-001", "STEP-002"]
+
+
+def test_resume_skips_prepare_when_the_program_reports_it_satisfied(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    program = make_prepare_program(
+        [
+            RecordingStep("STEP-001", calls, recovery_verification=True),
+            RecordingStep("STEP-002", calls, fail_times=1),
+        ],
+        satisfied=True,
+    )
+
+    result = run_then_resume(tmp_path, program)
+
+    assert result.status == "succeeded"
+    # Once for the first run; the resume asked the hook instead.
+    assert program.prepare_calls == 1
+    assert program.satisfaction_calls == 1
+    event_types = [
+        event["event_type"] for event in read_events(make_run_dir(tmp_path) / "events.jsonl")
+    ]
+    assert "run.prepare_skipped" in event_types
+
+
+def test_resume_runs_prepare_when_the_satisfaction_check_raises(tmp_path: Path) -> None:
+    """Unable to answer means not satisfied: one wasted prepare beats a skipped one."""
+
+    calls: list[str] = []
+    program = make_prepare_program(
+        [
+            RecordingStep("STEP-001", calls, recovery_verification=True),
+            RecordingStep("STEP-002", calls, fail_times=1),
+        ],
+        satisfied=RuntimeError("cannot read the page"),
+    )
+
+    result = run_then_resume(tmp_path, program)
+
+    assert result.status == "succeeded"
+    assert program.prepare_calls == 2
+    event_types = [
+        event["event_type"] for event in read_events(make_run_dir(tmp_path) / "events.jsonl")
+    ]
+    assert "run.prepare_check_failed" in event_types
+    assert "run.prepare_skipped" not in event_types
+    assert "run.prepared" in event_types
+
+
+def test_fresh_run_never_consults_the_prepare_satisfaction_hook(tmp_path: Path) -> None:
+    calls: list[str] = []
+    program = make_prepare_program(
+        [RecordingStep("STEP-001", calls)],
+        satisfied=True,
+    )
+
+    Runner().run(program, make_context(make_run_dir(tmp_path)))
+
+    assert program.prepare_calls == 1
+    assert program.satisfaction_calls == 0

@@ -24,6 +24,7 @@ from .real_runtime import (
     execute_login,
     execute_standard_run,
     grant_authorization_request,
+    release_retained_browser,
     revoke_authorization_request,
 )
 from .validators import APP_DIR, RunBlockedError, application_report, doctor, ensure_real_run_ready
@@ -94,6 +95,20 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--account", default="STORE_001")
     run.add_argument("--run-id", required=True)
     run.add_argument("--authorization-id", required=True)
+
+    browser = commands.add_parser(
+        "browser",
+        help="manage the browser a failed run left open",
+    )
+    browser_commands = browser.add_subparsers(
+        dest="browser_command",
+        required=True,
+    )
+    browser_release = browser_commands.add_parser(
+        "release",
+        help="close the browser retained by the last failed run",
+    )
+    browser_release.add_argument("--account", default="STORE_001")
 
     resume = commands.add_parser("resume")
     resume.add_argument("--run-id", required=True)
@@ -301,12 +316,35 @@ def _print_compact_failure(payload: Mapping[str, object]) -> None:
     if isinstance(blocker_ids, list) and blocker_ids:
         print(f"  blocker_ids: {_compact_scope_value(blocker_ids)}")
 
+    _print_retained_browser(payload)
+
     details_file = _write_error_diagnostics(payload)
     if details_file is not None:
         print(f"  details: {details_file}")
     run_id = payload.get("run_id")
     if run_id is not None:
         print(f"  run_id: {run_id}")
+
+
+def _print_retained_browser(payload: Mapping[str, object]) -> None:
+    """Say the browser is still open, and how to pick the run back up."""
+
+    retained = payload.get("retained_browser")
+    if not isinstance(retained, Mapping):
+        return
+    print(
+        "  retained_browser: "
+        f"port={retained.get('port')} pid={retained.get('browser_pid')}"
+        " —— 窗口停在失败现场，下一次 run/resume 会接管它"
+    )
+    run_id = payload.get("run_id")
+    mode = payload.get("mode")
+    if isinstance(run_id, str) and isinstance(mode, str):
+        print(
+            f"  resume: rpa-app resume --run-id {run_id} --mode {mode}"
+            " --authorization-id <id>"
+        )
+    print("  release: rpa-app browser release")
 
 
 def _emit_failure(payload: Mapping[str, object], *, compact: bool) -> None:
@@ -503,6 +541,8 @@ def _print_runtime_error(
         payload["instruction_id"] = error.instruction_id
     if error.exception_type is not None:
         payload["exception_type"] = error.exception_type
+    if error.retained_browser is not None:
+        payload["retained_browser"] = dict(error.retained_browser)
     payload.update(_error_diagnostics(error))
     _emit_failure(payload, compact=compact)
     return 4 if not error.real_browser_launched else 5
@@ -600,6 +640,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         except ApplicationRuntimeError as error:
             return _print_runtime_error(args.command, args.account, error, mode="preview")
+    if args.command == "browser":
+        try:
+            _print(release_retained_browser(account=args.account))
+            return 0
+        except ApplicationRuntimeError as error:
+            return _print_runtime_error(
+                f"browser {args.browser_command}",
+                args.account,
+                error,
+            )
     if args.command in {"run", "resume"}:
         return _run_standard_command(
             args.command,

@@ -27,6 +27,7 @@ from rpa_core.authorization import (
     catalog_lock_digest,
 )
 from rpa_core.browser_manager import (
+    BrowserHandoff,
     BrowserLaunchSpec,
     BrowserLifecyclePolicy,
     BrowserManager,
@@ -89,6 +90,7 @@ class ApplicationRuntimeError(RuntimeError):
         step_id: str | None = None,
         instruction_id: str | None = None,
         exception_type: str | None = None,
+        retained_browser: Mapping[str, object] | None = None,
     ) -> None:
         super().__init__(f"application runtime failed: {error_code}")
         self.error_code = error_code
@@ -97,6 +99,7 @@ class ApplicationRuntimeError(RuntimeError):
         self.step_id = step_id
         self.instruction_id = instruction_id
         self.exception_type = exception_type
+        self.retained_browser = retained_browser
 
 
 class AuthorizationRequiredError(ApplicationRuntimeError):
@@ -611,6 +614,8 @@ def _with_browser(
 ) -> dict[str, object]:
     launched = False
     manager: BrowserManager | None = None
+    session = None
+    handoff: BrowserHandoff | None = None
     outcome: dict[str, object] | None = None
     caught: Exception | None = None
     try:
@@ -653,7 +658,9 @@ def _with_browser(
                     profile_id=profile_id,
                     profile_dir=profile_dir,
                     requested_port=inputs.store.debug_port,
-                    lifecycle=BrowserLifecyclePolicy.TERMINATE_ON_FINISH,
+                    # A failed run leaves the window open on the failing page so
+                    # the next run or resume can adopt it; success still closes.
+                    lifecycle=BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE,
                 ),
                 run_id=run_id,
                 run_dir=run_dir,
@@ -702,6 +709,9 @@ def _with_browser(
     finally:
         if manager is not None:
             try:
+                if session is not None:
+                    # The manager owns the policy; this only reports the outcome.
+                    handoff = manager.finish(session, failed=caught is not None)
                 manager.shutdown()
             except Exception as error:
                 if caught is None:
@@ -723,8 +733,11 @@ def _with_browser(
         )
     except Exception as error:
         authorization_error = error
+    retained = _retained_browser_summary(handoff)
     if caught is not None:
         if isinstance(caught, ApplicationRuntimeError):
+            if retained is not None and caught.retained_browser is None:
+                caught.retained_browser = retained
             raise caught
         raise ApplicationRuntimeError(
             getattr(caught, "error_code", "application_runtime_failed"),
@@ -733,6 +746,7 @@ def _with_browser(
             step_id=getattr(caught, "step_id", None),
             instruction_id=getattr(caught, "instruction_id", None),
             exception_type=type(caught).__name__,
+            retained_browser=retained,
         ) from caught
     if authorization_error is not None:
         raise ApplicationRuntimeError(
@@ -747,6 +761,41 @@ def _with_browser(
         ) from authorization_error
     assert outcome is not None
     return outcome
+
+
+def _retained_browser_summary(
+    handoff: BrowserHandoff | None,
+) -> dict[str, object] | None:
+    """Describe a browser left open so the next run knows it can adopt it."""
+
+    if handoff is None:
+        return None
+    return {
+        "port": handoff.port,
+        "browser_pid": handoff.browser_pid,
+        "profile_id": handoff.profile_id,
+        "run_id": handoff.run_id,
+        "detached_at": handoff.detached_at,
+    }
+
+
+def release_retained_browser(*, account: str) -> dict[str, object]:
+    """Terminate the browser retained for one account, if any is still held."""
+
+    inputs = _load_runtime_inputs(account, require_credentials=False)
+    profile_dir = _profile_directory(inputs.store)
+    manager = BrowserManager(
+        APP_DIR / "runtime" / "browser-manager",
+        port_range=(inputs.store.debug_port, inputs.store.debug_port),
+    )
+    return {
+        "ok": True,
+        "command": "browser release",
+        "account": account,
+        **manager.release_handoff(_profile_id(profile_dir)),
+        "real_browser_launched": False,
+        "run_directory_created": False,
+    }
 
 
 def _load_runtime_inputs(account: str, *, require_credentials: bool) -> _RuntimeInputs:
@@ -1189,5 +1238,6 @@ __all__ = [
     "execute_login",
     "execute_standard_run",
     "grant_authorization_request",
+    "release_retained_browser",
     "revoke_authorization_request",
 ]

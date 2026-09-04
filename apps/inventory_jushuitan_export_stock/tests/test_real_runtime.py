@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +14,11 @@ from rpa_core.authorization import (
     AuthorizationStore,
 )
 from rpa_core.browser import SecretValue
-from rpa_core.browser_manager import BrowserStartError
+from rpa_core.browser_manager import (
+    BrowserHandoff,
+    BrowserLifecyclePolicy,
+    BrowserStartError,
+)
 from rpa_core.catalog import (
     CatalogItemStatus,
     CatalogSourceType,
@@ -67,6 +72,7 @@ class FakeBrowserManager:
         self.runtime_root = runtime_root
         self.port_range = port_range
         self.shutdown_called = False
+        self.finish_calls: list[bool] = []
         self.browser = None
         self.run_dir_existed_before_start = None
         self.authorization_status_on_construct = None
@@ -90,7 +96,29 @@ class FakeBrowserManager:
         )
         if self.__class__.start_callback is not None:
             self.__class__.start_callback(run_dir)
-        return SimpleNamespace(actions=self.browser)
+        self.session = SimpleNamespace(
+            actions=self.browser,
+            profile_id=spec.profile_id,
+            port=spec.requested_port,
+            lifecycle=spec.lifecycle,
+        )
+        return self.session
+
+    def finish(self, session, *, failed=False):
+        self.finish_calls.append(failed)
+        if session.lifecycle is not BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE:
+            raise AssertionError(f"unexpected lifecycle policy: {session.lifecycle}")
+        if not failed:
+            return None
+        return BrowserHandoff(
+            profile_id=session.profile_id,
+            account_id="STORE_001",
+            profile_dir=Path(self.runtime_root),
+            port=session.port,
+            browser_pid=4242,
+            run_id="fixture-run",
+            detached_at="2026-09-04T00:00:00+00:00",
+        )
 
     def shutdown(self) -> None:
         self.shutdown_called = True
@@ -720,3 +748,52 @@ def test_success_evidence_names_are_unique_safe_basenames() -> None:
     assert first.endswith(".png")
     assert second.endswith(".png")
     assert "/" not in first and "\\" not in first
+
+
+def test_failed_run_retains_the_browser_and_reports_it(isolated_runtime) -> None:
+    """A failed run must leave the window open and say so, or resume is blind."""
+
+    _request_and_grant(
+        operation="run",
+        run_id="retain-on-failure-001",
+        authorization_id="auth-retain-on-failure-001",
+    )
+    # No download makes S005 fail after the browser is already up.
+    FakeBrowserManager.include_download = False
+
+    with pytest.raises(real_runtime.ApplicationRuntimeError) as failed:
+        real_runtime.execute_standard_run(
+            command="run",
+            account="STORE_001",
+            mode="preview",
+            run_id="retain-on-failure-001",
+            authorization_id="auth-retain-on-failure-001",
+        )
+
+    manager = FakeBrowserManager.instances[-1]
+    assert manager.finish_calls == [True]
+    retained = failed.value.retained_browser
+    assert retained is not None
+    assert retained["port"] == 9301
+    assert retained["browser_pid"] == 4242
+
+
+def test_successful_run_closes_the_browser(isolated_runtime) -> None:
+    _request_and_grant(
+        operation="run",
+        run_id="close-on-success-001",
+        authorization_id="auth-close-on-success-001",
+    )
+
+    payload = real_runtime.execute_standard_run(
+        command="run",
+        account="STORE_001",
+        mode="preview",
+        run_id="close-on-success-001",
+        authorization_id="auth-close-on-success-001",
+    )
+
+    assert payload["ok"] is True
+    manager = FakeBrowserManager.instances[-1]
+    assert manager.finish_calls == [False]
+    assert "retained_browser" not in payload
