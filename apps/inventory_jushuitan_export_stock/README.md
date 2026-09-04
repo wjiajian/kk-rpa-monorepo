@@ -1,8 +1,27 @@
 # 聚水潭库存导出 RPA
 
-这是从飞书需求 revision 107 生成并按真实运行反馈修正的独立应用。应用使用指定账号的独立持久化 Profile，确保登录并验证目标账号后进入商品库存，按本地品牌值精确筛选并下载库存文件。
+从需求 revision 107 生成的独立应用。使用指定账号的独立持久化 Profile，登录并核对目标账号后进入商品库存，按本地配置的品牌精确筛选并下载库存文件。
 
-当前版本为 `0.3.0`，Manifest 状态为 `ready_for_push`。本版本把所有真实浏览器入口迁移到公共 Authorization API，并按固定流程内部工具处理业务 iframe。运行 `preview-20260903T062356Z-df357a62` 已完成 S001–S005，生成 218,378 字节的本地 XLSX 和成功截图；Authorization Record 为 `succeeded`，`external_business_writes_executed=false`。当前版本 Developer Review 已通过，记录为 `reviews/20260903T143849+0800.toml`。应用快照仍为 17 个 verified elements 和 7 个 verified instructions，`catalog.lock.json` 未改变。
+当前版本 `0.4.0`，Manifest 状态 `ready_for_review`。
+
+> [!IMPORTANT]
+> **0.3.0 的"品牌筛选已验证"结论不成立。** 那一版的 S003 是假执行器（回显输入、从不回读页面），S004 是假验证器（`css:table tbody` 在搜索前就存在 —— 2026-09-03 实测搜索前后同为 21 行）。整条 S003 → S004 → S005 链路从未确认过筛选生效，S005 可能导出的是全量库存。
+>
+> 0.4.0 把断言改为回读页面状态，并为每个 Step 补了必须失败的反例。2026-09-03 的真实 Preview（`preview-20260903T090704Z`）已完成 S001–S005：S003/S004 从 DOM 回读到的选中品牌恰好等于配置品牌，下载 218,251 字节 XLSX，未执行任何外部业务写入。`latest_review` 仍为空，等待开发人员审核。详见 [GENERATION_REPORT.md](GENERATION_REPORT.md)。
+
+## Step 断言
+
+| Step | 验证依据 |
+| --- | --- |
+| S001 打开库存模块 | `module_marker`（带 `current___`，表示模块真的激活） |
+| S002 进入商品库存 | `page_marker`（页签处于 active 状态） |
+| S003 选择品牌 | **回读** `brand_selected_option`，选中集合恰好等于配置品牌 |
+| S004 搜索并验证筛选 | 结果行数 > 0 **且** 搜索后回读的选中品牌仍恰好等于配置品牌 |
+| S005 导出 | 文件在本次 run 的 `downloads/` 内、非空、哈希可复现 |
+
+S004 在**重新归一化之前**先回读平台留下的选中状态。0.3.0 直接重选品牌，把平台可能的重置盖掉了 —— 界面看起来对，结果表可能未筛选。所以 **0.4.0 的 S004 有可能在真实运行中失败，而那个失败是正确的**。
+
+每个 Step 提供至少一个假页面状态，`rpa-app test` 在该状态下真跑一遍 `execute()`，要求它抛错或 `verify()` 返回 `False`。共 16 个反例。
 
 ## 本地配置
 
@@ -154,8 +173,11 @@ Prepare 打开登录入口并检查会话
 
 如果登录失败、需要 human verification、页面账号身份不匹配、品牌下拉层未收起、选中集合不是唯一目标、搜索按钮不可点击、结果表标识缺失或下载未完成，流程会截图并失败关闭，不会继续导出。应用不写 NAS、飞书多维表格、数据库或正式 Excel；Preview 只执行页面读取、筛选和本地下载，不表示 external business write 或业务验收通过。
 
-## 0.3.0 下一步
+## 0.4.0 下一步
 
-1. 在 Clean Environment 用已刷新的 `uv.lock` 执行 Locked Install 和上述无副作用检查。
-2. 保留运行 `preview-20260903T062356Z-df357a62` 的本地 checkpoint、screenshot、download 和 Authorization Evidence，不提交这些 Git-ignored 文件。
-3. 当前 Developer Review 已完成，可按审核范围提交并推送 0.3.0。
+1. ~~在干净环境用 `uv sync --locked` 执行无副作用检查~~（285 项通过）
+2. ~~跑 `rpa-app verify-elements`~~（已完成：6 个阶段全到达，19 项 0 失效）
+3. ~~跑一次真实 Preview~~（已完成：S001–S005 全部通过）
+4. **由开发人员审核 0.4.0、Requirement Hash 和本次 Preview run。** `latest_review` 和 `ready_for_push` 在那之前没有依据 —— AI 不得自行设置。
+
+0.3.0 运行 `preview-20260903T062356Z-df357a62` 的 checkpoint、截图和下载物保留为历史证据（Git-ignored），但它签署的"筛选已验证"结论不适用于 0.4.0。

@@ -1,135 +1,114 @@
-# 元素、页面与候选元素
+# 元素库与失效检测
 
-## 两层资产边界
-
-元素有两个位置，职责不同：
+## 一个应用一个 elements.toml
 
 ```text
-顶层 elements/                         已真实验证的源资产
-  ↓ 生成时复制实际使用项及依赖闭包
-apps/<app>/src/<package>/elements/     应用运行时冻结副本和应用候选项
+apps/<slug>/elements.toml
 ```
 
-应用运行时不得读取顶层 `elements/`，也不得通过 Python import 直接依赖它。包内副本和候选项都由 `catalog.lock.json` 固定目标路径、状态、依赖和内容哈希。
+没有顶层元素源库，没有快照，没有锁文件。跨应用复用元素在第三个应用真的需要同一个定位器之前不做 —— 到时候 `git grep` 抄一份。
 
-`packages/rpa-platforms/` 仅兼容保留，不再作为元素源库。
-
-## 顶层目录与元数据
-
-```text
-elements/<platform>/<product>/<page>/<component>.toml
-```
-
-一个 TOML 文件定义一个稳定元素，状态必须是 `verified`。示意：
+## 格式
 
 ```toml
-schema_version = 1
-kind = "element"
-id = "example.web.login.account"
-version = "1.0.0"
-name = "登录账号"
-platform = "example"
-product = "web"
-status = "verified"
-dependencies = []
+[jushuitan.erp.product_stock.export_menu]
+locator      = "xpath://button[translate(normalize-space(.),' ','')='导出']"
+frame        = "css:iframe[src*='/erp-scm-goods/stockInventoryManagement']"
+expect_count = 1
+check_at     = "S004"
+note         = "列表右上角导出下拉入口"
 
-[locator]
-strategy = "css"
-value = "#login_id"
-
-[verification]
-url_pattern = "https://example.invalid/login"
-match_count = 1
-visible = true
-enabled = true
-refresh_stable = true
-evidence = "reviews/verification-batch-id"
+[jushuitan.erp.product_stock.brand_selector]
+locator                 = "css:input[placeholder='商品品牌']"
+frame                   = "css:iframe[src*='/erp-scm-goods/stockInventoryManagement']"
+expect_count            = 1
+check_at                = "S002"
+option_locator          = "css:div.j-item-text.ellipsis-1"
+selected_option_locator = "css:label.goods-checkbox-wrapper-checked div.j-item-text.ellipsis-1"
+popup_locator           = "css:div.goods-dropdown.j-selector-dropdown"
+dismiss_locator         = "css:input[placeholder='商品编码']"
+note                    = "多选品牌组件；selected_option_locator 用于回读真实选中集合"
 ```
 
-顶层 ID 在元素和指令之间也必须全局唯一。依赖使用 `element:<id>` 或 `instruction:<id>`，未知依赖和循环会被拒绝。
+## expect_count 是断言，不是记录
 
-## 运行时 ElementSpec
+这是 V2 与 V1 `[verification]` 块的本质区别：
 
-`rpa_core.browser.ElementSpec` 是不可变的运行对象：
+| | 含义 | 能发现失效吗 |
+| --- | --- | --- |
+| V1 `[verification] match_count = 1` | 2026-09-01 那一刻匹配了 1 个 | 否 |
+| V2 `expect_count = 1` | **现在**必须匹配 1 个 | 是 |
 
-```python
-@dataclass(frozen=True, slots=True)
-class ElementSpec:
-    id: str
-    name: str
-    page: str
-    component: str | None = None
-    locator: Locator | None = None
+
+`check_at` 指定这条期望在哪个导航阶段成立：`login_page` / `session` / `S001` / `S002` / ...
+
+**这是第一次真实运行逼出来的。** 不带阶段、在某个任意时刻统一检查，19 条里有 7 条报"失效"而实际什么都没坏 —— 登录框在已登录页面本来就是 0 个，"模块已激活"标识在导航更深之后本来就不再匹配。没有阶段的期望不是断言，只是把歧义搬进了报告。
+
+支持的写法：`1`、`">0"`、`">=2"`、`"0"`（用于断言某元素不应存在）。
+
+`locator` 可以省略 —— 表示定位器尚未捕获。生产适配器调用 `require_locator()` 时 fail-closed，Fake Browser 按稳定 ID 测试完整业务编排。**不要编造未验证的 XPath/CSS**，也不要因为一个元素未知就只写半个流程。
+
+## verify-elements
+
+元素库的核心价值是**页面改版时在一个地方修好，所有引用点跟着好**。`verify-elements` 是兑现这个价值的命令：
+
+```bash
+uv run rpa-app verify-elements --account STORE_001 --yes
 ```
 
-它保存稳定身份、页面上下文和可选的已验证定位器，不保存实时 DOM、浏览器句柄、账号或店铺配置。候选流程可以暂时没有 locator；生产适配器调用 `require_locator()` 时会 fail-closed，Fake Browser 则按稳定 ID 测试完整业务编排。
+```text
+jushuitan.erp.navigation.inventory_module      expect=1    actual=1    ✓
+jushuitan.erp.product_stock.export_menu        expect=1    actual=1    ✓
+jushuitan.erp.product_stock.result_row         expect>0    actual=21   ✓
+jushuitan.erp.product_stock.row_brand          expect>0    actual=0    ✗ 失效
+jushuitan.erp.shell.account_identity_surface   expect=1    actual=1    ⚠ 定位器为 //body，断言过弱
+```
 
-每次动作重新查找元素，不长期缓存 DOM。
+三类结论：
+
+- **✓** 匹配数符合 `expect_count`
+- **✗ 失效** 匹配数不符 —— 页面改版了，去修这一个条目
+- **⚠ 断言过弱** 定位器是 `//body`、`css:table tbody` 这类几乎恒真的表达式。它们能"匹配成功"但区分不了任何状态，是假断言的温床
 
 ## 定位器优先级
 
-优先使用：
+1. 稳定且唯一的 `id`
+2. 业务稳定的 `data-*` 属性
+3. 稳定 `name`、角色或可访问名称
+4. **页面组件范围内、带稳定锚点的相对定位**
+5. 稳定文本
+6. 经真实页面验证的 CSS 或 XPath
 
-1. 稳定且唯一的 `id`；
-2. 业务稳定的 `data-*` 属性；
-3. 稳定 `name`、角色或可访问名称；
-4. 页面组件范围内、带稳定锚点的相对定位；
-5. 稳定文本；
-6. 经真实页面验证的 CSS 或 XPath。
+避免：绝对 XPath、深层 `nth-child`、随机 class、临时哈希属性、屏幕坐标、仅凭截图推断的定位器。
 
-避免绝对 XPath、深层 `nth-child`、随机 class、临时哈希属性、屏幕坐标和仅凭截图推断的定位器。语义或视觉定位可以作为有证据的兜底，不能替代匹配数量和结果验证。
+特别注意第 4 条。实测教训：`//button[normalize-space(.)='导出']` 这类**无祖先锚点的全局按钮文本**，在当前页面上恰好唯一，但换一个布局就可能匹配到另一个同名按钮。有稳定祖先时一定加上：
 
-## 逐步分析流程
+```
+✓ //div[contains(@class,'ant-modal')]//button[normalize-space(.)='确 定']
+✗ //button[normalize-space(.)='确 定']
+```
 
-真实候选验证必须有开发人员授权，并按一个需求步骤一个需求步骤执行：
+## 逐步元素分析
 
-1. 记录 URL、标题、标签页、iframe 和登录状态信号；
-2. 只确定当前步骤的目标角色，不全量抓取无关 DOM；
-3. 生成按稳定性排序的候选定位；
-4. 使用稳定锚点缩小作用域；
-5. 验证预期匹配数量、可见、可用/可点击和页面身份；
-6. 对拟晋升元素刷新或重新进入页面复核；
-7. 只执行当前原子动作；
-8. 用 URL、标题、状态元素、筛选值或下载产物验证结果；
-9. 保存脱敏 DOM 摘要、截图和运行证据；
-10. 失败时停在当前步骤并更新 `UnresolvedElement`，不猜测后续页面。
+获得真实浏览器确认后，按需求步骤逐个处理：
 
-公开页面观察只能生成候选事实，不能替代 DrissionPage 真实运行、Profile 登录态或刷新稳定性验证。
+1. 记录 URL、标题、标签页、iframe 和登录状态
+2. 只分析当前步骤的目标，不全量抓取无关 DOM
+3. 生成按稳定性排序的候选定位
+4. 用稳定锚点缩小作用域
+5. **验证预期匹配数量**、可见、可用/可点击和页面身份
+6. 刷新或重新进入页面复核
+7. 执行一个原子动作
+8. 用 URL、标题、状态元素、**回读的筛选值**或下载产物验证结果
+9. 保存脱敏证据
+10. 失败时停在当前步骤，把未解决元素写进 `requirement.md`，不猜测后续页面
+
+第 8 条是重点：**验证要回读页面状态**。`brand_selector` 上的 `selected_option_locator` 就是为此存在的 —— V1 定义了它却从未用它验证，导致 S003/S004 恒真。
 
 ## 查找、等待和 iframe
 
-- 元素操作前由 BrowserActions 适配器执行必要等待；
-- 可点击动作至少验证目标可点击；
-- 等待失败必须转换为稳定错误，不能把空对象传给业务步骤；
-- iframe 层级属于页面身份和候选证据，业务应用不保存 frame 对象；
-- 若当前 BrowserActions 契约确实不足，应先提交独立公共接口 diff 和 Fake 测试，不能让应用直接访问 DrissionPage。
-
-## 页面对象与指令
-
-页面对象组合元素并表达页面语义；Instruction 组合受控动作并独立验证结果；Program/Step 编排完整业务规则。
-
-```text
-元素：品牌下拉框、搜索按钮、导出按钮
-页面语义：确认库存页面身份
-指令：选择品牌并验证筛选值
-应用步骤：按本地配置中的品牌导出库存文件
-```
-
-公共页面和指令不得包含真实品牌、店铺规则、日期范围或应用输出策略。
-
-## 候选生命周期
-
-```text
-应用内 candidate 元素
-→ 关联 UE-*、需求步骤和截图
-→ Fake Browser 测试完整流程
-→ 开发人员授权 verify-candidates
-→ 验证唯一、可见、可点击和刷新稳定
-→ Preview 端到端通过
-→ 提出回灌顶层 elements/ 的独立 diff
-→ 回归受影响应用
-```
-
-未验证项留在应用包内并在 lock 中标记 `application_candidate/candidate`。顶层库更新不会自动改变当前应用；当前应用如需升级，必须展示来源版本、哈希和文件 diff 后再确认替换。
-
-这套流程参考成熟 RPA 产品的元素捕获、属性编辑、锚点、校验和修复思想，但不采用运行时静默修复或云端自动同步。
+- 元素操作前由适配器执行必要等待
+- 可点击动作至少验证目标可点击
+- 等待失败必须转换为稳定错误，不能把空对象传给业务步骤
+- 每次动作重新解析 iframe，业务应用不保存 frame 对象
+- 若 `BrowserActions` 契约确实不足，先提交独立的公共接口 diff 和 Fake 测试，不能让应用直接访问 DrissionPage

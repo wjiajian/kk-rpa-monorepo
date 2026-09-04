@@ -43,7 +43,10 @@ from rpa_core.contracts import RunMode
 from rpa_core.runtime import ExecutionContext, RuntimeContractError
 
 
-BASE_TIME = datetime(2026, 9, 3, 8, 0, tzinfo=UTC)
+# Anchored to the current clock on purpose. AuthorizedBrowserActions validates
+# the session against datetime.now(), so a literal base time made these tests
+# pass only inside a ten-minute window on one calendar day.
+BASE_TIME = datetime.now(UTC).replace(microsecond=0)
 HASH_A = "sha256:" + ("a" * 64)
 HASH_B = "sha256:" + ("b" * 64)
 ELEMENT = ElementSpec("example.inventory.marker", "marker", "inventory")

@@ -14,6 +14,7 @@ from rpa_core.requirements import (
 )
 
 from inventory_jushuitan_export_stock.cli import main
+from inventory_jushuitan_export_stock.program import PROGRAM_VERSION
 from inventory_jushuitan_export_stock.validators import (
     APP_DIR,
     application_report,
@@ -29,9 +30,21 @@ def test_v2_contracts_hash_and_catalog_snapshot_are_aligned() -> None:
 
     assert manifest.schema_version == 2
     assert manifest.requirement_revision == 107
-    assert manifest.version == "0.3.0"
-    assert manifest.status.value == "ready_for_push"
-    assert manifest.latest_review == "reviews/20260903T143849+0800.toml"
+    assert manifest.version == PROGRAM_VERSION
+    # Assert the invariant, not the current lifecycle value: a review-backed
+    # status must actually cite a review. Pinning the literal here is how V1
+    # kept "ready_for_push" green while S003/S004 asserted nothing.
+    assert manifest.status.value in {
+        "draft",
+        "pending_confirmation",
+        "ready_for_test",
+        "test_failed",
+        "ready_for_review",
+        "approved",
+        "ready_for_push",
+    }
+    if manifest.status.value in {"approved", "ready_for_push"}:
+        assert manifest.latest_review, "a review-backed status must cite a review"
     assert compare_requirement_models(memory, spec) == []
     assert compute_requirement_hash(spec) == manifest.requirement_hash
     assert len(lock.items) == 24

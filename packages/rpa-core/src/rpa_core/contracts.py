@@ -118,6 +118,7 @@ class AppCommands(ContractModel):
     resume: Literal["rpa-app resume"] = "rpa-app resume"
     login: Literal["rpa-app login"] | None = None
     verify_candidates: Literal["rpa-app verify-candidates"] | None = None
+    verify_elements: Literal["rpa-app verify-elements"] | None = None
 
 
 class AppManifest(ContractModel):

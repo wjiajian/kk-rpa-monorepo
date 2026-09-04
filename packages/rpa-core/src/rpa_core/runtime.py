@@ -14,7 +14,15 @@ import re
 import stat
 from threading import Lock
 import time
-from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from uuid import uuid4
 
 try:
@@ -28,6 +36,7 @@ from .events import JsonlEventLogger, sanitize_event_value
 if TYPE_CHECKING:
     from .authorization import AuthorizationSession
     from .instructions import InstructionRegistry
+    from .verification import Counterexample
 
 
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -259,6 +268,16 @@ class Step(ABC):
         """Verify a possibly completed interrupted step before running again."""
 
         return False
+
+    def counterexamples(self) -> "Iterable[Counterexample]":
+        """Yield fake page states under which this step must fail.
+
+        The offline suite runs ``execute`` against each state and requires it to
+        raise or ``verify`` to return false. A step whose assertion nothing can
+        falsify has no assertion; see :mod:`rpa_core.verification`.
+        """
+
+        return ()
 
 
 class BaseProgram:

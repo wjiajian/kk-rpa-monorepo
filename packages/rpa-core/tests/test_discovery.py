@@ -417,3 +417,28 @@ def test_v2_candidate_instruction_requires_locked_implementation_and_fake_test(
     fake_test.unlink()
     _validate_v2_catalog_references(app_dir, manifest, requirement, report)
     assert "APP_CANDIDATE_INSTRUCTION_TEST_MISSING" in issue_codes(report.issues)
+
+
+def test_identifier_segments_prevent_substring_port_false_positives(tmp_path: Path) -> None:
+    """EXPORT_MENU contains "port" but names an element, not a debugging port.
+
+    A naive substring match flagged every export-related constant as a
+    hardcoded browser port and blocked the repository gate.
+    """
+
+    import ast
+
+    from rpa_core.discovery import _has_hardcoded_browser_port
+
+    def flagged(source: str) -> bool:
+        return _has_hardcoded_browser_port(ast.parse(source).body[0])
+
+    assert not flagged('EXPORT_MENU = "jushuitan.erp.product_stock.export_menu"')
+    assert not flagged('EXPORT_OPTION = "x"')
+    assert not flagged('REPORT_NAME = "report"')
+    assert not flagged('SUPPORT_URL = "https://example.invalid"')
+
+    assert flagged("debug_port = 9301")
+    assert flagged("DEBUG_PORT = 9301")
+    assert flagged("localPort = 1234")
+    assert flagged("port = 80")

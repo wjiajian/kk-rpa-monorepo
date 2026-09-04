@@ -3,14 +3,14 @@
   "source": {
     "document_id": "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722",
     "revision": 107,
-    "requirement_hash": "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e",
+    "requirement_hash": "sha256:02de868803b5daf6eb76d4e66abfad385e20eddb9578a133a4285fc31cd30199",
     "document_url": "https://<tenant>.feishu.cn/docx/<redacted>"
   },
   "application": {
     "app_id": "jushuitan.inventory.export_stock",
     "app_slug": "inventory_jushuitan_export_stock",
     "name": "聚水潭库存导出",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "entrypoint": "inventory_jushuitan_export_stock.cli:main"
   },
   "steps": [

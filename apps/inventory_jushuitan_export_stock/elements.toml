@@ -1,0 +1,176 @@
+# 本应用的元素库。
+#
+# expect_count 是**现在应该成立的断言**，不是历史记录 —— 这是它能发现失效的原因。
+# 支持 1 / ">0" / ">=2" / 0 这几种写法。
+# check_at 指定这条期望在哪个导航阶段成立：
+#   login_page / session / S001 / S002 / S003 / S004
+# 缺了它，期望就没有意义 —— 登录框在已登录页面本来就是 0 个。
+#
+# `rpa-app verify-elements` 边导航边逐阶段比对匹配数，并对 assertion_strength = "weak"
+# 的条目给出警告：它们能匹配成功，但区分不了页面状态，是假断言的温床。
+
+schema_version = 2
+
+# ---------------------------------------------------------------- 登录页
+
+[elements."jushuitan.erp.login.account_input"]
+name         = "登录账号输入框"
+page         = "login"
+locator      = "css:#login_id"
+expect_count = 1
+check_at           = "login_page"
+
+[elements."jushuitan.erp.login.password_input"]
+name         = "登录密码输入框"
+page         = "login"
+locator      = "css:#password"
+expect_count = 1
+check_at           = "login_page"
+
+[elements."jushuitan.erp.login.agreement_checkbox"]
+name         = "用户协议确认框"
+page         = "login"
+locator      = "css:input.ant-checkbox-input[type=checkbox]"
+expect_count = 1
+check_at           = "login_page"
+
+[elements."jushuitan.erp.login.submit_button"]
+name         = "登录按钮"
+page         = "login"
+locator      = "xpath://button[normalize-space(.)='立即登录']"
+expect_count = 1
+check_at           = "login_page"
+
+[elements."jushuitan.erp.login.password_notice_confirm"]
+name         = "密码安全提醒确认"
+page         = "login"
+locator      = "xpath://div[contains(@class,'ant-modal') and not(contains(@style,'display: none'))]//button[normalize-space(.)='确 定']"
+expect_count = 0
+check_at           = "login_page"
+note         = "登录后可能出现的提醒弹窗；未出现时匹配 0 属正常，只关闭提醒不进入改密"
+
+# ---------------------------------------------------------------- 已登录外壳
+
+[elements."jushuitan.erp.shell.authenticated_marker"]
+name         = "已登录页面标识"
+page         = "authenticated_shell"
+locator      = "xpath://div[starts-with(@id,'menuItemWrap-')][.//p[normalize-space(.)='库存']]"
+expect_count = 1
+check_at           = "session"
+
+[elements."jushuitan.erp.shell.account_identity_surface"]
+name               = "页面账号身份文本载体"
+page               = "authenticated_shell"
+locator            = "xpath://body"
+expect_count       = ">0"
+check_at           = "session"
+assertion_strength = "weak"
+note               = "整页文本子串匹配。恒能匹配到，只有内容比对有区分力；若页面出现账号列表会误判。待捕获精确的账号显示元素后替换"
+
+[elements."jushuitan.erp.navigation.inventory_module"]
+name         = "库存模块入口"
+page         = "authenticated_shell"
+locator      = "xpath://a[.//p[normalize-space(.)='库存']]"
+expect_count = 1
+check_at           = "session"
+
+# ---------------------------------------------------------------- 库存模块
+
+[elements."jushuitan.erp.inventory.module_marker"]
+name         = "库存模块已打开标识"
+page         = "inventory_module"
+locator      = "xpath://div[starts-with(@id,'menuItemWrap-') and contains(@class,'current___')][.//p[normalize-space(.)='库存']]"
+expect_count = 1
+check_at           = "S001"
+note         = "带 current___ 类，能区分「库存模块已激活」与「只是存在入口」"
+
+[elements."jushuitan.erp.inventory.product_stock_entry"]
+name         = "商品库存入口"
+page         = "inventory_module"
+locator      = "xpath://div[@id='panel-38']//div[contains(@class,'groupItem___')][.//*[normalize-space(.)='商品库存']]"
+expect_count = 1
+check_at           = "S001"
+
+# ---------------------------------------------------------------- 商品库存页
+
+[elements."jushuitan.erp.product_stock.page_marker"]
+name         = "商品库存页标识"
+page         = "product_stock"
+locator      = "xpath://div[contains(@class,'ant-tabs-tab-active')][.//*[normalize-space(.)='商品库存']]"
+expect_count = 1
+check_at           = "S002"
+
+[elements."jushuitan.erp.product_stock.brand_selector"]
+name                    = "商品品牌选择器"
+page                    = "product_stock"
+locator                 = "css:input[placeholder='商品品牌']"
+frame                   = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count            = 1
+check_at           = "S002"
+option_locator          = "css:div.j-item-text.ellipsis-1"
+selected_option_locator = "css:label.goods-checkbox-wrapper-checked div.j-item-text.ellipsis-1"
+popup_locator           = "css:div.goods-dropdown.j-selector-dropdown"
+dismiss_locator         = "css:input[placeholder='商品编码']"
+note                    = "selected_option_locator 回读真实选中集合，是 S003/S004 断言筛选生效的依据；未选中时匹配 0 属正常"
+
+[elements."jushuitan.erp.product_stock.brand_selected_option"]
+name               = "已选中的品牌项"
+page               = "product_stock"
+locator            = "css:label.goods-checkbox-wrapper-checked div.j-item-text.ellipsis-1"
+frame              = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count       = ">0"
+check_at           = "S003"
+note               = "只读断言目标：回读真实选中的品牌集合。2026-09-03 实测 S003 之后匹配 1。S003/S004 进一步断言这个集合恰好等于配置品牌"
+
+[elements."jushuitan.erp.product_stock.reset_button"]
+name         = "重置筛选按钮"
+page         = "product_stock"
+locator      = "xpath://button[translate(normalize-space(.),' ','')='重置']"
+frame        = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count = 1
+check_at           = "S002"
+
+[elements."jushuitan.erp.product_stock.search_button"]
+name         = "搜索按钮"
+page         = "product_stock"
+locator      = "xpath://button[translate(normalize-space(.),' ','')='搜索']"
+frame        = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count = 1
+check_at           = "S002"
+
+[elements."jushuitan.erp.product_stock.result_row"]
+name         = "库存结果行"
+page         = "product_stock"
+locator      = "css:table tbody tr"
+frame        = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count = ">0"
+check_at           = "S004"
+note         = "结果行。2026-09-03 实测未筛选时 21 行，搜索前后不变 —— 单看行数不能证明筛选生效，必须与回读的选中品牌合并判断"
+
+[elements."jushuitan.erp.product_stock.filter_applied_marker"]
+name               = "结果表体（V1 遗留）"
+page               = "product_stock"
+locator            = "css:table tbody"
+frame              = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count       = 1
+check_at           = "S004"
+assertion_strength = "weak"
+note               = "V1 用它当作「筛选已生效」的证据，这是错的：2026-09-03 实测搜索前后都是 1，未筛选时结果表体就已存在。仅因遗留 search 指令仍引用而保留，任何 Step 都不得用它做断言 —— 用 result_row 的行数加 brand_selected_option 的回读"
+
+[elements."jushuitan.erp.product_stock.export_menu"]
+name         = "导出菜单"
+page         = "product_stock"
+locator      = "xpath://button[translate(normalize-space(.),' ','')='导出']"
+frame        = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count = 1
+check_at           = "S004"
+note         = "2026-09-03 实测该 iframe 内唯一。无祖先锚点，布局变化时需复核唯一性"
+
+[elements."jushuitan.erp.product_stock.export_stock_option"]
+name         = "导出库存选项"
+page         = "product_stock"
+locator      = "xpath://*[@role='menuitem'][translate(normalize-space(.),' ','')='导出库存']"
+frame        = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
+expect_count = 0
+check_at           = "S004"
+note         = "导出菜单展开后才出现；未展开时匹配 0 属正常"

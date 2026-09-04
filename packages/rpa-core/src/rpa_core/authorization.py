@@ -148,6 +148,7 @@ class _FrozenModel(BaseModel):
 class AuthorizationOperation(StrEnum):
     LOGIN = "login"
     VERIFY_CANDIDATES = "verify_candidates"
+    VERIFY_ELEMENTS = "verify_elements"
     RUN = "run"
     RESUME = "resume"
 
@@ -308,6 +309,7 @@ class AuthorizationScope(_FrozenModel):
         if self.operation in {
             AuthorizationOperation.LOGIN,
             AuthorizationOperation.VERIFY_CANDIDATES,
+            AuthorizationOperation.VERIFY_ELEMENTS,
         } and self.mode is not RunMode.PREVIEW:
             raise ValueError(f"{self.operation.value} authorization must use preview mode")
         if self.operation is AuthorizationOperation.VERIFY_CANDIDATES:
@@ -1395,6 +1397,12 @@ class AuthorizedBrowserActions:
             lambda: self._delegate.exists(element, timeout=timeout)
         )
 
+    def count(self, element: ElementSpec, *, timeout: float = 0.0) -> int:
+        self._authorize(BrowserAction.EXISTS, element=element)
+        return self._call_browser(
+            lambda: self._delegate.count(element, timeout=timeout)
+        )
+
     def click(self, element: ElementSpec) -> None:
         self._authorize(BrowserAction.CLICK, element=element)
         self._call_browser(lambda: self._delegate.click(element))
@@ -1406,6 +1414,12 @@ class AuthorizedBrowserActions:
     def text(self, element: ElementSpec) -> str:
         self._authorize(BrowserAction.TEXT, element=element)
         return self._call_browser(lambda: self._delegate.text(element))
+
+    def texts(self, element: ElementSpec, *, timeout: float = 0.0) -> list[str]:
+        self._authorize(BrowserAction.TEXT, element=element)
+        return self._call_browser(
+            lambda: self._delegate.texts(element, timeout=timeout)
+        )
 
     def select(self, element: ElementSpec, value: SecretLike) -> None:
         self._authorize(BrowserAction.SELECT, element=element)

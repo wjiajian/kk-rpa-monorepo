@@ -1,79 +1,57 @@
-"""Load the immutable application-local element catalog snapshot."""
+"""Load this application's element catalog from ``elements.toml``.
+
+The per-element TOML files still sitting next to this module are V1 catalog
+snapshot artifacts. They are no longer the runtime source — they only remain
+because ``catalog.lock.json`` still pins them for the Instruction layer, which
+goes away together with the catalog machinery once the second application
+proves what is actually shared. Do not add elements there; edit
+``apps/<slug>/elements.toml``.
+"""
 
 from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-import tomllib
 
-from rpa_core.browser import ElementSpec, Locator
+from rpa_core.browser import ElementSpec
+from rpa_core.elements import (
+    ElementCatalogError,
+    ElementEntry,
+    element_specs,
+    load_element_catalog,
+)
 
 
-class ElementSnapshotContractError(ValueError):
-    error_code = "element_snapshot_invalid"
+APP_DIR = Path(__file__).resolve().parents[3]
+CATALOG_PATH = APP_DIR / "elements.toml"
+
+
+@lru_cache(maxsize=1)
+def element_entries() -> dict[str, ElementEntry]:
+    """Return every catalog entry, including its ``expect_count`` assertion."""
+
+    return load_element_catalog(CATALOG_PATH)
 
 
 @lru_cache(maxsize=1)
 def element_catalog() -> dict[str, ElementSpec]:
-    root = Path(__file__).parent
-    elements: dict[str, ElementSpec] = {}
-    for path in sorted(root.rglob("*.toml")):
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
-        if document.get("kind") != "element" or document.get("status") not in {
-            "verified",
-            "candidate",
-        }:
-            raise ElementSnapshotContractError(
-                f"invalid element snapshot metadata: {path.name}"
-            )
-        locator = _optional_locator(document, "locator", path)
-        frame_locator = _optional_locator(document, "frame_locator", path)
-        option_locator = _optional_locator(document, "option_locator", path)
-        selected_option_locator = _optional_locator(
-            document,
-            "selected_option_locator",
-            path,
-        )
-        popup_locator = _optional_locator(document, "popup_locator", path)
-        dismiss_locator = _optional_locator(document, "dismiss_locator", path)
-        element = ElementSpec(
-            id=str(document["id"]),
-            name=str(document["name"]),
-            page=str(document["page"]),
-            component=str(document["component"]),
-            locator=locator,
-            frame_locator=frame_locator,
-            option_locator=option_locator,
-            selected_option_locator=selected_option_locator,
-            popup_locator=popup_locator,
-            dismiss_locator=dismiss_locator,
-        )
-        if element.id in elements:
-            raise ElementSnapshotContractError(
-                f"duplicate snapshot element ID: {element.id}"
-            )
-        elements[element.id] = element
-    return elements
+    """Return the runtime element mapping bound as the ``elements`` service."""
+
+    return element_specs(element_entries())
 
 
 def get_element(element_id: str) -> ElementSpec:
     try:
         return element_catalog()[element_id]
     except KeyError as error:
-        raise ElementSnapshotContractError(
-            f"snapshot element not found: {element_id}"
-        ) from error
+        raise ElementCatalogError(f"element not found: {element_id}") from error
 
 
-def _optional_locator(document: dict[str, object], key: str, path: Path) -> Locator | None:
-    data = document.get(key)
-    if data is None:
-        return None
-    if not isinstance(data, dict) or not data.get("value"):
-        raise ElementSnapshotContractError(
-            f"invalid snapshot {key} metadata: {path.name}"
-        )
-    return Locator(str(data["value"]))
-
-
-__all__ = ["ElementSnapshotContractError", "element_catalog", "get_element"]
+__all__ = [
+    "APP_DIR",
+    "CATALOG_PATH",
+    "ElementCatalogError",
+    "element_catalog",
+    "element_entries",
+    "get_element",
+]

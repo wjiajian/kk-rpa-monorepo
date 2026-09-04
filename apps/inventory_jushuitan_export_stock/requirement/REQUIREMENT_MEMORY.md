@@ -72,7 +72,7 @@
 - 2026-09-03：0.3.0 首次真实 Preview `preview-20260903-001` 完成 S001、S002，S003 两次返回 `instruction_execution_failed`，S004、S005 未执行；Authorization Record 已 `failed`，未执行 external business write。
 - 2026-09-03：开发人员确认按内部工具边界移除逐 iframe Origin Gate 后，0.3.0 运行 `preview-20260903T062356Z-df357a62` 完成 S001–S005、本地 XLSX 下载和成功截图；Authorization Record 为 `succeeded`，未执行 external business write。
 - 2026-09-03：开发人员明确审核通过应用 0.3.0、当前 Requirement Hash 和运行 `preview-20260903T062356Z-df357a62`，同意进入 `ready_for_push` 并提交推送；审核记录为 `reviews/20260903T143849+0800.toml`。
-- 程序版本：`0.3.0`。
+- 程序版本：`0.4.0`。
 - 当前状态：`ready_for_push`；当前 Developer Review 已完成。
 
 ## 机器可读规范
@@ -120,14 +120,14 @@ blocks_push = false
 [source]
 document_id = "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722"
 revision = 107
-requirement_hash = "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e"
+requirement_hash = "sha256:02de868803b5daf6eb76d4e66abfad385e20eddb9578a133a4285fc31cd30199"
 document_url = "https://<tenant>.feishu.cn/docx/<redacted>"
 
 [application]
 app_id = "jushuitan.inventory.export_stock"
 app_slug = "inventory_jushuitan_export_stock"
 name = "聚水潭库存导出"
-version = "0.3.0"
+version = "0.4.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
 
 [[steps]]

@@ -42,12 +42,22 @@ class LoginTransitionBrowser(FakeBrowserActions):
             self.submitted = True
 
 
-def test_local_verified_elements_are_unique_and_resolved() -> None:
-    elements = element_catalog()
+def test_local_elements_are_unique_and_resolved() -> None:
+    """Every element the steps reference must exist and carry a locator."""
 
-    assert len(elements) == 17
+    from inventory_jushuitan_export_stock import steps
+
+    elements = element_catalog()
     assert len(elements) == len(set(elements))
     assert all(element.is_resolved for element in elements.values())
+
+    referenced = {
+        value
+        for name, value in vars(steps).items()
+        if name.isupper() and isinstance(value, str) and value.startswith("jushuitan.")
+    }
+    missing = referenced - set(elements)
+    assert not missing, f"steps reference unknown elements: {sorted(missing)}"
 
 
 def test_public_catalog_exposes_the_verified_application_dependency_closure() -> None:

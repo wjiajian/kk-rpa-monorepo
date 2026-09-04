@@ -1,36 +1,37 @@
 # kk-rpa-monorepo
 
-> 飞书需求文档驱动的独立 RPA 应用框架。浏览器自动化底层已选定 DrissionPage，业务应用不得直接依赖 DrissionPage。
+> 需求文档驱动的独立 RPA 应用框架。浏览器自动化底层为 DrissionPage，业务应用不得直接依赖 DrissionPage。
 
 ## Start here
 
+- [AGENTS.md](AGENTS.md) — 生成、测试和真实运行的最高级仓库规则
+- [框架设计 V2](docs/rpa-framework-design.md) — 完整架构
 - [LLM Wiki 首页](llm-wiki/README.md)
-- [系统上下文与边界](llm-wiki/01-system-context.md)
-- [DrissionPage 浏览器方案](llm-wiki/02-drissionpage-browser-automation.md)
-- [DrissionPage 4.1.1.4 具体文档](llm-wiki/drissionpage/README.md)
-- [BrowserActions 契约](llm-wiki/03-browser-actions-contract.md)
-- [元素、页面与候选元素](llm-wiki/04-elements-and-pages.md)
-- [运行隔离与安全授权](llm-wiki/05-runtime-isolation-and-safety.md)
-- [测试与证据](llm-wiki/06-testing-and-evidence.md)
-- [指令、元素分析与应用快照](llm-wiki/07-instructions-and-snapshots.md)
-- [官方资料索引](llm-wiki/sources.md)
+- [DrissionPage 4.1.1.4 文档](llm-wiki/drissionpage/README.md)
+
+## 架构要点
+
+- 三层：`BrowserActions`（隔离 DrissionPage）→ `Element`（定位器 + 期望匹配数）→ `Step`（业务单元）
+- 一份需求文档 = 一个应用目录 = 一个程序入口
+- 每个 Step 必须提供 `execute()` / `verify()` / `counterexamples()`；**反例强制是框架唯一的强制约束**
+- 反例携带假浏览器状态，`rpa-app test` 在该状态下真的跑一遍 `execute()`，要求它抛错或 `verify()` 返回 `False`
+- 元素定义在应用内 `elements.toml`，用 `expect_count` 表达当前应成立的断言，`rpa-app verify-elements` 检查失效
+- 业务应用只通过 `ctx.browser` / `ctx.excel` / `ctx.feishu` / `ctx.db` 访问外部系统
+- 真实安全边界是**平台侧只读子账号**；代码里的守卫只能校验声明，而出错的恰恰是声明本身
+- 跨应用共享机制在第三个应用真的重复同一段代码之前不建
+
+## 决策记录
+
 - [ADR-025：浏览器自动化选用 DrissionPage](llm-wiki/decisions/ADR-025-browser-automation-drissionpage.md)
-- [ADR-026：元素与指令使用应用快照](llm-wiki/decisions/ADR-026-application-catalog-snapshots.md)
+- [ADR-028：V2 结构简化](llm-wiki/decisions/ADR-028-v2-structural-simplification.md) — 取代 ADR-026 / ADR-027
+- [ADR-029：可证伪断言作为唯一强制约束](llm-wiki/decisions/ADR-029-falsifiable-step-assertions.md)
 
-## Canonical project rules
+## 文档policy
 
-- [AGENTS.md](AGENTS.md) 是生成、修改、测试、审核和外部写入的最高级仓库规则。
-- [rpa-framework-design.md](docs/rpa-framework-design.md) 是完整架构设计。
-- 同一份需求文档对应一个稳定 app ID、一个独立应用目录和一个程序入口。
-- 顶层 `elements/` 和 `instructions/` 只保存真实验证源资产；应用运行时只使用 `catalog.lock.json` 固定的包内副本。
-- Program/Step 负责编排和检查点，Instruction 负责可复用能力及独立验证。
-- 业务应用和复制指令只能通过 `ExecutionContext` 访问浏览器和外部系统。
-- 真实浏览器测试、Preview 和 Live 是不同授权边界；Preview 不等于 Live 授权。
-- 未解决的 `PendingConfirmation`、`UnresolvedElement` 或 `UnresolvedInstruction` 阻止审核、提交和推送。
-- 当前 `apps/` 为空；公共包测试或公开登录页观察都不等于已生成业务应用或真实 Preview。
+- 库和 API 行为以官方文档为准；实现前重新核对当前版本
+- Wiki 记录项目采用方式，不替代 DrissionPage 官方 API 文档
+- 不在任何可提交文件中保存真实账号、Cookie、Token、店铺名称或本机路径
 
-## Documentation policy
+## 迁移状态（2026-09-03）
 
-- 库和 API 行为以对应官方文档为准；实现前重新核对当前版本。
-- Wiki 记录项目采用方式，不替代 DrissionPage 官方 API 文档。
-- 不在 Wiki、源码、测试或日志中保存真实账号、Cookie、Token、店铺名称或本机路径。
+`rpa-core` 中的 `authorization.py`、`catalog.py`、`instructions.py`、`requirements.py`、`discovery.py` 已被 V2 判定为不需要，但**尚未删除** —— 按计划等第二个应用（换平台）写完、证明未被使用后再删。新应用不要使用这些模块。

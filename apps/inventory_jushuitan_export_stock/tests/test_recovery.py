@@ -20,7 +20,7 @@ from .helpers import make_browser, make_context, make_program
         ),
         (
             "S004",
-            "jushuitan.erp.product_stock.filter_applied_marker",
+            "jushuitan.erp.product_stock.result_row",
             True,
             "jushuitan.erp.product_stock.reset_button",
         ),

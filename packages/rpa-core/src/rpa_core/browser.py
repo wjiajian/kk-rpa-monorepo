@@ -214,11 +214,15 @@ class BrowserActions(Protocol):
 
     def exists(self, element: ElementSpec, *, timeout: float = 0.0) -> bool: ...
 
+    def count(self, element: ElementSpec, *, timeout: float = 0.0) -> int: ...
+
     def click(self, element: ElementSpec) -> None: ...
 
     def input(self, element: ElementSpec, value: SecretLike) -> None: ...
 
     def text(self, element: ElementSpec) -> str: ...
+
+    def texts(self, element: ElementSpec, *, timeout: float = 0.0) -> list[str]: ...
 
     def select(self, element: ElementSpec, value: SecretLike) -> None: ...
 
@@ -249,6 +253,14 @@ class ContextGuardedBrowserActions(BrowserActions, Protocol):
         context_guard: BrowserContextGuard | None = None,
     ) -> bool: ...
 
+    def count(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> int: ...
+
     def click(
         self,
         element: ElementSpec,
@@ -270,6 +282,14 @@ class ContextGuardedBrowserActions(BrowserActions, Protocol):
         *,
         context_guard: BrowserContextGuard | None = None,
     ) -> str: ...
+
+    def texts(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> list[str]: ...
 
     def select(
         self,
@@ -320,10 +340,14 @@ class FakeBrowserActions:
     downloads: Mapping[str, FakeDownload] = field(default_factory=dict)
     text_values: Mapping[str, str] = field(default_factory=dict)
     context_urls: Mapping[str, str | None] = field(default_factory=dict)
+    counts: Mapping[str, int] = field(default_factory=dict)
+    text_lists: Mapping[str, Iterable[str]] = field(default_factory=dict)
     actions: list[BrowserActionRecord] = field(default_factory=list, init=False)
     current_url: str | None = field(default=None, init=False)
     _visible: frozenset[str] = field(init=False, repr=False)
     _text_values: dict[str, str] = field(init=False, repr=False)
+    _counts: dict[str, int] = field(init=False, repr=False)
+    _text_lists: dict[str, list[str]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.run_dir = Path(self.run_dir)
@@ -359,6 +383,32 @@ class FakeBrowserActions:
         ):
             raise ValueError("fake context URLs must be strings or None")
         self._text_values = dict(self.text_values)
+        invalid_count_ids = sorted(
+            element_id
+            for element_id in self.counts
+            if not _ELEMENT_ID_PATTERN.fullmatch(element_id)
+        )
+        if invalid_count_ids:
+            raise ValueError(f"invalid fake count element IDs: {invalid_count_ids!r}")
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in self.counts.values()
+        ):
+            raise ValueError("fake counts must be non-negative integers")
+        invalid_list_ids = sorted(
+            element_id
+            for element_id in self.text_lists
+            if not _ELEMENT_ID_PATTERN.fullmatch(element_id)
+        )
+        if invalid_list_ids:
+            raise ValueError(f"invalid fake text-list element IDs: {invalid_list_ids!r}")
+        self._counts = dict(self.counts)
+        self._text_lists = {}
+        for element_id, values in self.text_lists.items():
+            items = list(values)
+            if any(not isinstance(item, str) for item in items):
+                raise ValueError("fake text list values must be strings")
+            self._text_lists[element_id] = items
 
     def context_url(self, element: ElementSpec) -> str | None:
         """Return the deterministic browsing context URL for one element.
@@ -396,6 +446,61 @@ class FakeBrowserActions:
                 )
             )
             return found
+        finally:
+            self._guard_context(element, context_guard)
+
+    def count(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> int:
+        """Return the configured match count.
+
+        A multi-element query never raises for an absent target: an empty
+        result set is a legitimate page state that a step must be able to
+        assert on, not an error.
+        """
+
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        self._guard_context(element, context_guard)
+        try:
+            value = self._counts.get(
+                element.id,
+                1 if element.id in self._visible else 0,
+            )
+            self.actions.append(
+                BrowserActionRecord("count", element.id, str(value))
+            )
+            return value
+        finally:
+            self._guard_context(element, context_guard)
+
+    def texts(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> list[str]:
+        """Return the configured text values for every match, possibly empty."""
+
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        self._guard_context(element, context_guard)
+        try:
+            if element.id in self._text_lists:
+                values = list(self._text_lists[element.id])
+            elif element.id in self._visible and element.id in self._text_values:
+                values = [self._text_values[element.id]]
+            else:
+                values = []
+            self.actions.append(
+                BrowserActionRecord("texts", element.id, f"count={len(values)}")
+            )
+            return values
         finally:
             self._guard_context(element, context_guard)
 

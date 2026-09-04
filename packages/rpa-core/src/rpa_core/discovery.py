@@ -851,8 +851,19 @@ def _has_hardcoded_browser_port(node: ast.AST) -> bool:
         value = node.value
         if not isinstance(value, ast.Constant) or not isinstance(value.value, (int, str)):
             return False
-        return any("port" in name.casefold() for name in _assignment_names(node))
+        # Match the identifier segment, not a substring: EXPORT_MENU contains
+        # "port" but names an element, not a debugging port.
+        return any(
+            "port" in _identifier_segments(name) for name in _assignment_names(node)
+        )
     return False
+
+
+def _identifier_segments(name: str) -> set[str]:
+    """Split snake_case, camelCase and SCREAMING_CASE into lowercase words."""
+
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
+    return {segment for segment in re.split(r"[^A-Za-z0-9]+", spaced.casefold()) if segment}
 
 
 def _has_hardcoded_browser_profile(node: ast.AST) -> bool:

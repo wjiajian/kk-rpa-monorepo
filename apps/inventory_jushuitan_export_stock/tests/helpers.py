@@ -5,6 +5,7 @@ from pathlib import Path
 from rpa_core.browser import FakeBrowserActions, FakeDownload, SecretValue
 from rpa_core.contracts import RunMode
 from rpa_core.runtime import ExecutionContext
+from rpa_core.verification import Counterexample, FakeState
 
 from inventory_jushuitan_export_stock.elements import element_catalog
 from inventory_jushuitan_export_stock.instructions import build_instruction_registry
@@ -16,12 +17,14 @@ from inventory_jushuitan_export_stock.program import (
     bind_program_inputs,
     build_program,
 )
+from inventory_jushuitan_export_stock.steps import BRAND_SELECTED
 
 
-REQUIREMENT_HASH = "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e"
+REQUIREMENT_HASH = "sha256:02de868803b5daf6eb76d4e66abfad385e20eddb9578a133a4285fc31cd30199"
 EXPORT_ELEMENT_ID = "jushuitan.erp.product_stock.export_stock_option"
 ACCOUNT_IDENTITY_ELEMENT_ID = "jushuitan.erp.shell.account_identity_surface"
 FIXTURE_IDENTITY = "fixture-user"
+FIXTURE_BRAND = "BRAND_001"
 
 
 def make_store() -> StoreConfig:
@@ -31,7 +34,7 @@ def make_store() -> StoreConfig:
         login_url="https://www.erp321.com/login.aspx",
         profile_directory="profiles/STORE_001",
         debug_port=9301,
-        brand_value="BRAND_001",
+        brand_value=FIXTURE_BRAND,
         username_env="RPA_STORE_001_USERNAME",
         password_env="RPA_STORE_001_PASSWORD",
         identity_env="RPA_STORE_001_IDENTITY",
@@ -47,18 +50,33 @@ def make_browser(
     *,
     missing: set[str] | None = None,
     include_download: bool = True,
+    state: FakeState | None = None,
 ) -> FakeBrowserActions:
+    """Build the fake page.
+
+    ``state`` is a counterexample's declarative page description; without it the
+    fake models the happy path, where the configured brand reads back as the one
+    and only selected brand.
+    """
+
+    state = state or FakeState()
+    hidden = set(missing or ()) | set(state.hidden)
     downloads = {}
-    if include_download:
+    if include_download and state.downloads_available:
         downloads[EXPORT_ELEMENT_ID] = FakeDownload(
             "inventory-export.xlsx",
             b"fake inventory workbook\n",
         )
     return FakeBrowserActions(
         run_dir=run_dir,
-        visible_element_ids=visible_elements(missing=missing),
+        visible_element_ids=visible_elements(missing=hidden),
         downloads=downloads,
-        text_values={ACCOUNT_IDENTITY_ELEMENT_ID: FIXTURE_IDENTITY},
+        text_values={
+            ACCOUNT_IDENTITY_ELEMENT_ID: FIXTURE_IDENTITY,
+            BRAND_SELECTED: FIXTURE_BRAND,
+        },
+        counts=dict(state.counts),
+        text_lists={key: tuple(value) for key, value in state.texts.items()},
     )
 
 
@@ -88,6 +106,14 @@ def make_context(run_dir: Path, browser: FakeBrowserActions) -> ExecutionContext
             SecretValue(FIXTURE_IDENTITY, label="fixture-identity"),
         ),
     )
+    return context
+
+
+def counterexample_context(run_dir: Path, case: Counterexample) -> ExecutionContext:
+    """Build the execution context one counterexample describes."""
+
+    context = make_context(run_dir, make_browser(run_dir, state=case.state))
+    context.metadata.update(case.metadata)
     return context
 
 

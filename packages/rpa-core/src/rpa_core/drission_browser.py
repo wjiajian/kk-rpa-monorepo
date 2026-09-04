@@ -142,6 +142,82 @@ class DrissionBrowserActions:
             is not None
         )
 
+    def count(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> int:
+        """Return how many nodes the element's locator currently matches.
+
+        An absent target is ``0``, not an error: an empty result set is a
+        legitimate page state that a step must be able to assert on.
+        """
+
+        return len(self._match_all(element, timeout, context_guard))
+
+    def texts(
+        self,
+        element: ElementSpec,
+        *,
+        timeout: float = 0.0,
+        context_guard: BrowserContextGuard | None = None,
+    ) -> list[str]:
+        """Return the visible text of every current match, possibly empty."""
+
+        matches = self._match_all(element, timeout, context_guard)
+        values: list[str] = []
+        for node in matches:
+            try:
+                raw = node.attr("value") if str(node.tag).lower() == "input" else node.text
+            except Exception as error:
+                raise ElementActionError(
+                    f"element text read failed: {element.id}"
+                ) from error
+            values.append(raw if isinstance(raw, str) else "")
+        return values
+
+    def _match_all(
+        self,
+        element: ElementSpec,
+        timeout: float,
+        context_guard: BrowserContextGuard | None,
+    ) -> list[Any]:
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        locator = element.require_locator()
+        lookup_timeout = timeout if timeout > 0 else self.action_timeout
+        # Re-resolve the scope on every retry, exactly like the single-element
+        # path. A business iframe is routinely re-created just after the outer
+        # page marker appears, which invalidates an already-resolved frame and
+        # raises ContextLostError mid-query. Retrying a stale scope object, or
+        # failing outright, would report a healthy selector as broken.
+        deadline = monotonic() + lookup_timeout
+        first_attempt = True
+        while True:
+            remaining = max(0.0, deadline - monotonic())
+            attempt_timeout = lookup_timeout if first_attempt else min(0.5, remaining)
+            try:
+                scope = self._scope(element, timeout=attempt_timeout)
+                self._guard_scope_origin(scope, context_guard)
+                try:
+                    matches = scope.eles(locator.value, timeout=attempt_timeout)
+                finally:
+                    self._guard_scope_origin(scope, context_guard)
+                return list(matches) if matches else []
+            except BrowserContextGuardError:
+                raise
+            except _RETRYABLE_LOOKUP_ERRORS:
+                if not first_attempt and monotonic() >= deadline:
+                    raise
+                first_attempt = False
+                sleep(min(0.05, max(0.0, deadline - monotonic())))
+            except Exception as error:
+                raise ElementLookupError(
+                    f"element multi-match lookup failed: {element.id}"
+                ) from error
+
     def click(
         self,
         element: ElementSpec,

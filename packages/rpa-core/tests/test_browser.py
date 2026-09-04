@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 
@@ -102,3 +103,50 @@ def test_execution_context_exposes_browser_service(tmp_path) -> None:
     )
 
     assert context.browser is fake
+
+
+# ---------------------------------------------------------------------------
+# count() / texts() on the fake — how counterexamples describe a failing page
+# ---------------------------------------------------------------------------
+
+
+def test_fake_count_defaults_to_visibility(tmp_path: Path) -> None:
+    element = ElementSpec("demo.page.rows", "结果行", "demo", locator=Locator("css:tr"))
+    visible = FakeBrowserActions(tmp_path, visible_element_ids=(element.id,))
+    absent = FakeBrowserActions(tmp_path)
+
+    assert visible.count(element) == 1
+    assert absent.count(element) == 0
+
+
+def test_fake_count_and_texts_are_explicitly_configurable(tmp_path: Path) -> None:
+    element = ElementSpec("demo.page.rows", "结果行", "demo", locator=Locator("css:tr"))
+    browser = FakeBrowserActions(
+        tmp_path,
+        visible_element_ids=(element.id,),
+        counts={element.id: 0},
+        text_lists={element.id: ["甲", "乙"]},
+    )
+
+    assert browser.count(element) == 0
+    assert browser.texts(element) == ["甲", "乙"]
+
+
+def test_fake_texts_falls_back_to_the_single_text_fixture(tmp_path: Path) -> None:
+    element = ElementSpec("demo.page.chip", "选中项", "demo", locator=Locator("css:.c"))
+    browser = FakeBrowserActions(
+        tmp_path,
+        visible_element_ids=(element.id,),
+        text_values={element.id: "目标"},
+    )
+
+    assert browser.texts(element) == ["目标"]
+
+
+def test_fake_multi_reads_validate_their_fixtures(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="non-negative integers"):
+        FakeBrowserActions(tmp_path, counts={"demo.page.rows": -1})
+    with pytest.raises(ValueError, match="must be strings"):
+        FakeBrowserActions(tmp_path, text_lists={"demo.page.rows": [1, 2]})
+    with pytest.raises(ValueError, match="invalid fake count element IDs"):
+        FakeBrowserActions(tmp_path, counts={"1-bad-id": 1})

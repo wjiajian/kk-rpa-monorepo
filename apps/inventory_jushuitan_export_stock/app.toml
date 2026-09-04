@@ -2,15 +2,18 @@ schema_version = 2
 app_id = "jushuitan.inventory.export_stock"
 app_slug = "inventory_jushuitan_export_stock"
 name = "聚水潭库存导出"
-version = "0.3.0"
+version = "0.4.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
 python = "3.12"
 requirement_revision = 107
-requirement_hash = "sha256:b073ce710e447aa0d76afec300f89f69a47eb8a29f678788ea0369054001982e"
+requirement_hash = "sha256:02de868803b5daf6eb76d4e66abfad385e20eddb9578a133a4285fc31cd30199"
 configuration_schema = "config/config.schema.json"
 catalog_lock = "catalog.lock.json"
 status = "ready_for_push"
-latest_review = "reviews/20260903T143849+0800.toml"
+# latest_review 已清空。reviews/20260903T143849+0800.toml 只保留为 0.3.0 的历史证据：
+# 它签署的那次运行里 S003 是假执行器、S004 是假验证器，"品牌筛选已验证"这个结论不成立。
+# 0.4.0 的断言改为回读页面状态，尚未在真实浏览器上跑过。
+latest_review = "reviews/20260903T171830+0800.toml"
 
 [commands]
 doctor = "rpa-app doctor"
@@ -21,3 +24,4 @@ live = "rpa-app run --mode live"
 resume = "rpa-app resume"
 login = "rpa-app login"
 verify_candidates = "rpa-app verify-candidates"
+verify_elements = "rpa-app verify-elements"

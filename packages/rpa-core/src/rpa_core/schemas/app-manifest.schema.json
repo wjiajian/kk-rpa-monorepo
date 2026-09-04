@@ -65,6 +65,19 @@
           ],
           "default": null,
           "title": "Verify Candidates"
+        },
+        "verify_elements": {
+          "anyOf": [
+            {
+              "const": "rpa-app verify-elements",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verify Elements"
         }
       },
       "title": "AppCommands",

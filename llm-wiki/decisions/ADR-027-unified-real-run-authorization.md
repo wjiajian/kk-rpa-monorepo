@@ -1,7 +1,9 @@
 # ADR-027：统一 Real Run Authorization
 
-- 状态：已接受
+- 状态：**已被取代**
 - 日期：2026-09-03
+
+> **取代说明**：被 [ADR-028](ADR-028-v2-structural-simplification.md) 取代（2026-09-03）。授权 scope 在正常运行时恒为真，且校验的是 agent 自己写的声明，防不住定位器写错这一真实风险。
 
 ## 背景
 

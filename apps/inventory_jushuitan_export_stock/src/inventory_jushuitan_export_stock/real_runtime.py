@@ -42,7 +42,9 @@ from rpa_core.runtime import (
     checkpoint_digest,
 )
 
-from .elements import element_catalog
+from rpa_core.elements import check_element_expectations
+
+from .elements import element_catalog, element_entries
 from .instructions import build_instruction_registry
 from .models import (
     LoginCredentials,
@@ -361,6 +363,137 @@ def execute_candidate_verification(
             "authorization_scope_digest": authorization.scope_digest,
             "resumed": False,
             **_run_summary(result, run_dir),
+            "evidence": _artifact_summary(evidence.path, run_dir),
+            "real_browser_launched": True,
+            "external_business_writes_executed": False,
+        }
+
+    return _with_browser(
+        inputs=inputs,
+        run_id=run_id,
+        run_dir=run_dir,
+        registry_factory=_validated_snapshot_registry,
+        operation=operation,
+        authorization=authorization,
+        mode=RunMode.PREVIEW,
+        fallback_step_id="Prepare",
+    )
+
+
+def execute_element_verification(
+    *,
+    account: str,
+    run_id: str,
+    authorization_id: str,
+) -> dict[str, object]:
+    """Assert every ``elements.toml`` expect_count against the live pages.
+
+    This is the element catalog's payoff: when the site changes, one run names
+    the entries to repair instead of leaving a step to fail with an opaque
+    lookup error.
+    """
+
+    _validate_run_id(run_id)
+    inputs = _load_runtime_inputs(account, require_credentials=True)
+    run_dir = APP_DIR / "runs" / run_id
+    authorization = _claim_authorization(
+        authorization_id,
+        _build_authorization_scope(
+            inputs=inputs,
+            operation=AuthorizationOperation.VERIFY_ELEMENTS,
+            mode=RunMode.PREVIEW,
+            run_id=run_id,
+        ),
+    )
+
+    def operation(
+        context: ExecutionContext,
+        runtime_inputs: _RuntimeInputs,
+    ) -> dict[str, object]:
+        program = build_program(runtime_inputs.requirement_hash)
+        entries = element_entries()
+        checks: list[Any] = []
+        reached: list[str] = []
+        skipped_stages: list[str] = []
+        navigation_failure: dict[str, object] | None = None
+
+        def sweep(stage: str) -> None:
+            checks.extend(check_element_expectations(context.browser, entries, stage=stage))
+
+        # The login form only exists when a session actually has to be created.
+        # Reporting its inputs as broken during a reused session would be a lie.
+        context.browser.open(runtime_inputs.store.login_url, wait="complete")
+        if context.browser.exists(
+            element_catalog()["jushuitan.erp.shell.authenticated_marker"],
+            timeout=3.0,
+        ):
+            skipped_stages.append("login_page")
+        else:
+            reached.append("login_page")
+            sweep("login_page")
+
+        program.prepare(context)
+        reached.append("session")
+        sweep("session")
+
+        for step in program.steps:
+            if step.spec.step_id not in {"S001", "S002", "S003", "S004"}:
+                continue
+            context.current_step_id = step.spec.step_id
+            try:
+                result = step.execute(context)
+            except Exception as error:
+                # Silently breaking would report the remaining stages as
+                # "unreached" without saying why they could not be reached.
+                navigation_failure = {
+                    "step_id": step.spec.step_id,
+                    "phase": "execute",
+                    "exception_type": type(error).__name__,
+                    "error_code": getattr(error, "error_code", None),
+                    # Adapter messages carry element IDs only, never values.
+                    "message": str(error)[:200],
+                }
+                break
+            reached.append(step.spec.step_id)
+            sweep(step.spec.step_id)
+            if not step.verify(context, result):
+                navigation_failure = {
+                    "step_id": step.spec.step_id,
+                    "phase": "verify",
+                    "exception_type": None,
+                    "error_code": "step_verification_failed",
+                }
+                break
+
+        checked_stages = {item.check_at for item in entries.values()}
+        unreached = sorted(
+            checked_stages - set(reached) - set(skipped_stages)
+        )
+        evidence = context.browser.screenshot(name=_evidence_name("verify-elements"))
+        failures = [item for item in checks if not item.ok]
+        return {
+            "ok": not failures and not unreached,
+            "command": "verify-elements",
+            "account": account,
+            "authorization_id": authorization.authorization_id,
+            "reached_stages": tuple(reached),
+            "skipped_stages": tuple(skipped_stages),
+            "unreached_stages": tuple(unreached),
+            "navigation_failure": navigation_failure,
+            "checks": [
+                {
+                    "element_id": item.element_id,
+                    "expect": item.expected,
+                    "actual": item.actual,
+                    "status": item.symbol,
+                    "detail": item.detail,
+                }
+                for item in checks
+            ],
+            "failed_element_ids": tuple(item.element_id for item in failures),
+            "weak_element_ids": tuple(
+                item.element_id for item in checks if item.ok and item.weak
+            ),
             "evidence": _artifact_summary(evidence.path, run_dir),
             "real_browser_launched": True,
             "external_business_writes_executed": False,

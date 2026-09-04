@@ -916,3 +916,152 @@ def test_adapter_screenshot_stays_inside_run_directory(tmp_path: Path) -> None:
 
     assert result.path == tmp_path / "evidence" / "login-page.png"
     assert result.size_bytes == len(b"fake png bytes")
+
+
+# ---------------------------------------------------------------------------
+# count() / texts() — the multi-element reads that make real assertions writable
+# ---------------------------------------------------------------------------
+
+
+ROWS = ElementSpec(
+    "example.inventory.rows",
+    "结果行",
+    "库存页",
+    locator=Locator("css:table tbody tr"),
+)
+FRAMED_ROWS = ElementSpec(
+    "example.inventory.framed_rows",
+    "iframe 结果行",
+    "库存页",
+    locator=Locator("css:table tbody tr"),
+    frame_locator=Locator("#product-stock-frame"),
+)
+
+
+def test_count_returns_the_number_of_matches(tmp_path: Path) -> None:
+    tab = FakeTab(
+        element_lists={
+            "css:table tbody tr": [[FakeElement(tag="tr") for _ in range(21)]]
+        }
+    )
+    browser = DrissionBrowserActions(tab, tmp_path)
+
+    assert browser.count(ROWS) == 21
+
+
+def test_count_of_an_absent_target_is_zero_not_an_error(tmp_path: Path) -> None:
+    """An empty result set is a page state a step must be able to assert on."""
+
+    browser = DrissionBrowserActions(FakeTab(), tmp_path)
+
+    assert browser.count(ROWS) == 0
+    assert browser.texts(ROWS) == []
+
+
+def test_texts_reads_every_match_and_prefers_input_values(tmp_path: Path) -> None:
+    tab = FakeTab(
+        element_lists={
+            "css:table tbody tr": [
+                [
+                    FakeElement(tag="td", text="品牌甲"),
+                    FakeElement(tag="input", value="品牌乙"),
+                    FakeElement(tag="td", text=""),
+                ]
+            ]
+        }
+    )
+    browser = DrissionBrowserActions(tab, tmp_path)
+
+    assert browser.texts(ROWS) == ["品牌甲", "品牌乙", ""]
+
+
+def test_multi_element_reads_resolve_the_frame_each_time(tmp_path: Path) -> None:
+    frame = FakeTab(
+        element_lists={"css:table tbody tr": [[FakeElement(tag="td", text="甲")]]}
+    )
+    tab = FakeTab(frames={"#product-stock-frame": frame})
+    browser = DrissionBrowserActions(tab, tmp_path)
+
+    assert browser.count(FRAMED_ROWS) == 1
+    assert browser.texts(FRAMED_ROWS) == ["甲"]
+    assert [locator for locator, _ in tab.frame_lookups] == [
+        "#product-stock-frame",
+        "#product-stock-frame",
+    ]
+
+
+def test_multi_element_reads_reject_a_negative_timeout(tmp_path: Path) -> None:
+    browser = DrissionBrowserActions(FakeTab(), tmp_path)
+
+    with pytest.raises(ValueError):
+        browser.count(ROWS, timeout=-1.0)
+    with pytest.raises(ValueError):
+        browser.texts(ROWS, timeout=-1.0)
+
+
+def test_multi_element_reads_require_a_captured_locator(tmp_path: Path) -> None:
+    unresolved = ElementSpec("example.unresolved", "未捕获", "库存页")
+    browser = DrissionBrowserActions(FakeTab(), tmp_path)
+
+    with pytest.raises(UnresolvedElementError):
+        browser.count(unresolved)
+
+
+def test_multi_element_reads_wait_for_an_attaching_frame(tmp_path: Path) -> None:
+    """A business iframe is routinely still attaching after the outer marker.
+
+    Treating that as a hard failure made verify-elements report a healthy
+    selector as broken on its first real run.
+    """
+
+    frame = FakeTab(
+        element_lists={"css:table tbody tr": [[FakeElement(tag="td", text="甲")]]}
+    )
+    tab = FakeTab()
+    attempts = {"count": 0}
+    original = tab.get_frame
+
+    def flaky_get_frame(locator: str, *, timeout: float):
+        attempts["count"] += 1
+        original(locator, timeout=timeout)
+        return frame if attempts["count"] > 2 else False
+
+    tab.get_frame = flaky_get_frame
+    browser = DrissionBrowserActions(tab, tmp_path, action_timeout=2.0)
+
+    assert browser.count(FRAMED_ROWS) == 1
+    assert attempts["count"] > 2
+
+
+def test_multi_element_reads_re_resolve_the_scope_after_context_loss(
+    tmp_path: Path,
+) -> None:
+    """The business iframe is re-created after the outer marker appears.
+
+    Querying the already-resolved frame then raises ContextLostError. Retrying
+    the same stale scope, or failing outright, reported a healthy selector as
+    broken during the first real verify-elements run.
+    """
+
+    class LosingFrame(FakeTab):
+        def eles(self, locator: str, *, timeout: float):
+            raise ContextLostError("frame was replaced")
+
+    good_frame = FakeTab(
+        element_lists={"css:table tbody tr": [[FakeElement(tag="td", text="甲")]]}
+    )
+    tab = FakeTab()
+    frames = [LosingFrame(), good_frame]
+    resolved: list[object] = []
+
+    def get_frame(locator: str, *, timeout: float):
+        frame = frames[min(len(resolved), len(frames) - 1)]
+        resolved.append(frame)
+        return frame
+
+    tab.get_frame = get_frame
+    browser = DrissionBrowserActions(tab, tmp_path, action_timeout=2.0)
+
+    assert browser.count(FRAMED_ROWS) == 1
+    # A fresh frame was resolved for the retry rather than reusing the stale one.
+    assert len(resolved) >= 2 and resolved[0] is not resolved[1]

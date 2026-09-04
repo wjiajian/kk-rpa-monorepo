@@ -50,12 +50,42 @@ from .catalog import (
     verify_catalog_snapshot,
 )
 from .drission_browser import DrissionBrowserActions
+from .elements import (
+    ElementCatalogError,
+    ElementCheck,
+    ElementEntry,
+    ExpectedCount,
+    check_element_expectations,
+    element_specs,
+    load_element_catalog,
+)
 from .diagnostics import exception_diagnostics
 from .instructions import Instruction, InstructionRegistry, InstructionSpec
+from .verification import (
+    Counterexample,
+    FakeState,
+    CounterexampleContractError,
+    CounterexampleResult,
+    assert_steps_are_falsifiable,
+    check_step_counterexamples,
+)
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
+    "ElementCatalogError",
+    "ElementCheck",
+    "ElementEntry",
+    "ExpectedCount",
+    "check_element_expectations",
+    "element_specs",
+    "load_element_catalog",
+    "Counterexample",
+    "FakeState",
+    "CounterexampleContractError",
+    "CounterexampleResult",
+    "assert_steps_are_falsifiable",
+    "check_step_counterexamples",
     "AuthorizationAlreadyClaimedError",
     "AuthorizationClaim",
     "AuthorizationError",

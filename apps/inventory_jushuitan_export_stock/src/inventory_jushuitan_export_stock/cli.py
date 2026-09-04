@@ -20,6 +20,7 @@ from .real_runtime import (
     LiveUnsupportedError,
     create_authorization_request,
     execute_candidate_verification,
+    execute_element_verification,
     execute_login,
     execute_standard_run,
     grant_authorization_request,
@@ -53,7 +54,7 @@ def _parser() -> argparse.ArgumentParser:
     authorization_request = authorization_commands.add_parser("request")
     authorization_request.add_argument(
         "--operation",
-        choices=("login", "verify-candidates", "run", "resume"),
+        choices=("login", "verify-candidates", "verify-elements", "run", "resume"),
         required=True,
     )
     authorization_request.add_argument(
@@ -77,6 +78,11 @@ def _parser() -> argparse.ArgumentParser:
     login.add_argument("--account", default="STORE_001")
     login.add_argument("--run-id", required=True)
     login.add_argument("--authorization-id", required=True)
+
+    verify_elements = commands.add_parser("verify-elements")
+    verify_elements.add_argument("--account", required=True)
+    verify_elements.add_argument("--run-id", required=True)
+    verify_elements.add_argument("--authorization-id", required=True)
 
     verify = commands.add_parser("verify-candidates")
     verify.add_argument("--account", default="STORE_001")
@@ -522,11 +528,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "preview":
         return _run_interactive_preview(args.account)
     if args.command == "authorization":
-        operation = (
-            "verify_candidates"
-            if getattr(args, "operation", None) == "verify-candidates"
-            else getattr(args, "operation", None)
-        )
+        raw_operation = getattr(args, "operation", None)
+        operation = raw_operation.replace("-", "_") if raw_operation else raw_operation
         command = f"authorization {args.authorization_command}"
         try:
             if args.authorization_command == "request":
@@ -570,6 +573,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         except ApplicationRuntimeError as error:
             return _print_runtime_error(args.command, args.account, error)
+    if args.command == "verify-elements":
+        try:
+            payload = execute_element_verification(
+                account=args.account,
+                run_id=args.run_id,
+                authorization_id=args.authorization_id,
+            )
+        except ApplicationRuntimeError as error:
+            return _print_runtime_error(args.command, args.account, error, mode="preview")
+        for item in payload["checks"]:
+            actual = "-" if item["actual"] is None else item["actual"]
+            line = f"{item['status']:<4} {item['element_id']:<50} expect={item['expect']:<4} actual={actual}"
+            print(f"{line}  {item['detail']}" if item["detail"] else line)
+        _print(payload)
+        return 0 if payload["ok"] else 1
     if args.command == "verify-candidates":
         try:
             _print(
