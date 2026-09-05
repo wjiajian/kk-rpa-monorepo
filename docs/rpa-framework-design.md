@@ -6,7 +6,7 @@
 - 只有聚水潭库存导出和京麦商品明细导出两个测试应用，没有旧应用兼容要求。
 - 下载验收是拿对报表并成功下载，不解析 Excel 核对业务数据。
 - 导出失败允许从头重跑，也支持 agent 判断恢复位置后续跑；接受必要时重复生成同条件的平台报表。
-- 下载路径可指定，目前程序共用同一个目录；新 run 前清空，resume 保留已有文件，不做目录并发协调。
+- 下载路径可指定，默认 Windows 系统下载文件夹；所有命令保留已有文件，同名下载改名，不做目录并发协调。
 - 后续支持飞书、数据库和平台操作。写入按业务提供的事务方式执行，不在框架内设计部分写入恢复、补偿或重复处理。
 - 上线后无人值守，不逐次人工确认。
 
@@ -31,9 +31,12 @@ run 从第一步开始。resume 读取原失败记录，沿用原业务参数和
 - config/stores.example.toml 和忽略的 stores.local.toml。
 
 download_directory 相对于应用目录解析，也可指定绝对路径。
-两个样本默认 ../../runs/downloads，指向同一个仓库下载目录。
-浏览器下载和文件校验均使用此目录；新 run 与 verify-elements 前清空，resume 不清空。
-应用源码和本次日志所在目录不能被当成下载目录清空。
+两个样本省略该配置时，通过 Windows 的 [SHGetKnownFolderPath](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath) 读取当前用户实际下载文件夹；非 Windows 开发环境使用 ~/Downloads。
+浏览器下载和文件校验均使用此目录；新 run、verify-elements 和 resume 都保留已有文件。重名时下载为新文件，返回实际路径，不复用旧文件冒充本次结果。
+目标与应用目录、证据目录及其祖先或子目录重叠时，在启动浏览器前拒绝；不执行递归清理。
+
+load_runtime_options(RunRequest) 接收 account_id、inputs、credentials、download_dir，返回验证后的 RuntimeOptions。CLI 的 --inputs 和 --credentials 接受 JSON 对象或 @JSON文件，--download-dir 单独覆盖下载目录；doctor 与 verify-elements 接受同样参数。显式调用参数覆盖本地默认，参数齐全时无需本地配置文件。
+业务参数的键和约束由应用在 requirement.md 声明，不在核心硬编码周/月/日等范围。当前京麦支持 target_date、export_filename；聚水潭支持 brand_value、export_filename。未知键、非法日期、非法文件名在启动浏览器前拒绝。当前样本的 export_filename 使用 ASCII 文件名，目录可含中文。账号权限在业务系统实际配置，程序回读目标身份，本地布尔声明不作为权限证明。
 
 日志、截图与 result.json 保存在各应用 runs/<run_id>。result.json 保存账号、模式、下载目录、业务输入、完成步骤、输出和失败诊断，每步更新；resume 用这些记录恢复业务上下文，原记录不覆盖。
 下载检查目标匹配、传输完成、文件在指定目录且非空。
@@ -79,23 +82,33 @@ ApplicationDefinition.build_services(context) 向同一运行注入具体服务�
     uv run rpa-app run --preview --account STORE_001
     uv run rpa-app resume <run_id> --from-step S006
 
-doctor、test 离线，不启动浏览器或清空真实下载目录。
-verify-elements、run 都会真实运行并清空配置下载目录。
+doctor、test 离线，不启动浏览器或修改真实下载目录。
+verify-elements、run 都会真实运行并保留配置下载目录中的已有文件。
 resume 会接管保留的浏览器并执行指定步骤，保留已有下载文件。
 失败返回非零退出码及 run_id。调度由调用方负责；重新开始用 run，agent 续跑用 resume。
+run/resume 在准备阶段即分配 run_id，配置、服务初始化、目录准备和浏览器启动异常也保存失败 result.json 与事件。输入尚未解析完成时记录 inputs: null，需要补齐参数后新 run。CLI 语法错误和无效的源运行 ID 属于调用错误。若证据目录不可写，仍返回 run_id，并报告 record_error。
 不保留旧 --yes、--live 入口。
 
 ## 7. Agent 续跑
 
 agent 先读取失败日志与结果，检查当前页面，修复问题并准备恢复步骤需要的页面和文件，再明确指定 --from-step。可以选择失败步骤或更早的步骤；其前面的步骤必须有成功记录，不能静默跳过未完成步骤。
 
-框架从选定步骤起重新 execute 和 verify，保留此前的成功输出，不重新验证已离开的历史页面。例如京麦完成报表导出后弹窗已关闭，下载续跑无需重新展示旧弹窗。
+通常从选定步骤起重新 execute 和 verify，保留此前的成功输出，不重新验证已离开的历史页面。例如京麦完成报表导出后弹窗已关闭，下载续跑无需重新展示旧弹窗。
 
-RuntimeOptions.inputs / ctx.inputs 只保存可序列化业务参数：京麦保存目标日期，聚水潭保存品牌和导出文件名。续跑使用原值，日期跨天或本地品牌配置变化不会改变原任务；凭据仍从本地配置加载。
+agent 临时完成失败步骤后，可以提交该步骤 execute 原本应返回的 JSON 输出：
+
+    uv run rpa-app resume <run_id> --from-step S003 --step-result "@step-result.local.json" --locator-overrides "@locators.local.json" --credentials "@credentials.local.json"
+
+--step-result 仅能用于源记录的 failed_step。框架不再次调用该步 execute，独立调用原 verify；严格返回 True 才写入成功输出并执行下一步。False、校验异常或超时都保留失败。结果与正常 execute 共用格式，输出字段见应用代码及需求基线。没有本地凭据时，续跑需再次通过 --credentials 提供。
+
+--locator-overrides 是元素 ID 到定位器字段的 JSON 映射，例如 `{"demo.page.target":{"locator":"css:#new-target","frame":null}}`。只允许 locator、frame、option_locator、selected_option_locator、popup_locator、dismiss_locator；不允许更改身份、匹配预期或业务校验。覆盖在内存中应用于本次续跑的校验与后续步骤，结束后恢复原映射；不修改 elements.toml，不自动沿用到下一次续跑。定位器仍无法证明原成功条件时，任务保持失败，交回 agent 处理。
+
+RuntimeOptions.inputs / ctx.inputs 只保存可序列化业务参数：京麦保存目标日期和导出文件名，聚水潭保存品牌和导出文件名。续跑使用原值，日期跨天或本地品牌配置变化不会改变原任务；凭据从本次调用或本地配置加载，不持久化。
 
 浏览器失败后保留并记录接管信息，成功关闭；已有 BrowserManager 负责后续连接。若窗口或登录态已失效，agent 恢复页面或选择更早的步骤。框架不自动诊断、修复代码或决定恢复位置。
 
 每次续跑生成新的 run_id，在 result.json 记录 resumed_from 和 from_step。若再次失败，agent 可以基于新的失败记录继续处理。旧版缺少 inputs 的记录不自动迁移。
+提交 agent 输出时还记录 agent_result_step，临时定位器记录为 locator_overrides；它们描述本次尝试，成功与否仍以 completed_steps/status 为准。step.succeeded 事件的 details.source 区分 agent 与 program。调度器可以直接调用 Runner.run 的 step_result、locator_overrides 参数；此阶段不实现调度器或自动故障分类。
 
 ## 8. 清理与演进
 

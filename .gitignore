@@ -21,6 +21,7 @@ htmlcov/
 .env.*
 !.env.example
 apps/*/config/stores.local.toml
+*.local.json
 
 # Requirement screenshots and other locally downloaded source assets
 apps/*/requirement/assets/*

@@ -7,7 +7,7 @@ import pytest
 from rpa_core import cli
 from rpa_core.browser import ElementSpec, FakeBrowserActions, FakeDownload, Locator
 from rpa_core.browser_manager import BrowserLifecyclePolicy
-from rpa_core.cli import ApplicationDefinition, RuntimeOptions
+from rpa_core.cli import ApplicationDefinition, RunRequest, RuntimeOptions
 from rpa_core.contracts import RunMode
 from rpa_core.downloads import download_result_is_valid
 from rpa_core.runtime import BaseProgram, ExecutionContext, ProgramSpec, Step, StepSpec
@@ -83,9 +83,9 @@ def application(tmp_path):
     return ApplicationDefinition(
         app_dir=app_dir,
         build_program=lambda: BaseProgram(ProgramSpec("demo", "Demo"), [ExportStep()]),
-        load_runtime_options=lambda account: RuntimeOptions(
-            account,
-            app_dir / "profiles" / account,
+        load_runtime_options=lambda request: RuntimeOptions(
+            request.account_id,
+            app_dir / "profiles" / request.account_id,
             destination,
             inputs={"business_date": "2026-09-03"},
         ),
@@ -134,15 +134,15 @@ def manager(monkeypatch):
     return sessions
 
 
-def test_unattended_runs_clean_shared_output_but_keep_separate_evidence(
+def test_unattended_runs_preserve_existing_downloads_and_keep_separate_evidence(
     application, manager, capsys
 ):
-    destination = application.load_runtime_options("STORE_001").download_dir
+    destination = application.load_runtime_options(RunRequest()).download_dir
     destination.mkdir()
     (destination / "stale.xlsx").write_bytes(b"stale")
     assert cli.main(application, ["run"]) == 0
     first = json.loads(capsys.readouterr().out)
-    assert not (destination / "stale.xlsx").exists()
+    assert (destination / "stale.xlsx").read_bytes() == b"stale"
     assert (destination / "report.xlsx").read_bytes() == b"report"
     assert cli.main(application, ["run", "--preview"]) == 0
     second = json.loads(capsys.readouterr().out)
@@ -156,7 +156,7 @@ def test_unattended_runs_clean_shared_output_but_keep_separate_evidence(
 def test_invalid_configuration_does_not_open_browser_or_clear_downloads(
     application, manager
 ):
-    destination = application.load_runtime_options("STORE_001").download_dir
+    destination = application.load_runtime_options(RunRequest()).download_dir
     destination.mkdir()
     (destination / "keep.xlsx").write_bytes(b"keep")
 
@@ -207,7 +207,7 @@ def test_offline_test_runs_baselines_and_counterexamples_without_loading_real_op
 
 
 def test_doctor_does_not_clean_download_directory(application, manager, monkeypatch):
-    destination = application.load_runtime_options("STORE_001").download_dir
+    destination = application.load_runtime_options(RunRequest()).download_dir
     destination.mkdir()
     (destination / "keep").write_bytes(b"keep")
     monkeypatch.setattr(cli, "_browser_status", lambda *args: (True, "test browser"))
@@ -238,7 +238,7 @@ def test_resume_restores_original_options_and_keeps_existing_files(
     original_id = failure["run_id"]
     original_report = definition.app_dir / "runs" / original_id / "result.json"
     original_bytes = original_report.read_bytes()
-    options = definition.load_runtime_options("STORE_001")
+    options = definition.load_runtime_options(RunRequest())
     marker = options.download_dir / "keep-for-next-step.xlsx"
     marker.write_bytes(b"existing output")
     fail[0] = False
@@ -283,3 +283,130 @@ def test_invalid_resume_step_is_reported_before_starting_a_browser(
     )
     assert cli.main(application, ["resume", original_id, "--from-step", "absent"]) == 2
     assert manager == []
+
+
+@pytest.mark.parametrize("phase", ["configuration", "services", "browser", "downloads"])
+def test_preparation_failures_return_a_run_id_and_record_the_failure(
+    application, manager, monkeypatch, capsys, phase
+):
+    def fail(*args, **kwargs):
+        raise RuntimeError("private startup detail")
+
+    definition = application
+    if phase == "configuration":
+        definition = replace(application, load_runtime_options=fail)
+    elif phase == "services":
+        definition = replace(application, build_services=fail)
+    elif phase == "browser":
+        monkeypatch.setattr(cli.BrowserManager, "start", fail)
+    else:
+        options = application.load_runtime_options(RunRequest())
+        definition = replace(application, load_runtime_options=lambda request: replace(options, download_dir=application.app_dir / "src"))
+    assert cli.main(definition, ["run"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_id"] and payload["record_error"] is None
+    run_dir = application.app_dir / "runs" / payload["run_id"]
+    report = json.loads((run_dir / "result.json").read_text())
+    assert report["run_id"] == payload["run_id"]
+    assert report["status"] == "failed" and report["phase"] == "prepare"
+    assert report["completed_steps"] == []
+    assert "private startup detail" not in (run_dir / "result.json").read_text()
+    assert json.loads((run_dir / "events.jsonl").read_text())["event_type"] == "run.failed"
+    assert manager == []
+
+
+def test_cli_passes_inputs_paths_and_credentials_without_saving_credentials(application, manager, tmp_path, capsys):
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text(json.dumps({"username": "fixture-user", "password": "fixture-secret"}))
+    observed = []
+    defaults = application.load_runtime_options(RunRequest())
+
+    def load(request):
+        observed.append(request)
+        return replace(defaults, inputs=request.inputs, metadata={"password": request.credentials["password"]}, download_dir=Path(request.download_dir))
+
+    definition = replace(application, load_runtime_options=load)
+    destination = tmp_path / "external-downloads"
+    assert cli.main(definition, ["run", "--inputs", '{"business_date":"2026-08-01","period":"week"}', "--credentials", "@" + str(credentials), "--download-dir", str(destination)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert observed[0].inputs["period"] == "week"
+    assert observed[0].credentials["username"] == "fixture-user"
+    assert "fixture-secret" not in repr(observed[0])
+    report = (application.app_dir / "runs" / payload["run_id"] / "result.json").read_text()
+    assert "fixture-secret" not in report and "fixture-user" not in report
+    assert json.loads(report)["inputs"]["business_date"] == "2026-08-01"
+    assert payload["outputs"]["S1"]["download_path"].startswith(str(destination))
+
+
+def test_cli_verifies_agent_result_with_temporary_locators_and_preserves_the_source(application, manager, tmp_path, capsys):
+    executions = []
+
+    class BrokenExport(ExportStep):
+        def execute(self, ctx):
+            executions.append(self.spec.step_id)
+            raise RuntimeError("broken locator")
+
+        def verify(self, ctx, result):
+            return ctx.services["elements"][TARGET.id].locator.value == "css:#repaired" and super().verify(ctx, result)
+
+    definition = replace(application, build_program=lambda: BaseProgram(ProgramSpec("demo", "Demo"), [BrokenExport()]))
+    catalog = (application.app_dir / "elements.toml").read_bytes()
+    assert cli.main(definition, ["run"]) == 2
+    source_id = json.loads(capsys.readouterr().out)["run_id"]
+    source_path = application.app_dir / "runs" / source_id / "result.json"
+    source_bytes = source_path.read_bytes()
+    destination = application.load_runtime_options(RunRequest()).download_dir
+    downloaded = destination / "agent-export.xlsx"
+    downloaded.write_bytes(b"export completed by the agent")
+    result_file = tmp_path / "step.json"
+    result_file.write_text(json.dumps({"download_path": str(downloaded), "status": "completed"}))
+    overrides = json.dumps({TARGET.id: {"locator": "css:#repaired"}})
+    assert cli.main(definition, ["resume", source_id, "--from-step", "S1", "--step-result", "@" + str(result_file), "--locator-overrides", overrides]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    assert executions == ["S1"]
+    report = json.loads((application.app_dir / "runs" / resumed["run_id"] / "result.json").read_text())
+    assert report["agent_result_step"] == "S1" and report["completed_steps"] == ["S1"]
+    assert source_path.read_bytes() == source_bytes
+    assert (application.app_dir / "elements.toml").read_bytes() == catalog
+    # The next attempt has the original locators again; a supplied result alone cannot pass.
+    assert cli.main(definition, ["resume", source_id, "--from-step", "S1", "--step-result", "@" + str(result_file)]) == 2
+    assert json.loads(capsys.readouterr().out)["error"] == "step_verification_failed"
+
+
+@pytest.mark.parametrize("failure", ["options", "browser"])
+def test_resume_can_continue_from_an_attempt_that_failed_during_preparation(application, manager, capsys, monkeypatch, failure):
+    fail_step = [True]
+
+    class Second(ExportStep):
+        def __init__(self):
+            super().__init__()
+            self.spec = StepSpec("S2", "Second")
+
+        def execute(self, ctx):
+            if fail_step[0]:
+                raise RuntimeError("step failed")
+            return super().execute(ctx)
+
+    definition = replace(application, build_program=lambda: BaseProgram(ProgramSpec("demo", "Demo"), [ExportStep(), Second()]))
+    assert cli.main(definition, ["run"]) == 2
+    source_id = json.loads(capsys.readouterr().out)["run_id"]
+    original = json.loads((application.app_dir / "runs" / source_id / "result.json").read_text())
+    fail_step[0] = False
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("preparation failed")
+
+    with monkeypatch.context() as patch:
+        broken = definition
+        if failure == "options":
+            broken = replace(definition, load_runtime_options=fail)
+        else:
+            patch.setattr(cli.BrowserManager, "start", fail)
+        assert cli.main(broken, ["resume", source_id, "--from-step", "S2"]) == 2
+    new_id = json.loads(capsys.readouterr().out)["run_id"]
+    saved = json.loads((application.app_dir / "runs" / new_id / "result.json").read_text())
+    assert saved["completed_steps"] == ["S1"]
+    assert saved["outputs"]["S1"] == original["outputs"]["S1"]
+    assert saved["inputs"] == original["inputs"]
+    assert cli.main(definition, ["resume", new_id, "--from-step", "S2"]) == 0
+    assert json.loads(capsys.readouterr().out)["completed_steps"] == ["S1", "S2"]

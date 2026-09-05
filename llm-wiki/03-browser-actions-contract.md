@@ -12,6 +12,6 @@
 
 `DownloadRef` 返回路径、状态、字节数及一次计算的摘要。两个应用只按正确报表和非空下载验收，不反复计算摘要或解析工作簿。
 
-下载使用运行配置传入的 `download_dir`；截图使用每次独立的 `run_dir/evidence`。新 run 和 verify-elements 前由 CLI 清空下载目录；resume 保留已有文件。
+下载使用运行配置传入的 `download_dir`；截图使用每次独立的 `run_dir/evidence`。默认使用系统下载文件夹；所有命令保留已有文件，同名下载自动改名，返回实际下载路径。
 
 `FakeBrowserActions` 只读写测试临时目录、不访问网络。它支持元素可见性、匹配数、文本、下载和新标签页场景；应用测试统一使用各自的 `build_test_context`。

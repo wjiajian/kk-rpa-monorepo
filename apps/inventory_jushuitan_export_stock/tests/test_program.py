@@ -138,7 +138,7 @@ def test_store_config_supports_a_custom_download_directory(tmp_path):
 
     sample = (APPLICATION.app_dir / "config" / "stores.example.toml").read_text()
     path = tmp_path / "stores.toml"
-    path.write_text(sample.replace("../../runs/downloads", "custom-output"))
+    path.write_text(sample + '\ndownload_directory = "custom-output"\n')
     assert load_store_config(path, "STORE_001").download_directory == "custom-output"
 
 
@@ -169,3 +169,56 @@ def test_agent_resumes_export_with_original_brand_after_local_config_changes(tmp
         for action in resumed.browser.actions
     )
     assert Path(result.outputs["S005"]["download_path"]).parent == failed.download_dir
+
+
+def test_main_parameters_work_without_local_config_and_reach_the_steps(tmp_path, monkeypatch):
+    from inventory_jushuitan_export_stock import program
+    from rpa_core.cli import RunRequest
+
+    source_dir = program.APP_DIR
+    monkeypatch.setattr(program, "APP_DIR", tmp_path / "application")
+    destination = tmp_path / "downloads"
+    request = RunRequest(
+        inputs={"brand_value": "BRAND_TEST", "export_filename": "requested.xlsx"},
+        credentials={"username": "test-user", "password": "test-secret", "expected_identity": "Test Shop"},
+        download_dir=str(destination),
+    )
+    options = program.load_runtime_options(request)
+    assert options.inputs == request.inputs and options.download_dir == destination
+    credentials = options.metadata["login_credentials"]
+    assert credentials.username.reveal() == "test-user"
+    assert credentials.expected_identity.reveal() == "Test Shop"
+    assert not program.APP_DIR.exists()
+    monkeypatch.setattr(program, "APP_DIR", source_dir)
+    ctx = context(tmp_path / "fixture")
+    ctx.inputs["export_filename"] = options.inputs["export_filename"]
+    result = build_program().step("S005").execute(ctx)
+    assert Path(result["download_path"]).name == "requested.xlsx"
+
+
+@pytest.mark.parametrize("inputs", [{"period": "week"}, {"brand_value": []}, {"brand_value": "BRAND_TEST", "export_filename": "../escape.xlsx"}])
+def test_unsupported_inventory_parameters_are_rejected_before_execution(tmp_path, monkeypatch, inputs):
+    from inventory_jushuitan_export_stock import program
+    from inventory_jushuitan_export_stock.models import ConfigurationError
+    from rpa_core.cli import RunRequest
+
+    monkeypatch.setattr(program, "APP_DIR", tmp_path)
+    with pytest.raises(ConfigurationError):
+        program.load_runtime_options(RunRequest(inputs=inputs))
+
+
+def test_agent_search_result_cannot_change_the_original_brand(tmp_path):
+    failed = context(tmp_path / "first", Counterexample("search button absent", FakeState(hidden=(SEARCH_BUTTON,))))
+    with pytest.raises(StepRunError) as caught:
+        Runner().run(build_program(), failed)
+    assert caught.value.step_id == "S004"
+    previous = json.loads((failed.run_dir / "result.json").read_text())
+    resumed = context(tmp_path / "resume", Counterexample("wrong brand selected", FakeState(texts={BRAND_SELECTED: ("OTHER_BRAND",)})))
+    resumed.run_id = "resumed-agent"
+    supplied = {"requested_brand": "OTHER_BRAND", "row_count": 1, "brands_after_search": ["OTHER_BRAND"], "brands_normalized": ["OTHER_BRAND"]}
+    with pytest.raises(StepRunError) as caught:
+        Runner().run(build_program(), resumed, previous=previous, from_step="S004", step_result=supplied)
+    assert caught.value.step_id == "S004"
+    report = json.loads((resumed.run_dir / "result.json").read_text())
+    assert "S004" not in report["completed_steps"]
+    assert not any(action.action == "download" for action in resumed.browser.actions)

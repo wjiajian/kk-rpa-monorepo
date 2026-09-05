@@ -1,11 +1,12 @@
 [project]
 name = "report-jingmai-export-product-detail"
 version = "0.2.0"
-description = "Independent RPA application for exporting the previous day's Jingmai product-detail report."
+description = "Independent RPA application for exporting a selected day's Jingmai product-detail report."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "rpa-core==0.8.0",
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.scripts]

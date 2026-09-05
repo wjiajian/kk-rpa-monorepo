@@ -10,6 +10,11 @@ try:
 except ImportError:
     _fcntl = None
 
+try:
+    import msvcrt as _msvcrt
+except ImportError:
+    _msvcrt = None
+
 
 class RunLockError(RuntimeError):
     error_code = "run_lock_error"
@@ -32,7 +37,7 @@ class RunDirectoryLock:
 
     @staticmethod
     def ensure_supported() -> None:
-        if _fcntl is None:
+        if _fcntl is None and _msvcrt is None:
             raise RunLockUnsupportedError(
                 "OS file locking is unavailable; refusing to run without exclusivity"
             )
@@ -63,7 +68,11 @@ class RunDirectoryLock:
             if (opened.st_dev, opened.st_ino) != (linked.st_dev, linked.st_ino):
                 raise RunLockError("run lock path changed while opening")
             try:
-                _fcntl.flock(descriptor, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                if _fcntl is not None:
+                    _fcntl.flock(descriptor, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                else:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    _msvcrt.locking(descriptor, _msvcrt.LK_NBLCK, 1)
             except BlockingIOError as error:
                 raise RunAlreadyActiveError(
                     f"run is already active: {self.path.parent.name}"
@@ -89,7 +98,11 @@ class RunDirectoryLock:
             return
         self._descriptor = None
         try:
-            _fcntl.flock(descriptor, _fcntl.LOCK_UN)
+            if _fcntl is not None:
+                _fcntl.flock(descriptor, _fcntl.LOCK_UN)
+            else:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                _msvcrt.locking(descriptor, _msvcrt.LK_UNLCK, 1)
         finally:
             os.close(descriptor)
 

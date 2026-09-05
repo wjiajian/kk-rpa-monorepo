@@ -32,7 +32,7 @@ class StoreConfig:
     username_env: str
     password_env: str
     identity_env: str | None = None
-    download_directory: str = "../../runs/downloads"
+    download_directory: str | None = None
 
     def __post_init__(self) -> None:
         if not _ACCOUNT_ID_PATTERN.fullmatch(self.account_id):
@@ -50,8 +50,8 @@ class StoreConfig:
             raise ConfigurationError(
                 "profile_directory must be a relative profiles/<alias> path"
             )
-        if not 1024 <= self.debug_port <= 65535:
-            raise ConfigurationError("debug_port must be between 1024 and 65535")
+        if self.debug_port != 0 and not 1024 <= self.debug_port <= 65535:
+            raise ConfigurationError("debug_port must be 0 or between 1024 and 65535")
         if not self.brand_value:
             raise ConfigurationError("brand_value must not be empty")
         for field_name in ("username_env", "password_env", "identity_env"):
@@ -73,19 +73,30 @@ class LoginCredentials:
     expected_identity: SecretValue | None = None
 
 
-def load_store_config(path: str | Path, account_id: str) -> StoreConfig:
+def load_store_config(
+    path: str | Path, account_id: str, overrides: Mapping[str, object] | None = None
+) -> StoreConfig:
     source = Path(path)
     try:
-        document = tomllib.loads(source.read_text(encoding="utf-8"))
+        document = tomllib.loads(source.read_text(encoding="utf-8")) if source.exists() else {
+            "schema_version": 1, "stores": {}
+        }
         if document.get("schema_version") != 1:
             raise ConfigurationError("stores configuration schema_version must equal 1")
         stores = document.get("stores")
         if not isinstance(stores, Mapping):
             raise ConfigurationError("stores configuration must contain a stores table")
-        raw = stores[account_id]
+        raw = stores.get(account_id, {})
         if not isinstance(raw, Mapping):
             raise ConfigurationError(f"store {account_id!r} must be a table")
-        return StoreConfig(account_id=account_id, **dict(raw))
+        values = {
+            "platform": "jushuitan", "login_url": "https://www.erp321.com/login.aspx",
+            "profile_directory": f"profiles/{account_id}", "debug_port": 0,
+            "brand_value": "", "username_env": f"RPA_{account_id}_USERNAME",
+            "password_env": f"RPA_{account_id}_PASSWORD",
+            **dict(raw), **dict(overrides or {}),
+        }
+        return StoreConfig(account_id=account_id, **values)
     except KeyError as error:
         raise ConfigurationError(f"store alias not found: {account_id}") from error
     except (OSError, UnicodeError, tomllib.TOMLDecodeError, TypeError) as error:

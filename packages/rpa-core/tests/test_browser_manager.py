@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import pytest
+import ctypes
+from types import SimpleNamespace
+from rpa_core import browser_manager
 
 from rpa_core.browser_manager import (
     BrowserLaunchSpec,
@@ -93,6 +96,26 @@ def make_spec(tmp_path: Path, **changes) -> BrowserLaunchSpec:
     }
     values.update(changes)
     return BrowserLaunchSpec(**values)
+
+
+@pytest.mark.parametrize(("wait_result", "alive"), [(0, False), (258, True)])
+def test_windows_liveness_does_not_send_a_signal(monkeypatch, wait_result, alive):
+    closed = []
+
+    def open_process(access, inherit, pid):
+        assert access == 0x00100000 and not inherit and pid == 123456
+        return 123
+
+    kernel = SimpleNamespace(
+        OpenProcess=open_process,
+        WaitForSingleObject=lambda handle, timeout: wait_result,
+        CloseHandle=lambda handle: closed.append(handle),
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: kernel, raising=False)
+    monkeypatch.setattr(browser_manager.sys, "platform", "win32")
+    monkeypatch.setattr(browser_manager.os, "kill", lambda *a: pytest.fail("liveness sent a signal"))
+    assert browser_manager._pid_is_alive(123456) is alive
+    assert closed == [123]
 
 
 def test_manager_binds_profile_port_and_run_artifacts(tmp_path: Path) -> None:

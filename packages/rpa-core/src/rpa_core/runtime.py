@@ -13,6 +13,7 @@ from typing import Any
 from .contracts import RunMode
 from .diagnostics import exception_diagnostics
 from .events import JsonlEventLogger, sanitize_event_value
+from .elements import override_element_locators
 from .verification import Counterexample
 
 
@@ -177,6 +178,8 @@ class Runner:
         *,
         previous: Mapping[str, Any] | None = None,
         from_step: str | None = None,
+        step_result: Mapping[str, Any] | None = None,
+        locator_overrides: Mapping[str, Any] | None = None,
     ) -> RunResult:
         if program.spec.app_id != context.app_id:
             raise RuntimeContractError("program and context app IDs differ")
@@ -195,6 +198,20 @@ class Runner:
             context.outputs = {key: dict(previous["outputs"][key]) for key in completed}
         elif from_step is not None:
             raise RuntimeContractError("a starting step requires a previous failed run")
+        if step_result is not None and (
+            previous is None
+            or previous.get("failed_step") != from_step
+            or not isinstance(step_result, Mapping)
+        ):
+            raise RuntimeContractError("a supplied result must belong to the failed step")
+        if locator_overrides and previous is None:
+            raise RuntimeContractError("temporary locators require a failed run")
+        original_elements = context.services.get("elements")
+        patched_elements = (
+            override_element_locators(context.service("elements"), locator_overrides)
+            if locator_overrides
+            else None
+        )
         context.run_dir.mkdir(parents=True, exist_ok=True)
         report_path = context.run_dir / "result.json"
         if report_path.exists():
@@ -211,6 +228,10 @@ class Runner:
         }
         if previous is not None:
             report.update(resumed_from=previous["run_id"], from_step=from_step)
+        if locator_overrides:
+            report["locator_overrides"] = dict(locator_overrides)
+        if step_result is not None:
+            report["agent_result_step"] = from_step
 
         def emit(event: str, **details: Any) -> None:
             logger.emit(
@@ -239,6 +260,8 @@ class Runner:
             },
         )
         try:
+            if patched_elements is not None:
+                context.services["elements"] = patched_elements
             for step in program.steps[len(completed) :]:
                 context.current_step_id = step.spec.step_id
                 report["current_step"] = step.spec.step_id
@@ -246,7 +269,8 @@ class Runner:
                 context.step_deadline_monotonic = started + step.spec.timeout_seconds
                 save_report()
                 emit("step.started", status="running")
-                result = step.execute(context)
+                agent_completed = step_result is not None and step.spec.step_id == from_step
+                result = dict(step_result) if agent_completed else step.execute(context)
                 context.ensure_step_within_deadline()
                 if (
                     not isinstance(result, Mapping)
@@ -265,6 +289,7 @@ class Runner:
                     "step.succeeded",
                     status="succeeded",
                     duration_ms=int((time.monotonic() - started) * 1000),
+                    details={"source": "agent" if agent_completed else "program"},
                 )
             report["status"] = "succeeded"
             context.current_step_id = None
@@ -297,6 +322,8 @@ class Runner:
                 run_id=context.run_id,
             ) from error
         finally:
+            if patched_elements is not None:
+                context.services["elements"] = original_elements
             context.current_step_id = None
             context.step_deadline_monotonic = None
             report.pop("current_step", None)

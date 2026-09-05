@@ -10,6 +10,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import sys
 import re
 import socket
 import stat
@@ -741,17 +742,21 @@ def _devtools_endpoint_responds(port: int) -> bool:
 def _terminate_process(pid: int, *, timeout: float) -> bool:
     """Ask one process to exit, escalating to SIGKILL, and report the outcome."""
 
-    from signal import SIGKILL, SIGTERM
+    from signal import SIGTERM
     from time import monotonic, sleep
 
-    for signal_number in (SIGTERM, SIGKILL):
+    signals = (SIGTERM,)
+    if sys.platform != "win32":
+        from signal import SIGKILL
+        signals += (SIGKILL,)
+    for signal_number in signals:
         try:
             os.kill(pid, signal_number)
         except ProcessLookupError:
             return True
         except OSError:
             return False
-        deadline = monotonic() + timeout / 2
+        deadline = monotonic() + timeout / len(signals)
         while monotonic() < deadline:
             if _process_has_exited(pid):
                 return True
@@ -762,6 +767,8 @@ def _terminate_process(pid: int, *, timeout: float) -> bool:
 def _process_has_exited(pid: int) -> bool:
     """Report exit, reaping first so a zombie child is not read as alive."""
 
+    if sys.platform == "win32":
+        return not _pid_is_alive(pid)
     try:
         reaped, _ = os.waitpid(pid, os.WNOHANG)
     except ChildProcessError:
@@ -777,6 +784,8 @@ def _process_has_exited(pid: int) -> bool:
 def _pid_is_alive(pid: int) -> bool:
     if pid == os.getpid():
         return True
+    if sys.platform == "win32":
+        return _windows_pid_is_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -786,6 +795,27 @@ def _pid_is_alive(pid: int) -> bool:
     except OSError as error:
         return error.errno == errno.EPERM
     return True
+
+
+def _windows_pid_is_alive(pid: int) -> bool:
+    """Observe a process handle; os.kill(pid, 0) terminates it on Windows."""
+    import ctypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_int
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only.
+    if not handle:
+        # Invalid PID is gone; lack of access must not release its ownership.
+        return ctypes.get_last_error() != 87
+    try:
+        return kernel.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0 means exited.
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def _create_json_exclusive(path: Path, payload: dict[str, object]) -> None:

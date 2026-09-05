@@ -197,7 +197,7 @@ class SearchInventory(Step):
         if not isinstance(result, Mapping):
             return False
         requested = _normalize(str(result.get("requested_brand", "")))
-        if not requested:
+        if not requested or requested != _normalize(_brand(context)):
             return False
         try:
             row_count = int(result["row_count"])

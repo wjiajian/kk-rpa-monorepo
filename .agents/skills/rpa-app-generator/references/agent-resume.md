@@ -6,17 +6,23 @@ Use this workflow when the user wants the agent to diagnose and continue a faile
 2. Inspect and fix the actual cause. Run focused offline tests when code changes. Use the user's existing authorization for real browser access and continuing the named program; do not request the same permission again.
 3. Inspect the retained browser and confirm the account and page state. BrowserManager records failed-browser handoffs under runtime/browser-manager/handoffs and adopts that browser for a later command. Use the core BrowserActions boundary for page operations.
 4. Prepare the page and files required by the chosen step. If the browser or session is gone, choose an earlier navigation/login step or restore the page before continuing.
-5. Select --from-step explicitly. The selected step runs again, followed by all later steps. The prefix must already have successful results in the source record; the framework does not silently mark an unfinished step complete.
+5. Select --from-step explicitly. Normally the selected step runs again. If the agent has temporarily completed the failed business step, supply --step-result as its ordinary execute output: the original verify must pass before the framework records success and continues. The prefix must already have successful results. Never change the success condition or mark a step complete by editing result.json.
 6. Run the command from the application directory:
 
     uv run rpa-app resume <run_id> --from-step <step_id>
 
-The command uses the source account, mode, inputs and download directory, while loading credentials from local configuration. It keeps downloaded files and creates a new attempt record with resumed_from and from_step. The original failed record remains unchanged.
+The command uses the source account, mode, inputs and download directory. Supply --credentials again when using invocation credentials; otherwise local configuration provides them. Credentials are never saved with inputs. Downloaded files and the original failed record remain unchanged; a new record links resumed_from and from_step.
+
+For temporary completion, save the failed step's output to a local JSON file in the ignored run directory and invoke:
+
+    uv run rpa-app resume <run_id> --from-step <failed_step> --step-result "@step-result.local.json" --locator-overrides "@locators.local.json" --credentials "@credentials.local.json"
+
+Omit optional arguments when not needed. A locator override is an object such as `{"demo.page.target":{"locator":"css:#replacement","frame":null}}`. The framework accepts only locator fields, validates the original result condition, and uses the overrides for this attempt's verification and later steps. It never changes elements.toml or automatically reuses the overrides in another attempt. If the original condition still cannot be verified, retain failure and investigate; business-flow changes require updating the requirement and program.
 
 Jingmai example: if export generation succeeded and S006 failed, prepare the download list and resume at S006. The old export dialog need not remain visible, the original target date remains fixed, and S004 does not run again.
 
 Jushuitan example: if filtering succeeded and S005 failed, prepare the inventory page and resume at S005. The original brand remains fixed even if the current local configuration changed.
 
-Each executed step still verifies its result. If resumption fails, inspect the new failed record before selecting another attempt. A new run intentionally starts from the beginning and clears downloads; do not use it as a substitute for requested continuation.
+Each executed or agent-completed step still verifies its result. If resumption fails, inspect the new failed record before selecting another attempt. A new run starts from the beginning and preserves existing downloads; do not use it as a substitute for requested continuation.
 
 Records from older versions without saved inputs cannot be resumed by this command. Do not invent missing business parameters or silently change the task's date, account or scope.

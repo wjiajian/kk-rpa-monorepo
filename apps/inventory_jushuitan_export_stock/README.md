@@ -27,8 +27,32 @@ uv run rpa-app resume <run_id> --from-step S005
 
 示例适用于页面已准备好、仅需继续库存导出。续跑沿用原品牌和文件名，也可以选择更早的步骤重建页面。
 
-`download_directory` 相对应用目录解析，也支持绝对路径；默认 `../../runs/downloads`，与京麦共用。新 run 和 verify-elements 前清空该目录，resume 保留已有文件。日志、结果和截图留在应用的 `runs/<run_id>/`。
+`download_directory` 可指定应用目录之外的相对或绝对路径；省略时默认 Windows 系统下载文件夹，非 Windows 开发环境为 ~/Downloads。run、verify-elements 和 resume 均保留已有文件，下载重名时改名并返回实际路径。日志、结果和截图仍在应用 `runs/<run_id>/`。
 
 `verify-elements` 按页面阶段检查匹配数，已有登录态时跳过登录页，不触发库存下载。`--preview` 是运行模式参数，本应用只导出文件，仍会操作页面并下载。
 
-本次框架迁移的真实浏览器验证：**等待授权**。此前的页面验证范围见 [需求基线](requirement.md)，不代表新版本已完成真实验收。
+2026-09-05 已在 macOS 完成当前版本真实导出，以及 agent 提交 S003 输出、临时替换校验定位器后续跑的验收。Windows 实机验证已授权，等待可连接的 Windows 环境。运行记录见 [需求基线](requirement.md)。
+
+## 每次调用的流程参数
+
+在忽略的本地文件中准备以下 JSON，也可以通过命令参数直接传 JSON 对象。
+
+`inputs.local.json`：
+
+```json
+{"brand_value":"BRAND_TARGET","export_filename":"inventory-export.xlsx"}
+```
+
+`credentials.local.json`：
+
+```json
+{"username":"<login username>","password":"<login password>","expected_identity":"<visible account identity>"}
+```
+
+```bash
+uv run rpa-app run --account STORE_001 --inputs "@inputs.local.json" --credentials "@credentials.local.json"
+```
+
+显式参数优先于本地默认；参数齐全时无需 stores.local.toml 或 .env。可加 `--download-dir "D:/RPA/downloads"` 指定保存目录，export_filename 只填写 ASCII 文件名，目录可含中文。凭据不保存在运行记录中；无本地凭据时，resume 需再次传 --credentials。
+
+agent 临时完成失败步骤后，用 `--step-result "@step-result.local.json"` 提交该步 execute 应返回的输出；框架独立执行 verify，通过后再继续。校验也用到失效元素时，可用 `--locator-overrides "@locators.local.json"` 仅替换本次定位器。完整格式见 [核心设计](../../docs/rpa-framework-design.md)。

@@ -205,3 +205,69 @@ def test_successful_progress_is_on_disk_before_the_next_step_runs(tmp_path):
         ProgramSpec("demo", "Demo"), [RecordingStep("S1", []), Observe("S2", [])]
     )
     Runner().run(program, context(tmp_path))
+
+
+@pytest.mark.parametrize("outcome", ["valid", "invalid", "verifier_error"])
+def test_agent_result_is_verified_before_continuing_without_repeating_the_failed_action(tmp_path, outcome):
+    calls = []
+
+    class Broken(RecordingStep):
+        def execute(self, ctx):
+            self.calls.append(self.spec.step_id)
+            raise RuntimeError("broken action")
+
+        def verify(self, ctx, result):
+            if outcome == "verifier_error":
+                raise LookupError("verification is unavailable")
+            return result.get("value") == 42
+
+    class Consume(RecordingStep):
+        def execute(self, ctx):
+            assert ctx.outputs["S2"] == {"value": 42}
+            assert ctx.outputs["S1"]["ok"] is True
+            return super().execute(ctx)
+
+    program = BaseProgram(ProgramSpec("demo", "Demo"), [RecordingStep("S1", calls), Broken("S2", calls), Consume("S3", calls)])
+    first = context(tmp_path)
+    with pytest.raises(StepRunError):
+        Runner().run(program, first)
+    source_bytes = (first.run_dir / "result.json").read_bytes()
+    previous = json.loads(source_bytes)
+    resumed = context(tmp_path, "agent-attempt")
+    supplied = {"value": 0 if outcome == "invalid" else 42}
+    if outcome == "valid":
+        result = Runner().run(program, resumed, previous=previous, from_step="S2", step_result=supplied)
+        assert result.completed_steps == ("S1", "S2", "S3")
+        assert calls == ["S1", "S2", "S3"]
+    else:
+        with pytest.raises(StepRunError):
+            Runner().run(program, resumed, previous=previous, from_step="S2", step_result=supplied)
+        assert calls == ["S1", "S2"]
+        report = json.loads((resumed.run_dir / "result.json").read_text())
+        assert report["failed_step"] == "S2" and report["completed_steps"] == ["S1"]
+    assert (first.run_dir / "result.json").read_bytes() == source_bytes
+
+
+def test_temporary_locators_apply_to_verification_and_later_steps_then_restore(tmp_path):
+    from rpa_core.browser import ElementSpec, Locator
+
+    element = ElementSpec("demo.page.target", "Target", "Demo", locator=Locator("#old"))
+    calls = []
+
+    class Locate(RecordingStep):
+        def verify(self, ctx, result):
+            return ctx.services["elements"][element.id].locator.value == "#temporary"
+
+    program = BaseProgram(ProgramSpec("demo", "Demo"), [Locate("S1", calls), Locate("S2", calls)])
+    first = context(tmp_path)
+    first.services["elements"] = {element.id: element}
+    with pytest.raises(StepRunError):
+        Runner().run(program, first)
+    previous = json.loads((first.run_dir / "result.json").read_text())
+    resumed = context(tmp_path, "two")
+    original = {element.id: element}
+    resumed.services["elements"] = original
+    Runner().run(program, resumed, previous=previous, from_step="S1", step_result={"ok": True}, locator_overrides={element.id: {"locator": "#temporary"}})
+    assert calls == ["S1", "S2"]
+    assert resumed.services["elements"] is original
+    assert original[element.id].locator.value == "#old"

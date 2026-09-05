@@ -19,7 +19,7 @@ from rpa_core.browser import (
     NavigationError,
     SecretValue,
 )
-from rpa_core.cli import ApplicationDefinition, RuntimeOptions
+from rpa_core.cli import ApplicationDefinition, RunRequest, RuntimeOptions
 from rpa_core.contracts import RunMode
 from rpa_core.downloads import download_result_is_valid, resolve_download_directory
 from rpa_core.elements import (
@@ -167,10 +167,10 @@ class OpenProductDetailStep(Step):
         )
 
 
-class SelectYesterdayStep(Step):
+class SelectReportDateStep(Step):
     def __init__(self) -> None:
         super().__init__(
-            StepSpec(step_id="S003", name="选择昨日统计日期", timeout_seconds=30.0)
+            StepSpec(step_id="S003", name="选择目标统计日期", timeout_seconds=30.0)
         )
 
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
@@ -325,7 +325,7 @@ class DownloadMatchingReportStep(Step):
             raise ReportNotReadyError("target report has not reached 已生成")
         reference = context.browser.download(
             _element(context, MATCHING_DOWNLOAD_BUTTON),
-            filename=local_download_filename(target),
+            filename=context.inputs.get("export_filename", local_download_filename(target)),
         )
         return {
             "target_date": target,
@@ -386,7 +386,7 @@ def build_program() -> BaseProgram:
         [
             EnsureSessionStep(),
             OpenProductDetailStep(),
-            SelectYesterdayStep(),
+            SelectReportDateStep(),
             RequestExportStep(),
             OpenDownloadsStep(),
             DownloadMatchingReportStep(),
@@ -486,19 +486,26 @@ def verify_element_stages(
     }
 
 
-def load_runtime_options(account: str) -> RuntimeOptions:
+def load_runtime_options(request: RunRequest) -> RuntimeOptions:
+    account = request.account_id
     if not re.fullmatch("[A-Z][A-Z0-9_]{0,63}", account):
         raise LocalConfigurationError("account must be a stable uppercase alias")
+    if set(request.inputs) - {"target_date", "export_filename"}:
+        raise LocalConfigurationError("supported inputs: target_date, export_filename")
+    if set(request.credentials) - {"username", "password", "expected_identity"}:
+        raise LocalConfigurationError("supported credentials: username, password, expected_identity")
+    target = request.inputs.get("target_date", target_date_for_run())
+    if not isinstance(target, str) or not _is_iso_date(target):
+        raise LocalConfigurationError("target_date must be YYYY-MM-DD")
+    filename = request.inputs.get("export_filename", local_download_filename(target))
+    if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", filename):
+        raise LocalConfigurationError("export_filename must be an ASCII basename")
     store = _load_store(account)
-    profile_dir = _safe_app_path(str(store.get("profile_directory", "")))
-    expected_identity = str(store.get("expected_identity", "")).strip()
+    profile_dir = _safe_app_path(str(store.get("profile_directory", f"profiles/{account}")))
+    expected_identity = request.credentials.get("expected_identity", str(store.get("expected_identity", ""))).strip()
     if not expected_identity or expected_identity.startswith("<"):
         raise LocalConfigurationError("expected_identity must be configured locally")
-    if store.get("read_only_export_account") is not True:
-        raise LocalConfigurationError(
-            "read_only_export_account must be explicitly confirmed true"
-        )
-    (login_username, login_password) = _load_login_credentials()
+    (login_username, login_password) = _load_login_credentials(request.credentials)
     debug_port = store.get("debug_port", 0)
     if isinstance(debug_port, bool) or not isinstance(debug_port, int):
         raise LocalConfigurationError("debug_port must be an integer")
@@ -514,24 +521,25 @@ def load_runtime_options(account: str) -> RuntimeOptions:
         account_id=account,
         profile_dir=profile_dir,
         download_dir=resolve_download_directory(
-            APP_DIR, str(store.get("download_directory", "../../runs/downloads"))
+            APP_DIR, request.download_dir or store.get("download_directory")
         ),
         debug_port=debug_port,
         browser_path=browser_path,
-        inputs={"target_date": target_date_for_run()},
+        inputs={"target_date": target, "export_filename": filename},
         metadata={
             "expected_identity": SecretValue(
                 expected_identity, label=f"{account}.expected_identity"
             ),
             "login_username": SecretValue(login_username, label=f"{account}.username"),
             "login_password": SecretValue(login_password, label=f"{account}.password"),
-            "read_only_export_account": True,
         },
     )
 
 
 def _load_store(account: str) -> Mapping[str, Any]:
     path = APP_DIR / "config" / "stores.local.toml"
+    if not path.exists():
+        return {}
     try:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
@@ -541,18 +549,18 @@ def _load_store(account: str) -> Mapping[str, Any]:
     stores = document.get("stores")
     if not isinstance(stores, Mapping):
         raise LocalConfigurationError("local configuration must define stores")
-    store = stores.get(account)
+    store = stores.get(account, {})
     if not isinstance(store, Mapping):
         raise LocalConfigurationError(f"account alias is not configured: {account}")
-    if store.get("platform") != "jingmai":
+    if store.get("platform", "jingmai") != "jingmai":
         raise LocalConfigurationError("store platform must be jingmai")
     return store
 
 
-def _load_login_credentials() -> tuple[str, str]:
+def _load_login_credentials(overrides: Mapping[str, str]) -> tuple[str, str]:
     path = APP_DIR / ".env"
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     except (OSError, UnicodeError) as error:
         raise LocalConfigurationError("application .env is unavailable") from error
     values: dict[str, str] = {}
@@ -565,11 +573,11 @@ def _load_login_credentials() -> tuple[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and (value[0] in {"'", '"'}):
             value = value[1:-1]
         values[key.strip()] = value
-    username = values.get("username", "")
-    password = values.get("password", "")
+    username = overrides.get("username", values.get("username", ""))
+    password = overrides.get("password", values.get("password", ""))
     if not username or not password:
         raise LocalConfigurationError(
-            "application .env must define non-empty username and password"
+            "provide non-empty username and password via credentials or .env"
         )
     return (username, password)
 

@@ -299,6 +299,7 @@ class DrissionBrowserActions:
         download_dir.mkdir(parents=True, exist_ok=True)
         started = monotonic()
         try:
+            self.tab.set.when_download_file_exists("rename")
             mission = target.click.to_download(
                 str(download_dir),
                 rename=filename,

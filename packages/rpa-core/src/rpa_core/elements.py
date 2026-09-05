@@ -18,7 +18,7 @@ falsifiable in a useful way; it just moves the ambiguity into the report.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 import tomllib
@@ -184,6 +184,26 @@ def element_specs(entries: Mapping[str, ElementEntry]) -> dict[str, ElementSpec]
     return {key: entry.spec for key, entry in entries.items()}
 
 
+def override_element_locators(
+    elements: Mapping[str, ElementSpec], overrides: Mapping[str, Any]
+) -> dict[str, ElementSpec]:
+    """Copy locators for one attempt; keep element identity and assertions intact."""
+    fields = {"locator": "locator", "frame": "frame_locator", **dict(_SUB_LOCATORS)}
+    result = dict(elements)
+    for element_id, changes in overrides.items():
+        if element_id not in elements:
+            raise ElementCatalogError(f"unknown override element: {element_id}")
+        if not isinstance(changes, Mapping) or not changes:
+            raise ElementCatalogError("each locator override must be a non-empty object")
+        if set(changes) - fields.keys():
+            raise ElementCatalogError("overrides may change locator fields only")
+        result[element_id] = replace(
+            elements[element_id],
+            **{fields[key]: _locator(value) for key, value in changes.items()},
+        )
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class ElementCheck:
     """The outcome of asserting one element's ``expect_count`` on a live page."""
@@ -283,4 +303,5 @@ __all__ = [
     "check_element_expectations",
     "element_specs",
     "load_element_catalog",
+    "override_element_locators",
 ]

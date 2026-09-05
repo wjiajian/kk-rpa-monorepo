@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from DrissionPage.common import Keys
@@ -239,6 +240,8 @@ class FakeTab:
             for locator, responses in (element_lists or {}).items()
         }
         self.wait = FakeTabWait()
+        self.download_collision_modes = []
+        self.set = SimpleNamespace(when_download_file_exists=self.download_collision_modes.append)
         self.opened: list[str] = []
         self.lookups: list[tuple[str, float]] = []
         self.frame_lookups: list[tuple[str, float]] = []
@@ -839,6 +842,7 @@ def test_adapter_download_uses_the_configured_directory(
     expected = configured or run_dir / "downloads"
     browser = DrissionBrowserActions(tab, run_dir, download_dir=configured)
     result = browser.download(FRAMED_DOWNLOAD, filename="inventory.fixture.csv")
+    assert tab.download_collision_modes == ["rename"]
     assert result.path == expected / "inventory.fixture.csv"
     assert result.status == "completed" and result.size_bytes > 0
     assert result.sha256.startswith("sha256:")

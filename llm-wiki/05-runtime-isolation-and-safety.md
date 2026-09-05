@@ -4,7 +4,7 @@
 
 每个账号使用持久化 Profile。BrowserManager 保留已有的 Profile 排他锁与调试端口租约，管理浏览器启动和退出。共享 CLI 在失败后保留浏览器并释放本次管理资源，后续命令通过接管记录连接同一浏览器；成功后关闭，Profile 数据保留。
 
-日志、结果和截图按应用的 `runs/<run_id>` 保存。下载目录单独配置，两个应用默认共用仓库 `runs/downloads`；新 run 和 verify-elements 前清空，resume 保留已有文件。按当前需求，不添加共享下载目录的并发协调。
+日志、结果和截图按应用的 `runs/<run_id>` 保存。下载目录单独配置，默认 Windows 系统下载文件夹，非 Windows 开发环境为 ~/Downloads；所有命令保留已有文件，同名下载改名。按当前需求，不添加共享下载目录的并发协调。
 
 将飞书、数据库或 Excel 服务交给 `ApplicationDefinition.build_services(context)` 注入，步骤经 `ctx.feishu`、`ctx.db`、`ctx.excel` 调用。缺失服务会明确报错。实际适配跟随具体业务需求实现，不使用假后端承接正式运行。
 

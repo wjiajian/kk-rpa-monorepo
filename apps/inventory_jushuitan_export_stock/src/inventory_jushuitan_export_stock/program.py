@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 import unicodedata
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from rpa_core.browser import ElementSpec, FakeBrowserActions, FakeDownload, SecretValue
-from rpa_core.cli import ApplicationDefinition, RuntimeOptions
+from rpa_core.cli import ApplicationDefinition, RunRequest, RuntimeOptions
 from rpa_core.contracts import RunMode
 from rpa_core.downloads import resolve_download_directory
 from rpa_core.elements import ElementEntry, check_element_expectations, element_specs
@@ -186,12 +188,33 @@ def bind_program_inputs(
     )
 
 
-def load_runtime_options(account: str) -> RuntimeOptions:
-    store = load_store_config(APP_DIR / "config" / "stores.local.toml", account)
+def load_runtime_options(request: RunRequest) -> RuntimeOptions:
+    if set(request.inputs) - {"brand_value", "export_filename"}:
+        raise ConfigurationError("supported inputs: brand_value, export_filename")
+    if set(request.credentials) - {"username", "password", "expected_identity"}:
+        raise ConfigurationError("supported credentials: username, password, expected_identity")
+    brand = request.inputs.get("brand_value")
+    if "brand_value" in request.inputs and (not isinstance(brand, str) or not brand.strip()):
+        raise ConfigurationError("brand_value must be a non-empty string")
+    filename = request.inputs.get("export_filename", "inventory-export.xlsx")
+    if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", filename):
+        raise ConfigurationError("export_filename must be an ASCII basename")
+    store = load_store_config(
+        APP_DIR / "config" / "stores.local.toml", request.account_id,
+        {"brand_value": brand} if brand is not None else {},
+    )
     if store.uses_placeholder_values:
         raise ConfigurationError("local store placeholders must be replaced")
     environment = dict(os.environ)
     load_local_env(APP_DIR / ".env", environment)
+    credential_fields = {
+        "username": store.username_env, "password": store.password_env,
+        "expected_identity": store.identity_env or f"RPA_{request.account_id}_IDENTITY",
+    }
+    for name, value in request.credentials.items():
+        environment[credential_fields[name]] = value
+    if "expected_identity" in request.credentials:
+        store = replace(store, identity_env=credential_fields["expected_identity"])
     credentials = load_login_credentials(store, environment)
     profile_dir = (APP_DIR / store.profile_directory).resolve(strict=False)
     try:
@@ -203,11 +226,11 @@ def load_runtime_options(account: str) -> RuntimeOptions:
     return RuntimeOptions(
         account_id=store.account_id,
         profile_dir=profile_dir,
-        download_dir=resolve_download_directory(APP_DIR, store.download_directory),
+        download_dir=resolve_download_directory(APP_DIR, request.download_dir or store.download_directory),
         debug_port=store.debug_port,
         inputs={
             "brand_value": store.brand_value,
-            "export_filename": "inventory-export.xlsx",
+            "export_filename": filename,
         },
         metadata={
             "store_config": store,

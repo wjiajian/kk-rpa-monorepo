@@ -10,6 +10,7 @@ from rpa_core.elements import (
     check_element_expectations,
     element_specs,
     load_element_catalog,
+    override_element_locators,
 )
 
 
@@ -240,3 +241,22 @@ expect_count = 1
 """
     with pytest.raises(ElementCatalogError, match="check_at is required"):
         load_element_catalog(_write(tmp_path, text))
+
+
+@pytest.mark.parametrize("changes", [{"expect_count": 0}, {"check_at": "elsewhere"}, {"locator": ""}, {"locator": 3}])
+def test_temporary_overrides_cannot_replace_assertions_or_invalid_locators(tmp_path, changes):
+    elements = element_specs(_entries(tmp_path))
+    with pytest.raises(ElementCatalogError):
+        override_element_locators(elements, {"demo.page.export": changes})
+
+
+def test_temporary_frame_and_locator_overrides_preserve_catalog_metadata(tmp_path):
+    entries = _entries(tmp_path)
+    original = element_specs(entries)
+    patched = override_element_locators(original, {"demo.page.rows": {"frame": None, "locator": "#new-rows"}})
+    assert patched["demo.page.rows"].frame_locator is None
+    assert original["demo.page.rows"].frame_locator is not None
+    assert str(entries["demo.page.rows"].expect) == ">0"
+    assert entries["demo.page.rows"].check_at == "start"
+    with pytest.raises(ElementCatalogError, match="unknown"):
+        override_element_locators(original, {"unknown": {"locator": "#new"}})

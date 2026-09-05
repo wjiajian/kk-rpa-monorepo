@@ -185,3 +185,36 @@ def test_agent_resumes_download_with_original_date_after_export_dialog_is_gone(
         for action in resumed.browser.actions
     )
     assert Path(result.outputs["S006"]["download_path"]).parent == failed.download_dir
+
+
+def test_main_parameters_override_date_filename_credentials_and_downloads_without_local_files(tmp_path, monkeypatch):
+    from report_jingmai_export_product_detail import program
+    from rpa_core.cli import RunRequest
+
+    source_dir = program.APP_DIR
+    monkeypatch.setattr(program, "APP_DIR", tmp_path / "application")
+    request = RunRequest(
+        inputs={"target_date": "2026-08-01", "export_filename": "requested.xlsx"},
+        credentials={"username": "test-user", "password": "test-secret", "expected_identity": "Test Shop"},
+        download_dir=str(tmp_path / "downloads"),
+    )
+    options = program.load_runtime_options(request)
+    assert options.inputs == request.inputs and str(options.download_dir) == request.download_dir
+    assert options.metadata["login_username"].reveal() == "test-user"
+    assert options.metadata["expected_identity"].reveal() == "Test Shop"
+    assert not program.APP_DIR.exists()
+    monkeypatch.setattr(program, "APP_DIR", source_dir)
+    ctx = context(tmp_path / "fixture")
+    ctx.inputs["export_filename"] = options.inputs["export_filename"]
+    result = build_program().step("S006").execute(ctx)
+    assert Path(result["download_path"]).name == "requested.xlsx"
+
+
+@pytest.mark.parametrize("inputs", [{"period": "week"}, {"target_date": "2026-02-30"}, {"export_filename": "../escape.xlsx"}])
+def test_unsupported_report_parameters_are_rejected_before_execution(tmp_path, monkeypatch, inputs):
+    from report_jingmai_export_product_detail import program
+    from rpa_core.cli import RunRequest
+
+    monkeypatch.setattr(program, "APP_DIR", tmp_path)
+    with pytest.raises(program.LocalConfigurationError):
+        program.load_runtime_options(RunRequest(inputs=inputs))

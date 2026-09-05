@@ -439,6 +439,11 @@ class FakeBrowserActions:
         target = target_dir / target_name
         if target.exists() and (target.is_symlink() or not target.is_file()):
             raise DownloadError("download target is not one regular file")
+        serial = 1
+        while target.exists():
+            name = Path(target_name)
+            target = target_dir / f"{name.stem}_{serial}{name.suffix}"
+            serial += 1
         target.write_bytes(fixture.content)
         reference = DownloadRef.from_path(target)
         self.actions.append(BrowserActionRecord("download", element.id, target_name))
