@@ -27,11 +27,13 @@ uv run rpa-app resume <run_id> --from-step S005
 
 示例适用于页面已准备好、仅需继续库存导出。续跑沿用原品牌和文件名，也可以选择更早的步骤重建页面。
 
+[S003 接管示例](examples/recover-s003.md)使用 `rpa_core.cli.open_recovery_session` 读取原输入与成功输出、连接保留的浏览器，并在临时处理引导或定位器后提交品牌回读。每步输入输出和恢复要求见[需求基线](requirement.md#步骤输入输出与接管)。
+
 `download_directory` 可指定应用目录之外的相对或绝对路径；省略时默认 Windows 系统下载文件夹，非 Windows 开发环境为 ~/Downloads。run、verify-elements 和 resume 均保留已有文件，下载重名时改名并返回实际路径。日志、结果和截图仍在应用 `runs/<run_id>/`。
 
 `verify-elements` 按页面阶段检查匹配数，已有登录态时跳过登录页，不触发库存下载。`--preview` 是运行模式参数，本应用只导出文件，仍会操作页面并下载。
 
-2026-09-05 已在 macOS 完成当前版本真实导出，以及 agent 提交 S003 输出、临时替换校验定位器后续跑的验收。Windows 实机验证已授权，等待可连接的 Windows 环境。运行记录见 [需求基线](requirement.md)。
+2026-09-05 新接管入口通过 23 项应用离线测试及 macOS 真实验收：临时关闭引导、提交 S003 原品牌输出、异常退出后再连接并完成 S004/S005 下载，源记录与旧文件保留。Windows 实机验收已授权，等待可连接环境。运行记录见[需求基线](requirement.md)。
 
 ## 每次调用的流程参数
 

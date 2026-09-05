@@ -12,6 +12,21 @@ ApplicationDefinition.load_runtime_options 接收 RunRequest：account_id、inpu
 
 resume 的 --step-result 对应 Runner.run(step_result=...)：接收原失败步骤的输出，只运行该步 verify，成功后执行后续步骤。--locator-overrides 对应 locator_overrides，只为本次续跑覆盖定位器字段，不改业务成功条件、不修改 elements.toml，也不自动继承到下次续跑。
 
+`rpa_core.cli.open_recovery_session(application, run_id, *, credentials=None)` 提供接管上下文：
+
+```python
+from rpa_core.cli import open_recovery_session
+
+with open_recovery_session(APPLICATION, run_id, credentials=credentials) as recovery:
+    ctx = recovery.context
+    # recovery.source_record 是源失败记录；browser_adopted 表示是否接回保留的浏览器。
+    # 检查账号和页面，使用 ctx.browser 临时处理；输入与输出契约见应用 requirement.md。
+```
+
+打开会话不执行 Step。ctx 保留源账号、模式、业务 inputs、下载目录和已完成输出，服务与凭据仍由应用加载。缺少原参数或成功输出的记录会被拒绝；不补猜旧参数。接管过程使用源 runs 目录，事件另存 recovery-events.jsonl，错误沿用脱敏诊断结构，源 result.json 不变。
+
+正常退出或处理异常都会通过 BrowserManager.detach 释放 Profile 锁和端口租约并保留浏览器；退出后再运行 resume。browser_adopted 不保证页面或登录态仍有效，Agent 必须检查。示例见[聚水潭 S003](../../apps/inventory_jushuitan_export_stock/examples/recover-s003.md)与[京麦 S006](../../apps/report_jingmai_export_product_detail/examples/recover-s006.md)。
+
 ApplicationDefinition.build_test_context 同时构造正常与失败场景。
 先验证正常场景，再验证明确失败场景，每步至少有一个由 verify 拒绝的结果。
 

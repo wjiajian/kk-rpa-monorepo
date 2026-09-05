@@ -34,11 +34,13 @@ uv run rpa-app resume <run_id> --from-step S006
 
 示例适用于已进入下载列表、仅需继续下载。resume 沿用原目标日期，跨天也不改变；旧导出弹窗关闭不影响从 S006 继续。页面丢失时 agent 可选择更早的步骤。
 
+[S006 接管示例](examples/recover-s006.md)使用 `rpa_core.cli.open_recovery_session` 获得原日期、成功输出和浏览器上下文，准备下载页后释放占用，再使用现有 resume。每步输入输出和恢复要求见[需求基线](requirement.md#步骤输入输出与接管)。
+
 `download_directory` 可指定应用目录之外的相对或绝对路径；省略时默认 Windows 系统下载文件夹，非 Windows 开发环境为 ~/Downloads。run、verify-elements 和 resume 均保留已有文件，下载重名时改名并返回实际路径。日志、结果和截图仍在应用 `runs/<run_id>/`。
 
 `verify-elements` 会走到导出弹窗和下载列表，创建一次报表任务并下载；已有登录态时跳过登录页。`--preview` 不取消本应用的报表导出操作。
 
-2026-09-05 已在 macOS 完成当前版本 S001–S006 真实导出，核对目标日期并下载非空报表。Windows 实机验证已授权，等待可连接的 Windows 环境。运行记录见 [需求基线](requirement.md)。
+2026-09-05 新接管入口通过 21 项应用离线测试及 macOS 真实验收：在 S006 下载前建立可控失败记录，接管并准备下载页后只执行 S006，沿用原日期，保留前序输出和旧文件。Windows 实机验收已授权，等待可连接环境。运行记录见[需求基线](requirement.md)。
 
 ## 每次调用的流程参数
 

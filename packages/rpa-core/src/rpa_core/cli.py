@@ -7,7 +7,9 @@ import json
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +19,9 @@ from uuid import uuid4
 
 import tomllib
 
-from .browser_manager import BrowserLaunchSpec, BrowserLifecyclePolicy, BrowserManager
+from .browser_manager import (
+    BrowserLaunchSpec, BrowserLifecyclePolicy, BrowserManager, BrowserSession,
+)
 from .contracts import RunMode
 from .diagnostics import exception_diagnostics
 from .downloads import prepare_download_directory
@@ -77,6 +81,75 @@ class ApplicationDefinition:
     build_services: Callable[[ExecutionContext], Mapping[str, Any]] = lambda context: {}
 
 
+@dataclass(frozen=True, slots=True)
+class RecoverySession:
+    """An inspection context, not a completed or resumed run."""
+
+    context: ExecutionContext = field(repr=False)
+    source_record: Mapping[str, Any] = field(repr=False)
+    browser_adopted: bool
+
+
+@contextmanager
+def open_recovery_session(
+    application: ApplicationDefinition,
+    run_id: str,
+    *,
+    credentials: Mapping[str, str] | None = None,
+) -> Iterator[RecoverySession]:
+    """Connect a failed run for agent inspection without executing any Step.
+
+    Inputs, outputs, account, mode and downloads come from the source record.
+    Credentials and services use the application's usual configuration loader.
+    Evidence stays in the source run directory; result.json is never written.
+    Exit releases Profile ownership and retains the browser for a later resume.
+    An adopted browser still needs its account and current page checked.
+    """
+    previous = _read_failed_run(application, run_id)
+    run_dir = application.app_dir / "runs" / run_id
+    logger = JsonlEventLogger(run_dir / "recovery-events.jsonl")
+    manager = None
+    session = None
+
+    def emit(event: str, **details: Any) -> None:
+        logger.emit(event, app_id=previous["app_id"], run_id=run_id, details=details)
+
+    try:
+        try:
+            validate_application(application)
+            specs = element_specs(load_element_catalog(application.app_dir / "elements.toml"))
+            _check_resolved_elements(specs)
+            request = _recovery_request(previous, credentials or {})
+            options = application.load_runtime_options(request)
+            context = _build_execution_context(
+                application.build_program(), request, options,
+                run_id=run_id, run_dir=run_dir, mode=RunMode(previous["mode"]),
+                specs=specs, previous=previous,
+                completed_steps=previous["completed_steps"],
+            )
+            prepare_download_directory(
+                context.download_dir, app_dir=application.app_dir, run_dir=run_dir
+            )
+            context.services.update(application.build_services(context))
+            manager = BrowserManager(application.app_dir / "runtime" / "browser-manager")
+            session = _start_browser(manager, application, options, context)
+            context.services["browser"] = session.actions
+            emit("recovery.opened", browser_adopted=session.adopted)
+            yield RecoverySession(context, deepcopy(previous), session.adopted)
+        finally:
+            if manager is not None:
+                try:
+                    if session is not None and session.active:
+                        manager.detach(session)
+                finally:
+                    manager.shutdown()
+    except BaseException as error:
+        emit("recovery.failed", diagnostics=exception_diagnostics(error))
+        raise
+    else:
+        emit("recovery.closed")
+
+
 def validate_application(application: ApplicationDefinition) -> None:
     manifest = tomllib.loads(
         (application.app_dir / "app.toml").read_text(encoding="utf-8")
@@ -133,13 +206,11 @@ def main(application: ApplicationDefinition, argv: Sequence[str] | None = None) 
             return _test(application)
         credentials = _json_object(args.credentials)
         if args.command == "resume":
-            previous = _read_failed_run(application, args.run_id, args.from_step)
+            previous = _read_failed_run(application, args.run_id)
+            validate_resume(application.build_program(), previous, args.from_step)
             return _execute(
                 application,
-                request=RunRequest(
-                    previous["account_id"], inputs=previous["inputs"],
-                    credentials=credentials, download_dir=previous["download_dir"],
-                ),
+                request=_recovery_request(previous, credentials),
                 mode=RunMode(previous["mode"]),
                 previous=previous,
                 from_step=args.from_step,
@@ -237,16 +308,105 @@ def _doctor(application: ApplicationDefinition, request: RunRequest) -> int:
 
 
 def _read_failed_run(
-    application: ApplicationDefinition, run_id: str, from_step: str
+    application: ApplicationDefinition, run_id: str
 ) -> Mapping[str, Any]:
     if Path(run_id).name != run_id or run_id in {"", ".", ".."}:
         raise RuntimeContractError("run_id must be a run directory name")
     path = application.app_dir / "runs" / run_id / "result.json"
     previous = json.loads(path.read_text(encoding="utf-8"))
-    validate_resume(application.build_program(), previous, from_step)
+    program = application.build_program()
+    if (
+        not isinstance(previous, Mapping)
+        or previous.get("app_id") != program.spec.app_id
+        or previous.get("status") != "failed"
+    ):
+        raise RuntimeContractError("recovery needs a failed run of this application")
     if previous.get("run_id") != run_id:
         raise RuntimeContractError("run ID differs from its directory")
+    if not isinstance(previous.get("inputs"), Mapping):
+        raise RuntimeContractError("this run has no saved inputs; supply parameters and start a new run")
+    if any(
+        not isinstance(previous.get(key), str) or not previous[key].strip()
+        for key in ("account_id", "download_dir", "mode")
+    ) or previous["mode"] not in {mode.value for mode in RunMode}:
+        raise RuntimeContractError("this run lacks account, mode or downloads; supply parameters and start a new run")
+    completed = previous.get("completed_steps")
+    outputs = previous.get("outputs")
+    ids = [step.spec.step_id for step in program.steps]
+    if (
+        not isinstance(completed, list)
+        or completed != ids[:len(completed)]
+        or not isinstance(outputs, Mapping)
+        or any(not isinstance(outputs.get(key), Mapping) for key in completed)
+    ):
+        raise RuntimeContractError("this run is missing completed step results; start a new run")
     return previous
+
+
+def _recovery_request(
+    previous: Mapping[str, Any], credentials: Mapping[str, str]
+) -> RunRequest:
+    return RunRequest(
+        previous["account_id"], inputs=deepcopy(previous["inputs"]),
+        credentials=credentials, download_dir=previous["download_dir"],
+    )
+
+
+def _check_resolved_elements(specs: Mapping[str, Any]) -> None:
+    blockers = [key for key, spec in specs.items() if not spec.is_resolved]
+    if blockers:
+        raise RuntimeContractError("unresolved element locators: " + ", ".join(blockers))
+
+
+def _build_execution_context(
+    program: BaseProgram,
+    request: RunRequest,
+    options: RuntimeOptions,
+    *,
+    run_id: str,
+    run_dir: Path,
+    mode: RunMode,
+    specs: Mapping[str, Any],
+    previous: Mapping[str, Any] | None = None,
+    completed_steps: Sequence[str] = (),
+) -> ExecutionContext:
+    if options.account_id != request.account_id:
+        raise RuntimeContractError("runtime options changed the requested account")
+    if previous is not None and set(options.inputs) - set(previous["inputs"]):
+        raise RuntimeContractError("saved inputs are incomplete; supply parameters and start a new run")
+    return ExecutionContext(
+        app_id=program.spec.app_id,
+        run_id=run_id,
+        account_id=options.account_id,
+        run_dir=run_dir,
+        download_dir=Path(previous["download_dir"]) if previous is not None else options.download_dir,
+        mode=mode,
+        services={"elements": specs},
+        metadata=dict(options.metadata),
+        inputs=deepcopy(dict(previous["inputs"] if previous is not None else options.inputs)),
+        outputs={key: deepcopy(previous["outputs"][key]) for key in completed_steps},
+    )
+
+
+def _start_browser(
+    manager: BrowserManager,
+    application: ApplicationDefinition,
+    options: RuntimeOptions,
+    context: ExecutionContext,
+) -> BrowserSession:
+    return manager.start(
+        BrowserLaunchSpec(
+            account_id=options.account_id,
+            profile_id=f"{application.app_dir.name}.{options.account_id}",
+            profile_dir=options.profile_dir,
+            requested_port=options.debug_port,
+            browser_path=options.browser_path,
+            lifecycle=BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE,
+        ),
+        run_id=context.run_id, run_dir=context.run_dir,
+        action_timeout=15.0, download_timeout=300.0,
+        download_dir=context.download_dir,
+    )
 
 
 def _execute(
@@ -280,47 +440,22 @@ def _execute(
             entries = load_element_catalog(application.app_dir / "elements.toml")
             specs = element_specs(entries)
             effective = override_element_locators(specs, locator_overrides or {})
-            blockers = [key for key, spec in effective.items() if not spec.is_resolved]
-            if blockers:
-                raise RuntimeContractError("unresolved element locators: " + ", ".join(blockers))
+            _check_resolved_elements(effective)
             if step_result is not None and (
                 previous is None or previous.get("failed_step") != from_step
             ):
                 raise RuntimeContractError("a supplied result must belong to the failed step")
             options = application.load_runtime_options(request)
-            if options.account_id != request.account_id:
-                raise RuntimeContractError("runtime options changed the requested account")
-            context = ExecutionContext(
-                app_id=program.spec.app_id,
-                run_id=run_id,
-                account_id=options.account_id,
-                run_dir=run_dir,
-                download_dir=Path(previous["download_dir"]) if previous else options.download_dir,
-                mode=mode,
-                services={"elements": specs},
-                metadata=dict(options.metadata),
-                inputs=dict(previous["inputs"] if previous else options.inputs),
+            context = _build_execution_context(
+                program, request, options, run_id=run_id, run_dir=run_dir,
+                mode=mode, specs=specs, previous=previous, completed_steps=prefix,
             )
             prepare_download_directory(
                 context.download_dir, app_dir=application.app_dir, run_dir=run_dir
             )
             context.services.update(application.build_services(context))
             manager = BrowserManager(application.app_dir / "runtime" / "browser-manager")
-            session = manager.start(
-                BrowserLaunchSpec(
-                    account_id=options.account_id,
-                    profile_id=f"{application.app_dir.name}.{options.account_id}",
-                    profile_dir=options.profile_dir,
-                    requested_port=options.debug_port,
-                    browser_path=options.browser_path,
-                    lifecycle=BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE,
-                ),
-                run_id=run_id,
-                run_dir=run_dir,
-                action_timeout=15.0,
-                download_timeout=300.0,
-                download_dir=context.download_dir,
-            )
+            session = _start_browser(manager, application, options, context)
             context.services["browser"] = session.actions
             phase = "verify-elements" if verify_elements else "steps"
             if verify_elements:

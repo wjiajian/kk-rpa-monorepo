@@ -4,6 +4,7 @@
 
 - [仓库约定](AGENTS.md)
 - [V3 框架设计](docs/rpa-framework-design.md)
+- [Agent 开发与接管实施文档](docs/rpa-agent-implementation.md)
 - [领域术语](CONTEXT.md)
 - [LLM Wiki](llm-wiki/README.md)
 - [生成应用技能](.agents/skills/rpa-app-generator/SKILL.md)
@@ -11,9 +12,11 @@
 
 当前两个应用一起迁移到 rpa-core 0.8.0，不保留旧框架兼容层。应用通过共享 CLI 执行有序 Step，生产无人值守，失败后支持 agent 指定恢复步骤续跑。
 
+Agent 生成普通 Python 应用。元素库保持应用内轻量维护；BrowserActions 只封装有实际稳定性职责的操作，业务函数按重复需求抽取。流程控制和数据处理直接使用 Python，不建立专用指令编排体系。步骤契约在应用 requirement.md；rpa_core.cli.open_recovery_session 提供原任务接管上下文，不执行步骤，退出释放占用后使用现有 resume。实施文档区分已完成的离线验证与待完成的真实验收。
+
 每一步共用正常场景与反例。正常场景必须成功；每步至少有一个执行成功后由 verify 拒绝的错误结果。动作失败需声明预期异常，意外异常不能冒充验证有效。
 
-永久定位器保存在应用 elements.toml，续跑可提供仅当次生效的定位器覆盖，按页面阶段检查 expect_count。下载目录可指定，默认使用系统下载文件夹，所有命令保留已有文件，同名下载改名；日志与截图按每次运行独立保留。
+永久定位器保存在应用 elements.toml，续跑可提供仅当次生效的定位器覆盖，按页面阶段检查 expect_count。Agent 临时处理引导或弹窗时，可根据实际 DOM 定义辅助目标并留证；该目标不必永久登记，也不通过 locator-overrides 新增元素 ID。下载目录可指定，默认使用系统下载文件夹，所有命令保留已有文件，同名下载改名；日志与截图按每次运行独立保留。
 
 业务通过 ctx.browser / ctx.feishu / ctx.db / ctx.excel 访问外部系统。后续实际写入适配按具体需求实现，事务语义由业务提供。
 

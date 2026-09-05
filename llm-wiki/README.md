@@ -1,6 +1,6 @@
 # kk-rpa-monorepo LLM Wiki
 
-当前架构以 [V3 框架设计](../docs/rpa-framework-design.md) 为准。此 Wiki 记录项目使用方式；外部 API 事实按锁定版本的官方文档核对。
+当前架构以 [V3 框架设计](../docs/rpa-framework-design.md) 为准。后续任务、依赖和验收标准见 [Agent 开发与接管实施文档](../docs/rpa-agent-implementation.md)。此 Wiki 记录项目使用方式；外部 API 事实按锁定版本的官方文档核对，拟新增的接口需以代码实现状态为准。
 
 阅读入口：
 
@@ -14,7 +14,7 @@
 
 当前版本为 rpa-core 0.8.0，聚水潭 0.5.0，京麦 0.2.0。两个测试应用一起迁移，旧授权、快照、指令、需求哈希和检查点模块已删除。生产无人值守，run 从头执行，失败后可由 agent 指定步骤 resume；下载默认使用系统下载文件夹，所有命令保留已有文件。
 
-本次迁移通过离线测试，真实浏览器验证等待授权。
+当前基线已通过 209 项离线测试。2026-09-05 在 macOS 完成两个应用真实导出及新接管入口的续跑验收，事实见[聚水潭](../apps/inventory_jushuitan_export_stock/requirement.md)与[京麦](../apps/report_jingmai_export_product_detail/requirement.md)需求基线。Windows 实机验证已授权，等待可连接的环境。
 
 历史决策：
 

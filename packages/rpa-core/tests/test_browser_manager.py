@@ -569,3 +569,83 @@ def test_release_handoff_discards_a_record_whose_browser_is_gone(
     assert result["released"] is False
     assert result["reason"] == "retained_browser_already_gone"
     assert not handoff_file(tmp_path).exists()
+
+
+def test_recovery_releases_profile_and_port_for_readoption_and_resume(tmp_path, monkeypatch, capsys):
+    from rpa_core import cli
+    from rpa_core.cli import ApplicationDefinition, RuntimeOptions
+    from rpa_core.runtime import BaseProgram, ProgramSpec, StepSpec
+
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.toml").write_text('app_id = "demo"\nname = "Demo"\nentrypoint = "demo:main"\n')
+    (app_dir / "requirement.md").write_text("Recovery lifecycle fixture")
+    (app_dir / "elements.toml").write_text(
+        'schema_version = 2\n[elements."demo.page.marker"]\nname = "Marker"\n'
+        'page = "Demo"\nlocator = "css:#marker"\nexpect_count = 1\ncheck_at = "S001"\n'
+    )
+    executions = []
+    step = SimpleNamespace(
+        spec=StepSpec("S001", "Continue"),
+        execute=lambda ctx: executions.append(ctx.run_id) or {"ok": True},
+        verify=lambda ctx, result: result["ok"],
+    )
+    application = ApplicationDefinition(
+        app_dir=app_dir,
+        build_program=lambda: BaseProgram(ProgramSpec("demo", "Demo"), [step]),
+        load_runtime_options=lambda request: RuntimeOptions(
+            request.account_id, app_dir / "profiles" / request.account_id,
+            tmp_path / "downloads",
+        ),
+        build_test_context=lambda *args: None,
+        verify_element_stages=lambda *args: {},
+    )
+    source_dir = app_dir / "runs" / "run-source"
+    source_dir.mkdir(parents=True)
+    source = source_dir / "result.json"
+    source.write_text(json.dumps({
+        "app_id": "demo", "run_id": "run-source", "status": "failed",
+        "account_id": "STORE_001", "mode": "live", "inputs": {},
+        "download_dir": str(tmp_path / "downloads"),
+        "completed_steps": [], "outputs": {}, "failed_step": "S001",
+    }))
+    original = source.read_bytes()
+    browsers = []
+    managers = []
+
+    def manager_factory(root):
+        def chromium(options):
+            browser = FakeBrowser(options)
+            browsers.append(browser)
+            return browser
+
+        manager = BrowserManager(
+            root, port_range=(29660, 29660), options_factory=FakeOptions,
+            chromium_factory=chromium, port_available=lambda _: not browsers,
+            pid_is_alive=lambda _: True, devtools_responds=lambda _: True,
+        )
+        managers.append(manager)
+        return manager
+
+    monkeypatch.setattr(cli, "BrowserManager", manager_factory)
+    with cli.open_recovery_session(application, "run-source") as recovery:
+        assert recovery.browser_adopted is False
+        assert executions == []
+        with pytest.raises(BrowserProfileActiveError):
+            with cli.open_recovery_session(application, "run-source"):
+                pytest.fail("concurrent recovery acquired the same Profile")
+    assert browsers[0].quit_calls == 0
+    assert all(not manager.active_sessions for manager in managers)
+    assert not list((app_dir / "runtime" / "browser-manager" / "port-leases").glob("*.json"))
+    with pytest.raises(RuntimeError, match="handler failed"):
+        with cli.open_recovery_session(application, "run-source") as recovery:
+            assert recovery.browser_adopted is True
+            raise RuntimeError("handler failed")
+    assert all(browser.quit_calls == 0 for browser in browsers)
+    assert all(not manager.active_sessions for manager in managers)
+    assert cli.main(application, ["resume", "run-source", "--from-step", "S001"]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    assert executions == [resumed["run_id"]]
+    assert browsers[-1].quit_calls == 1
+    assert all(not manager.active_sessions for manager in managers)
+    assert source.read_bytes() == original

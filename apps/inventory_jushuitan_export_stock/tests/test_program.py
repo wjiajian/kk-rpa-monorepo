@@ -222,3 +222,150 @@ def test_agent_search_result_cannot_change_the_original_brand(tmp_path):
     report = json.loads((resumed.run_dir / "result.json").read_text())
     assert "S004" not in report["completed_steps"]
     assert not any(action.action == "download" for action in resumed.browser.actions)
+
+
+@pytest.mark.parametrize("supplied_outcome", ["correct", "wrong_brand", "verify_error"])
+def test_public_recovery_handles_guide_and_temporary_verifier_then_continues(
+    tmp_path, monkeypatch, capsys, supplied_outcome
+):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from inventory_jushuitan_export_stock import program
+    from rpa_core import cli
+    from rpa_core.browser import ElementActionError, ElementLookupError, ElementSpec, Locator
+    from rpa_core.elements import override_element_locators
+
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    for name in ("app.toml", "requirement.md", "elements.toml"):
+        (app_dir / name).write_bytes((APPLICATION.app_dir / name).read_bytes())
+    failed = context(app_dir, Counterexample("reset absent", FakeState(hidden=(RESET_BUTTON,))))
+    failed.inputs["brand_value"] = "BRAND_ORIGINAL"
+    failed.download_dir = tmp_path / "original-downloads"
+    failed.browser.download_dir = failed.download_dir
+    with pytest.raises(StepRunError) as caught:
+        Runner().run(build_program(), failed)
+    assert caught.value.step_id == "S003"
+    source = failed.run_dir / "result.json"
+    source_bytes = source.read_bytes()
+    previous = json.loads(source_bytes)
+    (app_dir / "config").mkdir()
+    (app_dir / "config" / "stores.local.toml").write_text(
+        'schema_version = 1\n[stores.STORE_001]\nbrand_value = "CHANGED_DEFAULT"\n'
+        'download_directory = "changed-downloads"\n'
+    )
+    monkeypatch.setattr(program, "APP_DIR", app_dir)
+    definition = replace(APPLICATION, app_dir=app_dir)
+    page = build_test_context(build_program().step("S003"), None, tmp_path / "page").browser
+    page._text_lists[BRAND_SELECTED] = ["BRAND_ORIGINAL"]
+    guide = ElementSpec("recovery.page.guide", "Fixture guide", "Fixture", locator=Locator("css:#fixture-guide"))
+    page._visible |= {guide.id}
+    state = {"guide_closed": False, "verify_error": False}
+    replacement = "css:#fixture-selected-brand"
+
+    class RecoveryPage:
+        def __getattr__(self, name):
+            return getattr(page, name)
+
+        def click(self, target):
+            page.click(target)
+            if target.id == guide.id:
+                state["guide_closed"] = True
+
+        def select(self, target, value):
+            if not state["guide_closed"]:
+                raise ElementActionError("fixture guide obstructs selection")
+            page.select(target, value)
+
+        def texts(self, target, **kwargs):
+            if target.id == BRAND_SELECTED:
+                if state["verify_error"]:
+                    raise RuntimeError("fixture verifier read failed")
+                if target.locator.value != replacement:
+                    raise ElementLookupError("fixture verifier locator is stale")
+            return page.texts(target, **kwargs)
+
+    sessions = []
+
+    class Manager:
+        def __init__(self, root):
+            pass
+
+        def start(self, spec, **kwargs):
+            page.run_dir = kwargs["run_dir"]
+            page.download_dir = kwargs["download_dir"]
+            session = SimpleNamespace(active=True, actions=RecoveryPage(), adopted=True)
+            sessions.append(session)
+            return session
+
+        def detach(self, session):
+            session.active = False
+
+        def finish(self, session, *, failed):
+            session.active = False
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(cli, "BrowserManager", Manager)
+    credentials = {"username": "fixture-user", "password": "fixture-secret"}
+    credentials_arg = json.dumps(credentials)
+    overrides = {BRAND_SELECTED: {"locator": replacement}}
+    with cli.open_recovery_session(definition, failed.run_id, credentials=credentials) as recovery:
+        ctx = recovery.context
+        assert ctx.inputs == previous["inputs"] and ctx.outputs == previous["outputs"]
+        assert ctx.metadata["store_config"].brand_value == "BRAND_ORIGINAL"
+        assert ctx.browser.actions == []
+        ctx.browser.screenshot(name="recovery-before.png")
+        ctx.browser.click(guide)
+        assert guide.id not in ctx.service("elements")
+        ctx.services["elements"] = override_element_locators(ctx.service("elements"), overrides)
+        elements = ctx.service("elements")
+        ctx.browser.click(elements[RESET_BUTTON])
+        ctx.browser.select(elements[BRAND_SELECTOR], ctx.inputs["brand_value"])
+        supplied = {"requested_brand": ctx.inputs["brand_value"],
+                    "selected_brands": list(ctx.browser.texts(elements[BRAND_SELECTED]))}
+        ctx.browser.screenshot(name="recovery-after.png")
+    assert all(not session.active for session in sessions)
+    assert not any(action.action == "download" for action in page.actions)
+    source_id = failed.run_id
+    if supplied_outcome != "correct":
+        bad_result = dict(supplied)
+        if supplied_outcome == "wrong_brand":
+            bad_result["requested_brand"] = "OTHER_BRAND"
+        else:
+            state["verify_error"] = True
+        assert cli.main(definition, ["resume", source_id, "--from-step", "S003",
+                        "--credentials", credentials_arg, "--step-result", json.dumps(bad_result),
+                        "--locator-overrides", json.dumps(overrides)]) == 2
+        source_id = json.loads(capsys.readouterr().out)["run_id"]
+        rejected = json.loads((app_dir / "runs" / source_id / "result.json").read_text())
+        assert rejected["outputs"] == previous["outputs"]
+        assert rejected["completed_steps"] == previous["completed_steps"]
+        assert rejected["inputs"] == previous["inputs"]
+        assert not any(action.action == "download" for action in page.actions)
+        state["verify_error"] = False
+        with cli.open_recovery_session(definition, source_id, credentials=credentials) as recovery:
+            assert recovery.context.inputs == previous["inputs"]
+            assert recovery.context.service("elements")[BRAND_SELECTED].locator.value != replacement
+        # A previous attempt's locator changes must be explicitly supplied again.
+        assert cli.main(definition, ["resume", source_id, "--from-step", "S003",
+                        "--credentials", credentials_arg, "--step-result", json.dumps(supplied)]) == 2
+        source_id = json.loads(capsys.readouterr().out)["run_id"]
+    assert cli.main(definition, ["resume", source_id, "--from-step", "S003",
+                    "--credentials", credentials_arg, "--step-result", json.dumps(supplied),
+                    "--locator-overrides", json.dumps(overrides)]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    report_dir = app_dir / "runs" / resumed["run_id"]
+    report = json.loads((report_dir / "result.json").read_text())
+    events = [json.loads(line) for line in (report_dir / "events.jsonl").read_text().splitlines()]
+    assert [(event["step_id"], event["details"]["source"]) for event in events
+            if event["event_type"] == "step.succeeded"] == [
+                ("S003", "agent"), ("S004", "program"), ("S005", "program"),
+            ]
+    assert report["inputs"] == previous["inputs"]
+    assert all(report["outputs"][key] == previous["outputs"][key] for key in previous["completed_steps"])
+    assert Path(report["outputs"]["S005"]["download_path"]).parent == failed.download_dir
+    assert source.read_bytes() == source_bytes
+    assert not (app_dir / "changed-downloads").exists()
+    assert (app_dir / "elements.toml").read_bytes() == (APPLICATION.app_dir / "elements.toml").read_bytes()

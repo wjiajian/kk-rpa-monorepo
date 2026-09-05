@@ -1,6 +1,6 @@
 # 全局工作约定
 
-以最小必要范围完成真实需求。设计见 [docs/rpa-framework-design.md](docs/rpa-framework-design.md)。
+以最小必要范围完成真实需求。设计见 [docs/rpa-framework-design.md](docs/rpa-framework-design.md)，后续实施见 [docs/rpa-agent-implementation.md](docs/rpa-agent-implementation.md)。
 
 ## 应用与代码
 
@@ -9,6 +9,9 @@
 - 需求基线是可读 Markdown。app.toml 声明 app_id、name、entrypoint。版本由包与 Git 管理，不建立需求哈希、快照锁、指令注册表或旧接口兼容层。
 - 仅 rpa_core/drission_browser.py 和 browser_manager.py 导入 DrissionPage。业务通过 ctx.browser / ctx.feishu / ctx.db / ctx.excel 访问外部系统。
 - 程序是有序步骤。登录和身份检查也是步骤；每步提供 execute、verify、counterexamples。
+- Agent 生成普通 Python 应用；条件、循环和数据处理直接使用 Python。BrowserActions 保持少量有实际稳定性职责的操作 API，不扩展成指令编排体系。
+- 正式流程的元素定义保持应用内集中维护。接管时观察到的临时辅助目标可在内存中定义并留证；成为正常流程依赖后再纳入应用元素库和测试。不预先登记整站元素或建设全局元素平台。
+- 每步在 requirement.md 说明输入来源、前置页面状态、输出字段和成功条件；接管输出与 execute 使用同一格式，不建立独立的步骤注册表或第二份规范。
 - 主入口以 RunRequest 接收账号别名、inputs、credentials 和 download_dir；业务输入由应用验证，显式参数覆盖本地默认。凭据不写入 inputs 或运行记录。
 - run 从头执行，失败记录并结束。resume <run_id> --from-step <step_id> 沿用原参数和已完成结果；agent 可用 --step-result 提交失败步输出，经原 verify 通过后继续下一步。不实现写入补偿或部分写入恢复。
 - 下载默认使用当前用户的 Windows 系统下载文件夹，支持已迁移的目录；非 Windows 开发环境使用 ~/Downloads。新 run、verify-elements 和 resume 均保留已有文件，同名下载自动改名并返回实际路径。目标不能与应用目录、运行证据目录重叠。不添加目录并发协调。

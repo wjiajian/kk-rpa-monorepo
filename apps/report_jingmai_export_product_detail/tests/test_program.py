@@ -218,3 +218,97 @@ def test_unsupported_report_parameters_are_rejected_before_execution(tmp_path, m
     monkeypatch.setattr(program, "APP_DIR", tmp_path)
     with pytest.raises(program.LocalConfigurationError):
         program.load_runtime_options(RunRequest(inputs=inputs))
+
+
+def test_public_recovery_prepares_downloads_with_original_date_and_preserves_files(
+    tmp_path, monkeypatch, capsys
+):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from report_jingmai_export_product_detail import program
+    from rpa_core import cli
+
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    for name in ("app.toml", "requirement.md", "elements.toml"):
+        (app_dir / name).write_bytes((APPLICATION.app_dir / name).read_bytes())
+    failed = context(app_dir, Counterexample("no download", FakeState(downloads_available=False)))
+    failed.download_dir = tmp_path / "original-downloads"
+    failed.browser.download_dir = failed.download_dir
+    with pytest.raises(StepRunError) as caught:
+        Runner().run(build_program(), failed)
+    assert caught.value.step_id == "S006"
+    source = failed.run_dir / "result.json"
+    original = source.read_bytes()
+    previous = json.loads(original)
+    (app_dir / "config").mkdir()
+    (app_dir / "config" / "stores.local.toml").write_text(
+        '[stores.STORE_001]\nexpected_identity = "ACCOUNT_ALIAS_001"\n'
+        'download_directory = "changed-downloads"\n'
+    )
+    (app_dir / ".env").write_text("username=LOGIN_ALIAS_001\npassword=LOGIN_SECRET_001\n")
+    monkeypatch.setattr(program, "APP_DIR", app_dir)
+    monkeypatch.setattr(program, "target_date_for_run", lambda: "2099-01-01")
+    definition = replace(APPLICATION, app_dir=app_dir)
+    page = build_test_context(build_program().step("S006"), Counterexample(
+        "dialog closed", FakeState(hidden=(program.DIALOG_REPORT_NAME,
+        program.EXPORT_READY_DIALOG, program.VIEW_EXPORTS_BUTTON)),
+    ), tmp_path / "page").browser
+    sessions = []
+
+    class Manager:
+        def __init__(self, root):
+            pass
+
+        def start(self, spec, **kwargs):
+            page.run_dir = kwargs["run_dir"]
+            page.download_dir = kwargs["download_dir"]
+            session = SimpleNamespace(active=True, actions=page, adopted=True)
+            sessions.append(session)
+            return session
+
+        def detach(self, session):
+            session.active = False
+
+        def finish(self, session, *, failed):
+            session.active = False
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(cli, "BrowserManager", Manager)
+    failed.download_dir.mkdir()
+    existing = failed.download_dir / previous["inputs"]["export_filename"]
+    existing.write_bytes(b"existing report")
+    old_stat = existing.stat()
+    with cli.open_recovery_session(definition, failed.run_id) as recovery:
+        ctx = recovery.context
+        assert ctx.inputs == previous["inputs"] and ctx.outputs == previous["outputs"]
+        assert ctx.download_dir == failed.download_dir
+        assert ctx.browser.actions == []
+        ctx.browser.open("https://example.invalid/fixture-downloads", wait="complete")
+        assert ctx.browser.count(ctx.service("elements")[program.DOWNLOADS_PAGE]) == 1
+        ctx.browser.screenshot(name="recovery-downloads.png")
+    assert all(not session.active for session in sessions)
+    assert not any(action.action == "download" for action in page.actions)
+    assert cli.main(definition, ["resume", failed.run_id, "--from-step", "S006"]) == 0
+    resumed = json.loads(capsys.readouterr().out)
+    run_dir = app_dir / "runs" / resumed["run_id"]
+    report = json.loads((run_dir / "result.json").read_text())
+    artifact = Path(report["outputs"]["S006"]["download_path"])
+    assert artifact.parent == failed.download_dir and artifact != existing
+    assert artifact.stat().st_size > 0
+    assert existing.read_bytes() == b"existing report"
+    assert existing.stat().st_mtime_ns == old_stat.st_mtime_ns
+    assert report["inputs"] == previous["inputs"] and report["mode"] == previous["mode"]
+    assert all(report["outputs"][key] == previous["outputs"][key] for key in previous["completed_steps"])
+    assert not any(action.element_id in (program.DOWNLOAD_REPORT_BUTTON, program.VIEW_EXPORTS_BUTTON,
+                                        program.PRODUCT_DETAIL_ENTRY, program.LOGIN_SUBMIT_BUTTON)
+                   for action in page.actions)
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    assert [(event["step_id"], event["details"]["source"]) for event in events
+            if event["event_type"] == "step.succeeded"] == [("S006", "program")]
+    assert "LOGIN_SECRET_001" not in (run_dir / "result.json").read_text()
+    assert "LOGIN_SECRET_001" not in (failed.run_dir / "recovery-events.jsonl").read_text()
+    assert not (app_dir / "changed-downloads").exists()
+    assert source.read_bytes() == original

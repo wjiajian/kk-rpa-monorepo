@@ -10,6 +10,7 @@ app.toml declares app_id, name and entrypoint. Read current interfaces from rpa_
 - BaseProgram receives an ordered sequence of Steps; login and account verification are explicit Steps.
 - StepSpec carries step_id, name and timeout_seconds.
 - Each Step implements execute(context), verify(context, result) and counterexamples().
+- Document each Step's business goal, input sources, required page or artifact state, output fields and success conditions in requirement.md. Agent-supplied results use the same output format as execute. Match the descriptions to actual verify behavior; do not add a separate Step registry or specification file.
 - ApplicationDefinition binds app_dir, build_program, load_runtime_options, build_test_context and verify_element_stages. build_services(context) optionally provides actual business services.
 - load_runtime_options(RunRequest) returns RuntimeOptions with account_id, profile_dir, download_dir, optional debug_port/browser_path, inputs and metadata. RunRequest supplies account_id, inputs, credentials and download_dir. Explicit invocation parameters override local defaults; complete parameters must work without local configuration. Reject unknown input keys and invalid values before browser startup, and document each application's inputs in requirement.md. Put serializable business parameters that must survive resume in inputs; keep credentials and runtime-only objects in metadata.
 - The shared CLI accepts --inputs and --credentials as JSON objects or @JSON-file arguments, plus --download-dir. The core transports business ranges such as day/week/month; the application defines which ranges its business flow actually supports.
@@ -17,6 +18,10 @@ app.toml declares app_id, name and entrypoint. Read current interfaces from rpa_
 - Runner stops on failure and records the inputs and completed outputs. A new run starts at the first Step; resume <run_id> --from-step <step_id> continues from the position selected by the agent. Do not implement framework-level write retries, compensation or partial-write recovery.
 
 External operations use context services. Missing Feishu, database or Excel services must fail clearly; do not substitute fake backends in production. Implement actual service adapters when a concrete requirement needs them.
+
+Use Python functions, conditions, loops and data processing directly. Keep application-specific business operations local. Add a shared BrowserActions method only for a concrete interaction or reliability need that existing operations do not cover; do not mirror the entire underlying library.
+
+Keep permanent page targets in the application's elements.toml. Do not inventory the whole site. An agent may define a temporary auxiliary ElementSpec from observed DOM to dismiss a guide or handle a transient dialog through ctx.browser, and keep evidence in runs. Only add that target to the permanent catalog when the operation becomes part of the normal application flow, with the relevant stage checks and tests.
 
 run defaults to LIVE without interaction. A service or Step that supports --preview must explicitly implement its preview behavior using context.mode; the mode flag alone does not intercept browser writes.
 

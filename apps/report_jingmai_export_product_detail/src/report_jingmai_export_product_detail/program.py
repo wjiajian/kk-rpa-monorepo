@@ -848,7 +848,8 @@ def build_test_context(
         "read_only_export_account": True,
         **(dict(case.metadata) if case else {}),
     }
-    inputs = {"target_date": metadata.pop("target_date")}
+    target = metadata.pop("target_date")
+    inputs = {"target_date": target, "export_filename": local_download_filename(target)}
     return ExecutionContext(
         app_id=APP_ID,
         run_id=run_id,

@@ -2,7 +2,9 @@
 
 一份需求对应一个独立 Python RPA 应用，目前包含聚水潭库存导出和京麦商品明细导出。
 
-设计见 [核心设计](docs/rpa-framework-design.md)，生成规则见 [AGENTS.md](AGENTS.md)。
+设计见 [核心设计](docs/rpa-framework-design.md)，后续任务与验收标准见 [Agent 开发与接管实施文档](docs/rpa-agent-implementation.md)，生成规则见 [AGENTS.md](AGENTS.md)。
+
+Agent 根据需求生成普通 Python 应用。应用内元素库维护正式流程使用的页面目标，少量 BrowserActions API 处理浏览器交互与稳定性问题，业务 Step 定义输入输出和成功条件。条件、循环和数据处理直接使用 Python；接管中临时发现的辅助目标可以当次使用并留证，成为正常流程依赖后再整理进应用元素库。
 
 在对应应用目录执行：
 

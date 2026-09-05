@@ -111,7 +111,8 @@ def manager(monkeypatch):
                 downloads={TARGET.id: FakeDownload("report.xlsx", b"report")},
             )
             session = SimpleNamespace(
-                active=True, actions=actions, lifecycle=spec.lifecycle
+                active=True, actions=actions, lifecycle=spec.lifecycle,
+                adopted=True, spec=spec,
             )
             sessions.append(session)
             return session
@@ -126,6 +127,10 @@ def manager(monkeypatch):
 
         def shutdown(self):
             pass
+
+        def detach(self, session):
+            session.active = False
+            session.retained = True
 
     monkeypatch.setattr(cli, "BrowserManager", FakeManager)
     monkeypatch.setattr(
@@ -410,3 +415,155 @@ def test_resume_can_continue_from_an_attempt_that_failed_during_preparation(appl
     assert saved["inputs"] == original["inputs"]
     assert cli.main(definition, ["resume", new_id, "--from-step", "S2"]) == 0
     assert json.loads(capsys.readouterr().out)["completed_steps"] == ["S1", "S2"]
+
+
+@pytest.fixture
+def recovery_source(application):
+    from rpa_core.runtime import StepSpec
+
+    first = ExportStep()
+    first.spec = StepSpec("S0", "Previous export")
+    definition = replace(application, build_program=lambda: BaseProgram(
+        ProgramSpec("demo", "Demo"), [first, ExportStep()]
+    ))
+    options = definition.load_runtime_options(RunRequest())
+    record = {
+        "app_id": "demo", "run_id": "run-source", "account_id": "STORE_001",
+        "mode": "preview", "status": "failed", "failed_step": "S1",
+        "inputs": {"business_date": "2026-08-01"},
+        "download_dir": str(options.download_dir),
+        "completed_steps": ["S0"], "outputs": {"S0": {"rows": ["saved"]}},
+        "locator_overrides": {TARGET.id: {"locator": "css:#old-attempt"}},
+    }
+    path = definition.app_dir / "runs" / record["run_id"] / "result.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(record))
+    return definition, path, record
+
+
+def test_recovery_preserves_original_context_without_running_steps(
+    recovery_source, manager, tmp_path, capsys
+):
+    definition, path, record = recovery_source
+    original_bytes = path.read_bytes()
+    defaults = definition.load_runtime_options(RunRequest())
+    observed = []
+    credentials = {"username": "private-user", "password": "private-password"}
+
+    def load(request):
+        observed.append(request)
+        return replace(defaults, inputs={"business_date": "2099-01-01"},
+                       download_dir=tmp_path / "changed-downloads",
+                       metadata={"credentials": request.credentials})
+
+    def services(ctx):
+        assert ctx.outputs == record["outputs"]
+        assert ctx.inputs == record["inputs"]
+        return {"feishu": {"modes": []}, "db": object()}
+
+    definition = replace(definition, load_runtime_options=load, build_services=services)
+    defaults.download_dir.mkdir()
+    keep = defaults.download_dir / "keep.xlsx"
+    keep.write_bytes(b"existing")
+    with cli.open_recovery_session(definition, record["run_id"], credentials=credentials) as recovery:
+        ctx = recovery.context
+        assert recovery.browser_adopted is True
+        assert recovery.source_record == record
+        assert ctx.account_id == record["account_id"] and ctx.mode is RunMode.PREVIEW
+        assert ctx.run_dir == path.parent and ctx.run_id == record["run_id"]
+        assert ctx.download_dir == defaults.download_dir
+        assert ctx.browser.download_dir == defaults.download_dir
+        assert ctx.metadata["credentials"] == credentials
+        assert ctx.service("elements")[TARGET.id].locator.value == "css:button"
+        assert ctx.browser.actions == [] and ctx.feishu["modes"] == []
+        assert ctx.current_step_id is None
+        assert "private-password" not in repr(recovery)
+        ctx.outputs["S0"]["rows"].append("temporary")
+        ctx.inputs["business_date"] = "temporary"
+        assert recovery.source_record == record
+    assert observed[0].inputs == record["inputs"]
+    assert observed[0].download_dir == record["download_dir"]
+    assert observed[0].credentials == credentials
+    assert manager[-1].retained and not manager[-1].active
+    assert keep.read_bytes() == b"existing"
+    assert list(defaults.download_dir.iterdir()) == [keep]
+    assert not (tmp_path / "changed-downloads").exists()
+    assert path.read_bytes() == original_bytes
+    events = (path.parent / "recovery-events.jsonl").read_text()
+    assert "private-password" not in events and "private-user" not in events
+    assert [json.loads(line)["event_type"] for line in events.splitlines()] == [
+        "recovery.opened", "recovery.closed",
+    ]
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_recovery_handler_error_releases_ownership_then_allows_resume(
+    recovery_source, manager, capsys, failure
+):
+    definition, path, record = recovery_source
+    original = path.read_bytes()
+    with pytest.raises(failure):
+        with cli.open_recovery_session(definition, record["run_id"]):
+            raise failure("private-handler-password")
+    assert manager[-1].retained and not manager[-1].active
+    with cli.open_recovery_session(definition, record["run_id"]) as recovery:
+        assert recovery.context.outputs == record["outputs"]
+    assert cli.main(definition, ["resume", record["run_id"], "--from-step", "S1"]) == 0
+    assert json.loads(capsys.readouterr().out)["completed_steps"] == ["S0", "S1"]
+    events = (path.parent / "recovery-events.jsonl").read_text()
+    assert "private-handler-password" not in events
+    failure_event = next(json.loads(line) for line in events.splitlines()
+                         if json.loads(line)["event_type"] == "recovery.failed")
+    assert failure_event["details"]["diagnostics"]["diagnostic_schema_version"] == 1
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("changes", [
+    {"status": "succeeded"}, {"app_id": "another-app"}, {"run_id": "another-run"},
+    {"inputs": None}, {"inputs": []}, {"account_id": None}, {"mode": "unknown"},
+    {"download_dir": ""}, {"completed_steps": ["S1"]}, {"outputs": {}},
+])
+def test_recovery_rejects_unusable_source_before_browser_start(
+    recovery_source, manager, changes
+):
+    from rpa_core.runtime import RuntimeContractError
+
+    definition, path, record = recovery_source
+    path.write_text(json.dumps(record | changes))
+    original = path.read_bytes()
+    with pytest.raises(RuntimeContractError):
+        with cli.open_recovery_session(definition, record["run_id"]):
+            pytest.fail("invalid recovery entered")
+    assert manager == [] and path.read_bytes() == original
+
+
+@pytest.mark.parametrize("failure", ["inputs", "services", "browser", "locators", "account"])
+def test_recovery_preparation_failure_is_diagnosed_without_changing_source(
+    recovery_source, manager, monkeypatch, failure
+):
+    definition, path, record = recovery_source
+    original = path.read_bytes()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("private-startup-password")
+
+    options = definition.load_runtime_options(RunRequest())
+    if failure == "inputs":
+        options = replace(options, inputs={"business_date": "2099-01-01", "missing_saved_input": "default"})
+        definition = replace(definition, load_runtime_options=lambda request: options)
+    elif failure == "services":
+        definition = replace(definition, build_services=fail)
+    elif failure == "browser":
+        monkeypatch.setattr(cli.BrowserManager, "start", fail)
+    elif failure == "account":
+        definition = replace(definition, load_runtime_options=lambda request: replace(options, account_id="OTHER"))
+    else:
+        (definition.app_dir / "elements.toml").write_text(CATALOG.replace('locator = "css:button"\n', ""))
+    with pytest.raises((RuntimeError, ValueError)):
+        with cli.open_recovery_session(definition, record["run_id"]):
+            pytest.fail("invalid recovery entered")
+    assert manager == [] and path.read_bytes() == original
+    events = (path.parent / "recovery-events.jsonl").read_text()
+    assert "private-startup-password" not in events
+    assert json.loads(events)["event_type"] == "recovery.failed"

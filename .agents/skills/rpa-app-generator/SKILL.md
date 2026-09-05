@@ -7,6 +7,8 @@ description: Generate or update one independent kk-rpa-monorepo RPA application 
 
 One requirement produces one application. Keep the fixed BrowserActions / Element / Step structure and follow the repository AGENTS.md and docs/rpa-framework-design.md.
 
+Generate ordinary Python programs. Keep the application element catalog small and the browser API focused on real interaction and reliability needs. Steps own business inputs, outputs and success conditions; do not turn standard Python control flow into registered instructions. Use rpa_core.cli.open_recovery_session for failed-run inspection and the existing resume command for verified continuation; see docs/rpa-agent-implementation.md for implementation and acceptance status.
+
 Before generation, inspect the existing application identities and working changes. Update the matching application for later requirement revisions and preserve unrelated work.
 
 - To read a Feishu source and handle screenshots, use [requirement ingestion](references/requirement-ingestion.md).
