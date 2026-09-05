@@ -35,7 +35,7 @@ apps/<slug>/
 
 ## 4. 代码边界
 
-- 只有 `rpa_core/drission.py` 可以 import DrissionPage
+- 只有 `rpa_core/drission_browser.py` 和 `rpa_core/browser_manager.py` 可以 import DrissionPage
 - 业务代码只通过 `ctx.browser` / `ctx.excel` / `ctx.feishu` / `ctx.db` 访问外部系统
 - 通用能力放 `rpa-core` 或平台包，不留在应用里
 

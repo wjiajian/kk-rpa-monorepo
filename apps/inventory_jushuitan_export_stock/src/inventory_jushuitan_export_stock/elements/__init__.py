@@ -1,12 +1,4 @@
-"""Load this application's element catalog from ``elements.toml``.
-
-The per-element TOML files still sitting next to this module are V1 catalog
-snapshot artifacts. They are no longer the runtime source — they only remain
-because ``catalog.lock.json`` still pins them for the Instruction layer, which
-goes away together with the catalog machinery once the second application
-proves what is actually shared. Do not add elements there; edit
-``apps/<slug>/elements.toml``.
-"""
+"""Load the application's element catalog from ``elements.toml``."""
 
 from __future__ import annotations
 

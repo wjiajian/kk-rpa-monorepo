@@ -27,7 +27,7 @@ import re
 import unicodedata
 from typing import Any
 
-from rpa_core.browser import ElementLookupError, ElementSpec
+from rpa_core.browser import ElementActionError, ElementLookupError, ElementSpec
 from rpa_core.contracts import ResumePolicy, RetryPolicy, SideEffect
 from rpa_core.runtime import ExecutionContext, Step, StepSpec
 from rpa_core.verification import Counterexample, FakeState
@@ -123,7 +123,14 @@ class _NavigationStep(Step):
         return {self.output_key: visible}
 
     def verify(self, context: ExecutionContext, result: Any) -> bool:
-        return isinstance(result, Mapping) and bool(result.get(self.output_key))
+        return (
+            isinstance(result, Mapping)
+            and bool(result.get(self.output_key))
+            and context.browser.exists(
+                element(context, self.marker_id),
+                timeout=0.0,
+            )
+        )
 
     def verify_recovery(
         self,
@@ -176,10 +183,19 @@ class SelectBrand(Step):
         if not isinstance(result, Mapping):
             return False
         requested = _normalize(str(result.get("requested_brand", "")))
+        configured = _normalize(store(context).brand_value)
         selected = result.get("selected_brands")
-        if not requested or not isinstance(selected, list):
+        if (
+            not requested
+            or requested != configured
+            or not isinstance(selected, list)
+        ):
             return False
-        return _brand_set(selected) == {requested}
+        live_selected = context.browser.texts(element(context, BRAND_SELECTED))
+        return (
+            _brand_set(selected) == {requested}
+            and _brand_set(live_selected) == {requested}
+        )
 
     def verify_recovery(
         self,
@@ -256,10 +272,14 @@ class SearchInventory(Step):
         normalized = result.get("brands_normalized")
         if not isinstance(after, list) or not isinstance(normalized, list):
             return False
+        live_rows = context.browser.count(element(context, RESULT_ROW), timeout=0.0)
+        live_selected = context.browser.texts(element(context, BRAND_SELECTED))
         return (
             row_count > 0
             and _brand_set(after) == {requested}
             and _brand_set(normalized) == {requested}
+            and live_rows > 0
+            and _brand_set(live_selected) == {requested}
         )
 
     def verify_recovery(
@@ -293,7 +313,7 @@ class SearchInventory(Step):
 
 
 # --------------------------------------------------------------------------
-# S005 — export, verified against the artifact on disk
+# S005 — export, verified against the selected brand and artifact on disk
 # --------------------------------------------------------------------------
 
 
@@ -303,9 +323,17 @@ class ExportStock(Step):
         filename = str(context.metadata["export_filename"])
         try:
             context.browser.select(element(context, BRAND_SELECTOR), brand)
+            selected = list(
+                context.browser.texts(element(context, BRAND_SELECTED))
+            )
         except Exception:
             _capture(context, "s005-brand-normalise-failed.png")
             raise
+        if _brand_set(selected) != {_normalize(brand)}:
+            _capture(context, "s005-brand-verification-failed.png")
+            raise ElementActionError(
+                "configured brand is not the only selected brand before export"
+            )
         context.browser.click(element(context, EXPORT_MENU))
         option = element(context, EXPORT_OPTION)
         if not context.browser.exists(option, timeout=5.0):
@@ -319,6 +347,8 @@ class ExportStock(Step):
             _capture(context, "s005-download-failed.png")
             raise
         return {
+            "requested_brand": brand,
+            "selected_brands": selected,
             "download_path": str(reference.path),
             "sha256": reference.sha256,
             "size_bytes": reference.size_bytes,
@@ -326,6 +356,21 @@ class ExportStock(Step):
 
     def verify(self, context: ExecutionContext, result: Any) -> bool:
         if not isinstance(result, Mapping):
+            return False
+        requested = _normalize(str(result.get("requested_brand", "")))
+        configured = _normalize(store(context).brand_value)
+        selected = result.get("selected_brands")
+        if (
+            not requested
+            or requested != configured
+            or not isinstance(selected, list)
+        ):
+            return False
+        live_selected = context.browser.texts(element(context, BRAND_SELECTED))
+        if (
+            _brand_set(selected) != {requested}
+            or _brand_set(live_selected) != {requested}
+        ):
             return False
         path = Path(str(result.get("download_path", "")))
         if path.is_symlink() or not path.is_file():
@@ -352,7 +397,7 @@ class ExportStock(Step):
         context: ExecutionContext,
         checkpoint: Mapping[str, Any],
     ) -> bool:
-        # The artifact is on disk, so the stored result can be re-verified in full.
+        # Re-read the live brand and verify the stored artifact before skipping.
         result = checkpoint.get("result")
         return isinstance(result, Mapping) and self.verify(context, result)
 
@@ -368,6 +413,10 @@ class ExportStock(Step):
         yield Counterexample(
             "导出菜单不存在",
             FakeState(hidden=(EXPORT_MENU,)),
+        )
+        yield Counterexample(
+            "导出前选中了另一个品牌",
+            FakeState(texts={BRAND_SELECTED: ("其他品牌",)}),
         )
 
 
@@ -412,7 +461,10 @@ def build_steps() -> tuple[Step, ...]:
                 timeout_seconds=30.0,
                 declared_inputs=("brand_value",),
                 declared_outputs=("requested_brand", "selected_brands"),
-                success_conditions=("回读的选中品牌集合恰好等于配置品牌",),
+                success_conditions=(
+                    "回读的选中品牌集合恰好等于配置品牌",
+                    "品牌选择动作已验证下拉弹层关闭",
+                ),
                 recovery=("回读当前选中集合后再决定是否重新选择",),
                 **common,
             )
@@ -431,6 +483,7 @@ def build_steps() -> tuple[Step, ...]:
                 success_conditions=(
                     "结果行数大于 0",
                     "搜索完成后回读的选中品牌仍恰好等于配置品牌",
+                    "品牌选择动作已验证下拉弹层关闭",
                 ),
                 recovery=("回读结果行数和选中集合后再决定是否重新搜索",),
                 **common,
@@ -442,8 +495,16 @@ def build_steps() -> tuple[Step, ...]:
                 name="导出并验证库存文件",
                 timeout_seconds=360.0,
                 declared_inputs=("filename", "brand_value"),
-                declared_outputs=("download_path", "sha256", "size_bytes"),
+                declared_outputs=(
+                    "requested_brand",
+                    "selected_brands",
+                    "download_path",
+                    "sha256",
+                    "size_bytes",
+                ),
                 success_conditions=(
+                    "回读的选中品牌集合恰好等于配置品牌",
+                    "品牌选择动作已验证下拉弹层关闭",
                     "下载文件位于本次运行的 downloads 目录内",
                     "文件非空且哈希可复现",
                 ),

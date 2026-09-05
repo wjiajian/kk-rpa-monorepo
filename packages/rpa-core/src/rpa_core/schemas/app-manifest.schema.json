@@ -5,10 +5,17 @@
       "description": "The fixed command surface every independent application exposes.",
       "properties": {
         "check": {
-          "const": "rpa-app check",
-          "default": "rpa-app check",
-          "title": "Check",
-          "type": "string"
+          "anyOf": [
+            {
+              "const": "rpa-app check",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Check"
         },
         "doctor": {
           "const": "rpa-app doctor",
@@ -17,8 +24,11 @@
           "type": "string"
         },
         "live": {
-          "const": "rpa-app run --mode live",
-          "default": "rpa-app run --mode live",
+          "default": "rpa-app run --live",
+          "enum": [
+            "rpa-app run --live",
+            "rpa-app run --mode live"
+          ],
           "title": "Live",
           "type": "string"
         },
@@ -36,8 +46,11 @@
           "title": "Login"
         },
         "preview": {
-          "const": "rpa-app run --mode preview",
-          "default": "rpa-app run --mode preview",
+          "default": "rpa-app run",
+          "enum": [
+            "rpa-app run",
+            "rpa-app run --mode preview"
+          ],
           "title": "Preview",
           "type": "string"
         },

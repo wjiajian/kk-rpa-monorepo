@@ -8,19 +8,18 @@ from rpa_core.runtime import ExecutionContext
 from rpa_core.verification import Counterexample, FakeState
 
 from inventory_jushuitan_export_stock.elements import element_catalog
-from inventory_jushuitan_export_stock.instructions import build_instruction_registry
 from inventory_jushuitan_export_stock.models import LoginCredentials, StoreConfig
 from inventory_jushuitan_export_stock.program import (
     APP_ID,
     PROGRAM_ID,
     PROGRAM_VERSION,
+    REQUIREMENT_HASH,
     bind_program_inputs,
     build_program,
 )
 from inventory_jushuitan_export_stock.steps import BRAND_SELECTED
 
 
-REQUIREMENT_HASH = "sha256:02de868803b5daf6eb76d4e66abfad385e20eddb9578a133a4285fc31cd30199"
 EXPORT_ELEMENT_ID = "jushuitan.erp.product_stock.export_stock_option"
 ACCOUNT_IDENTITY_ELEMENT_ID = "jushuitan.erp.shell.account_identity_surface"
 FIXTURE_IDENTITY = "fixture-user"
@@ -93,7 +92,6 @@ def make_context(run_dir: Path, browser: FakeBrowserActions) -> ExecutionContext
         services={
             "browser": browser,
             "elements": element_catalog(),
-            "instructions": build_instruction_registry(),
         },
         metadata={"app_dir": str(run_dir.parent.parent)},
     )

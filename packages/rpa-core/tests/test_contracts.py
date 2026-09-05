@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from rpa_core import __version__
 from rpa_core.contracts import (
     AppManifest,
     AppStatus,
@@ -89,34 +91,66 @@ def test_app_manifest_has_fixed_commands_and_statuses() -> None:
     manifest = AppManifest.model_validate(manifest_document())
 
     assert manifest.status is AppStatus.DRAFT
-    assert manifest.commands.preview == "rpa-app run --mode preview"
-    assert manifest.commands.live == "rpa-app run --mode live"
+    assert manifest.commands.check is None
+    assert manifest.commands.preview == "rpa-app run"
+    assert manifest.commands.live == "rpa-app run --live"
+    assert manifest.commands.verify_elements == "rpa-app verify-elements"
 
 
-def test_v2_manifest_requires_catalog_lock_and_candidate_commands() -> None:
+def test_core_version_matches_installed_package_metadata() -> None:
+    assert __version__ == distribution_version("rpa-core")
+
+
+def test_v1_manifest_rejects_legacy_cli_commands() -> None:
+    document = manifest_document()
+    document["commands"] = {
+        "check": "rpa-app check",
+        "preview": "rpa-app run --mode preview",
+        "live": "rpa-app run --mode live",
+    }
+
+    with pytest.raises(ValidationError, match="schema_version 1 command"):
+        AppManifest.model_validate(document)
+
+
+def test_v2_manifest_uses_strict_legacy_command_defaults() -> None:
     document = manifest_document()
     document["schema_version"] = 2
     document["catalog_lock"] = "catalog.lock.json"
-    document["commands"] = {
-        "login": "rpa-app login",
-        "verify_candidates": "rpa-app verify-candidates",
-    }
+    document["commands"] = {}
 
     manifest = AppManifest.model_validate(document)
 
     assert manifest.schema_version == 2
     assert manifest.catalog_lock == "catalog.lock.json"
+    assert manifest.commands.check == "rpa-app check"
+    assert manifest.commands.preview == "rpa-app run --mode preview"
+    assert manifest.commands.live == "rpa-app run --mode live"
+    assert manifest.commands.login == "rpa-app login"
+    assert manifest.commands.verify_candidates == "rpa-app verify-candidates"
+    assert manifest.commands.verify_elements is None
+
+    compact_commands = manifest_document()
+    compact_commands["schema_version"] = 2
+    compact_commands["catalog_lock"] = "catalog.lock.json"
+    compact_commands["commands"] = {
+        "preview": "rpa-app run",
+        "live": "rpa-app run --live",
+        "verify_elements": "rpa-app verify-elements",
+    }
+    with pytest.raises(ValidationError, match="schema_version 2 command"):
+        AppManifest.model_validate(compact_commands)
 
     missing_lock = manifest_document()
     missing_lock["schema_version"] = 2
-    missing_lock["commands"] = document["commands"]
+    missing_lock["commands"] = {}
     with pytest.raises(ValidationError, match="requires catalog_lock"):
         AppManifest.model_validate(missing_lock)
 
-    v1_with_v2_command = manifest_document()
-    v1_with_v2_command["commands"] = {"login": "rpa-app login"}
-    with pytest.raises(ValidationError, match="must not declare V2 commands"):
-        AppManifest.model_validate(v1_with_v2_command)
+    v1_with_legacy_command = manifest_document()
+    v1_with_legacy_command["commands"] = {"login": "rpa-app login"}
+    with pytest.raises(ValidationError, match="schema_version 1 command"):
+        AppManifest.model_validate(v1_with_legacy_command)
 
 
 def test_manifest_rejects_nonstandard_command_and_mismatched_entrypoint() -> None:

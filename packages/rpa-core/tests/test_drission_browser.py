@@ -325,6 +325,29 @@ class ReplacingTabBrowser(FakeBrowser):
         return ["source", "replacement"]
 
 
+class PreExistingSignalledTabBrowser(FakeBrowser):
+    """Model DrissionPage returning an already-open newest tab first."""
+
+    def __init__(
+        self,
+        source: FakeTab,
+        existing: FakeTab,
+        target: FakeTab,
+    ) -> None:
+        super().__init__(
+            {"source": source, "already-open": existing, "new-target": target},
+            "already-open",
+        )
+        self.tab_id_reads = 0
+
+    @property
+    def tab_ids(self) -> list[str]:
+        self.tab_id_reads += 1
+        if self.tab_id_reads == 1:
+            return ["source", "already-open"]
+        return ["source", "already-open", "new-target"]
+
+
 def test_current_url_exposes_adapter_boundary_value(tmp_path: Path) -> None:
     tab = FakeTab()
     tab.url = "https://example.invalid/inventory"
@@ -410,8 +433,7 @@ def test_adapter_clicks_waits_and_switches_to_new_tab(tmp_path: Path) -> None:
     source.url = "https://example.invalid/report"
     target = FakeTab()
     target.url = "https://example.invalid/downloads"
-    owner = FakeBrowser({"new-tab": target}, "new-tab")
-    source.browser = owner
+    owner = ReplacingTabBrowser(source, target, signalled_tab_id="replacement")
     browser = DrissionBrowserActions(source, tmp_path, action_timeout=7.0)
 
     browser.click_and_switch_to_new_tab(view, timeout=5.0)
@@ -480,6 +502,28 @@ def test_adapter_uses_tab_inventory_when_new_tab_wait_misses_replacement(
     browser.click_and_switch_to_new_tab(view, timeout=1.0)
 
     assert browser.tab is target
+    assert owner.tab_id_reads >= 2
+
+
+def test_adapter_ignores_preexisting_tab_signalled_as_new(
+    tmp_path: Path,
+) -> None:
+    view = ElementSpec(
+        "example.report.view",
+        "查看",
+        "report",
+        locator=Locator("#view"),
+    )
+    source = FakeTab({"#view": FakeElement()})
+    existing = FakeTab()
+    target = FakeTab()
+    owner = PreExistingSignalledTabBrowser(source, existing, target)
+    browser = DrissionBrowserActions(source, tmp_path)
+
+    browser.click_and_switch_to_new_tab(view, timeout=1.0)
+
+    assert browser.tab is target
+    assert browser.tab is not existing
     assert owner.tab_id_reads >= 2
 
 

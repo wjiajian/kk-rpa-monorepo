@@ -4,16 +4,28 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 import re
 import tomllib
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from rpa_core.browser import DownloadRef, ElementSpec, SecretValue
+from rpa_core.browser import (
+    DownloadRef,
+    ElementSpec,
+    FakeBrowserActions,
+    FakeDownload,
+    SecretValue,
+)
 from rpa_core.cli import ApplicationDefinition, RuntimeOptions
-from rpa_core.contracts import ResumePolicy, RetryPolicy, SideEffect
-from rpa_core.elements import ElementEntry, check_element_expectations
+from rpa_core.contracts import ResumePolicy, RetryPolicy, RunMode, SideEffect
+from rpa_core.elements import (
+    ElementEntry,
+    check_element_expectations,
+    element_specs,
+    load_element_catalog,
+)
 from rpa_core.runtime import BaseProgram, ExecutionContext, ProgramSpec, Step, StepSpec
 from rpa_core.verification import Counterexample, FakeState
 
@@ -1033,6 +1045,102 @@ def _download_result_is_valid(
     )
 
 
+def build_counterexample_context(
+    step: Step,
+    case: Counterexample,
+    temporary_root: Path,
+) -> ExecutionContext:
+    """Build the deterministic happy page with one counterexample applied."""
+
+    target_date = "2026-09-03"
+    expected_identity = "ACCOUNT_ALIAS_001"
+    entries = load_element_catalog(APP_DIR / "elements.toml")
+    visible = set(entries) - set(case.state.hidden)
+    text_lists = {
+        ACCOUNT_IDENTITY: (expected_identity,),
+        DATE_VALUES: (f"{target_date}  至  {target_date}",),
+        CALENDAR_MONTH: (target_date[:7],),
+        DIALOG_REPORT_NAME: (
+            "数据将采用离线任务的方式下载，"
+            f"报表【{expected_dialog_name(target_date)}】已生成，"
+            "您可以前往我的报表查看。"
+        ),
+        REPORT_NAMES: (expected_report_filename(target_date),),
+        REPORT_ROW_DATES: (target_date, target_date),
+        REPORT_STATUSES: ("已生成",),
+    }
+    for hidden in case.state.hidden:
+        text_lists.pop(hidden, None)
+    text_lists.update(
+        {key: tuple(value) for key, value in case.state.texts.items()}
+    )
+    counts = {REPORT_ROWS: 2}
+    for hidden in case.state.hidden:
+        counts.pop(hidden, None)
+    counts.update(case.state.counts)
+    downloads = (
+        {
+            MATCHING_DOWNLOAD_BUTTON: FakeDownload(
+                "source.xlsx",
+                b"PK\x03\x04deterministic fake workbook",
+            )
+        }
+        if case.state.downloads_available
+        else {}
+    )
+    new_tabs = (
+        {
+            PRODUCT_DETAIL_ENTRY: "https://jdsz.jd.com/product-detail",
+            VIEW_EXPORTS_BUTTON: "https://jdsz.jd.com/download-center",
+        }
+        if case.state.new_tabs_available
+        else {}
+    )
+    case_id = sha256(
+        f"{step.spec.step_id}\0{case.label}".encode("utf-8")
+    ).hexdigest()[:12]
+    run_id = f"{step.spec.step_id.lower()}-{case_id}"
+    run_dir = temporary_root / "runs" / run_id
+    browser = FakeBrowserActions(
+        run_dir=run_dir,
+        visible_element_ids=visible,
+        counts=counts,
+        text_lists=text_lists,
+        downloads=downloads,
+        new_tab_urls=new_tabs,
+    )
+    metadata = {
+        "app_dir": str(temporary_root),
+        "target_date": target_date,
+        "expected_identity": SecretValue(
+            expected_identity,
+            label="STORE_001.expected_identity",
+        ),
+        "login_username": SecretValue(
+            "LOGIN_ALIAS_001",
+            label="STORE_001.username",
+        ),
+        "login_password": SecretValue(
+            "LOGIN_SECRET_001",
+            label="STORE_001.password",
+        ),
+        "read_only_export_account": True,
+        **dict(case.metadata),
+    }
+    return ExecutionContext(
+        app_id=APP_ID,
+        program_id=PROGRAM_ID,
+        program_version=PROGRAM_VERSION,
+        requirement_hash=REQUIREMENT_HASH,
+        run_id=run_id,
+        account_id="STORE_001",
+        mode=RunMode.PREVIEW,
+        run_dir=run_dir,
+        services={"browser": browser, "elements": element_specs(entries)},
+        metadata=metadata,
+    )
+
+
 APPLICATION = ApplicationDefinition(
     app_dir=APP_DIR,
     build_program=build_program,
@@ -1040,6 +1148,7 @@ APPLICATION = ApplicationDefinition(
     element_blocker_ids=ELEMENT_BLOCKER_IDS,
     additional_blockers=additional_blockers,
     verify_element_stages=verify_element_stages,
+    build_counterexample_context=build_counterexample_context,
 )
 
 
@@ -1052,6 +1161,7 @@ __all__ = [
     "PROGRAM_VERSION",
     "REQUIREMENT_HASH",
     "build_program",
+    "build_counterexample_context",
     "expected_dialog_name",
     "expected_report_filename",
     "load_runtime_options",

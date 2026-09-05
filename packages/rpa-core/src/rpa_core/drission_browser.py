@@ -273,9 +273,10 @@ class DrissionBrowserActions:
                 raise_err=False,
             )
             target_tab = None
-            if tab_id:
+            signalled_tab_id = str(tab_id) if tab_id else None
+            if signalled_tab_id and signalled_tab_id not in previous_tab_ids:
                 try:
-                    target_tab = browser.get_tab(tab_id)
+                    target_tab = browser.get_tab(signalled_tab_id)
                 except Exception:
                     target_tab = None
             deadline = monotonic() + wait_timeout
@@ -296,7 +297,7 @@ class DrissionBrowserActions:
                 if not target_tab:
                     sleep(min(0.05, max(0.0, deadline - monotonic())))
             if not target_tab:
-                if not tab_id:
+                if not signalled_tab_id or signalled_tab_id in previous_tab_ids:
                     raise NavigationError("click did not open a new tab before timeout")
                 raise NavigationError("new browser tab is unavailable")
             self.tab = target_tab

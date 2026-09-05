@@ -38,11 +38,11 @@ latest_review = ""
 
 [commands]
 doctor = "rpa-app doctor"
-check = "rpa-app check"
 test = "rpa-app test"
-preview = "rpa-app run --mode preview"
-live = "rpa-app run --mode live"
+preview = "rpa-app run"
+live = "rpa-app run --live"
 resume = "rpa-app resume"
+verify_elements = "rpa-app verify-elements"
 ''',
         encoding="utf-8",
     )

@@ -1,4 +1,4 @@
-# 聚水潭库存导出需求记忆
+# 聚水潭库存导出需求基线
 
 ## 来源与身份
 
@@ -34,29 +34,21 @@
 
 截图只用于确认业务意图，不作为定位器证据；文件位于 Git 忽略目录。
 
-## 元素、指令与验证状态
+## 元素与验证状态
 
-- 顶层公共库：17 个真实验证元素、7 条真实验证指令；本次新增账号身份文本载体和“确保目标账号会话”能力，已被替代且无应用引用的旧登录态检查指令已从源库退役。
-- 应用快照：当前业务依赖闭包包含 17 个公共验证元素和 7 条公共验证指令；均由 `catalog.lock.json` 固定，运行时不读取顶层目录。
-- 已解决项：账号身份文本载体在授权 Preview 中验证为唯一、可见、可读且跨恢复稳定；错误身份被失败关闭，正确身份放行后完整流程成功。候选元素和指令已回灌顶层公共库并重建应用稳定快照。
-- 未沉淀项：人机验证专用标识未在真实登录中出现，不生成定位器；登录未达到认证标识时统一截图并失败转人工。旧的独立品牌选中标识已由品牌选择器内部的真实选中集合契约替代。
-- 离线测试：通过。
-- 真实候选验证：批次 `account-session-verify-20260903`、运行 `account-session-preview-20260903` 已通过；登录用户名与页面租户身份语义不同的问题已通过本地 `identity_env` 映射解决，真实值未进入可提交文件。
-- 真实 Preview：0.3.0 运行 `preview-20260903T062356Z-df357a62` 完成 Prepare、S001–S005，验证本地配置目标品牌并下载 218,378 字节的 XLSX，SHA-256 为 `sha256:b39e6b23dda9bf1f8415ab2d524afa2435ae9126aca33f9542cc19f4412e29c6`；未执行外部业务写入。
-- 幂等恢复：0.2.0 历史运行使用同一 Run ID 恢复时 S001–S005 全部跳过，下载文件未变化；0.3.0 本次完整 Preview 没有执行 Resume。
-- 详细证据、产物哈希和授权范围见 `GENERATION_REPORT.md`。
+- 运行时只加载应用根目录的 `elements.toml`；V1 catalog、逐元素快照和 Instruction 源码已从当前应用移除，历史结论仍可从 Git 与审核材料追溯。
+- Prepare 和 S001–S005 均直接使用 `BrowserActions` 与 `ElementSpec`。登录态、账号身份、品牌选择、搜索结果和下载文件都由页面或本地产物回读验证。
+- 人机验证专用标识未在真实登录中出现，因此不生成推测定位器；登录后仍没有认证标识时截图并停止。
+- 0.4.0 已迁移到共享 `ApplicationDefinition`，离线 Fake 流程与 Step 反例通过；迁移后的真实浏览器验证尚未执行。
+- 迁移前的真实 Preview 和恢复记录保留在 `GENERATION_REPORT.md`，只能证明当时的业务页面链路，不能替代共享 CLI 的新一轮真实验证。
 
-## Authorization contract
+## 标准运行契约
 
-- 日常 Preview 可以执行 `rpa-app preview --account STORE_001`：CLI 自动生成 `run_id`/`authorization_id`，只展示账号、真实动作和 `external_writes`，以一次交互式 `y` 完成 grant 后立即 claim/run。该命令不提供非交互绕过；取消会把 request 标记为 `REVOKED`。完整 `authorization request|grant` 保留给 CI、自动化和排障。
-- `login`、`verify-candidates`、`run`、`resume` 都要求显式的 `run_id` 和 `authorization_id`。应用不再接受静态 Batch Constants。
-- 开发人员先用 `authorization request` 生成不可变的 `AuthorizationScope` 和 `scope_digest`，检查 `app_id`、`app_version`、`program_id`、`program_version`、`requirement_hash`、`catalog_digest`、`operation`、`mode`、`run_id`、`resume_checkpoint_digest`、`resume_step_id`、`account_id`、`profile_id`、`allowed_origins`、`step_ids`、`browser_actions`、`element_ids`、`candidate_asset_refs`、`external_writes` 和 `source_preview_run_id`，再用 exact `scope_digest`、`authorized_by`、`approval_reference` 和 `ttl_seconds` 执行 `authorization grant`。
-- `profile_id` 是实际 Profile directory 的本地 SHA-256 fingerprint，不是账号别名，也不暴露本机路径；配置在 request 后变化会造成 exact-scope mismatch。
-- `AuthorizationStore.claim()` 必须在创建 run directory 和构造 `BrowserManager` 之前完成；store 受 Application directory boundary 约束并拒绝 symlink ancestor。scope 必须 exact match，record 只能 claim 一次；Browser 启动前再次校验 expiry。`AuthorizedBrowserActions` 在每次 Browser Boundary 前后校验顶层 Origin，并校验 Step、Action 和 Element；固定业务 iframe 不单独执行 Origin allowlist。
-- `resume` 沿用原 `run_id` 和 checkpoint，但必须创建新的 `operation=resume` Authorization Record，并绑定 canonical `resume_checkpoint_digest` 与首个待恢复 `resume_step_id`。checkpoint 在 claim 前变化时 record 保持 `granted`；claim 后变化则由 Runner 在持有 `.run.lock`、重新读取 checkpoint 后且在 `Program.prepare()` 前拒绝，record 最终为 `failed`。旧 record 无论成功、失败或进程中断都不能复用。
-- `verify-candidates` 的 Authorization Record 必须绑定当时 `catalog.lock.json` 中全部 `candidate_asset_refs`；当前快照无 candidate，因此该命令会以 `candidate_scope_empty` 失败关闭，直到应用再次引入候选资产。Candidate verification 只允许 fresh run，不提供语义含混的 `--resume`。
-- Core 的 Live adapter 还会逐条 claim `external_writes.write_id`、`external_writes.step_id`、`external_writes.adapter`、`external_writes.target`、`external_writes.data_scope`、`external_writes.expected_record_count` 和 `external_writes.payload_digest`，随后按 exact `target` 和 `data_scope` 独立 read back；只有 `record_count` 与 canonical `payload_digest` 都匹配才写入 `SUCCEEDED` receipt。旧的进程内 `LiveWriteGrant` 单独不能越过 External Write boundary。
-- 当前应用没有 external business write，`live` request 和 execution 始终以 `application_live_unsupported` 失败关闭。0.2.0 的真实 Preview 与审核记录只作为历史证据，不授权 0.3.0 执行。
+- 应用入口委托给共享 `rpa_core.cli`，提供 `doctor`、`test`、`verify-elements`、`run` 和 `resume`。
+- `run` 与 `verify-elements` 必须显式传入 `--yes` 才能启动真实浏览器；未确认、配置无效或仍有阻塞项时，在创建运行和启动浏览器前失败。
+- 默认 `run` 为 Preview，可读取页面、筛选和下载到本次运行目录；本应用没有外部业务写入。
+- `resume <run_id>` 复用原检查点，并回读页面状态决定跳过或重跑步骤；失败时保留浏览器供排查和恢复，成功后关闭。
+- 每个 Step 的反例由应用提供生产 Fake 上下文，`rpa-app test` 在 pytest 前统一执行并强制反例失败。
 
 ## 变更与测试历史
 
@@ -72,15 +64,16 @@
 - 2026-09-03：0.3.0 首次真实 Preview `preview-20260903-001` 完成 S001、S002，S003 两次返回 `instruction_execution_failed`，S004、S005 未执行；Authorization Record 已 `failed`，未执行 external business write。
 - 2026-09-03：开发人员确认按内部工具边界移除逐 iframe Origin Gate 后，0.3.0 运行 `preview-20260903T062356Z-df357a62` 完成 S001–S005、本地 XLSX 下载和成功截图；Authorization Record 为 `succeeded`，未执行 external business write。
 - 2026-09-03：开发人员明确审核通过应用 0.3.0、当前 Requirement Hash 和运行 `preview-20260903T062356Z-df357a62`，同意进入 `ready_for_push` 并提交推送；审核记录为 `reviews/20260903T143849+0800.toml`。
+- 2026-09-04：0.4.0 删除应用内 CLI/runtime、catalog 快照和运行时 Instruction 层，改用共享 `rpa_core.cli/ApplicationDefinition`；旧审核材料保留为历史证据。
 - 程序版本：`0.4.0`。
-- 当前状态：`ready_for_push`；当前 Developer Review 已完成。
+- 当前状态：`ready_for_review`；共享 CLI 迁移等待代码审查，未声明真实浏览器验证通过。
 
 ## 机器可读规范
 
-开发人员只编辑本文件。下面是唯一规范块；JSON Spec 必须由其生成并保持一致。
+下面是本文件唯一的规范块；`requirement_hash` 由规范语义计算，排除哈希字段自身。
 
 ```toml requirement-canonical
-schema_version = 2
+schema_version = 1
 pending_confirmations = []
 
 [[unresolved_elements]]
@@ -98,29 +91,11 @@ blocks_test = false
 blocks_review = false
 blocks_push = false
 
-[[unresolved_instructions]]
-id = "UI-ENSURE-ACCOUNT-SESSION"
-requirement_step = "Prepare"
-platform = "jushuitan"
-capability = "在标准运行中确保目标账号登录并验证身份"
-reason = "既有 require_session 只检查当前标签页的库存菜单，不导航、不登录且不核对目标账号。"
-candidate_instruction_ref = "jushuitan.auth.ensure_account_session"
-candidate_implementation = "src/inventory_jushuitan_export_stock/instructions/jushuitan/erp/auth/ensure_account_session/instruction.py"
-fake_test_ref = "tests/test_catalog_instructions.py"
-fake_test_status = "passed"
-real_test_status = "passed"
-real_test_evidence = "GENERATION_REPORT.md"
-status = "resolved"
-resolved_instruction_ref = "jushuitan.auth.ensure_account_session"
-blocks_offline_test = false
-blocks_real_run = false
-blocks_review = false
-blocks_push = false
 
 [source]
 document_id = "feishu-doc-sha256:d4e454239bfd451dc4a0147c3ac693209f947adb41ed2c52dfe6cd6b96f83722"
 revision = 107
-requirement_hash = "sha256:02de868803b5daf6eb76d4e66abfad385e20eddb9578a133a4285fc31cd30199"
+requirement_hash = "sha256:615a2108edca13f072eff8c8e08120f93efdd34885aae0e425d838980b6680bb"
 document_url = "https://<tenant>.feishu.cn/docx/<redacted>"
 
 [application]
@@ -138,9 +113,7 @@ inputs = ["account_id", "persistent_profile", "stores.<account_id>.login_url", "
 outputs = ["authenticated", "identity_verified", "login_performed", "human_verification_required"]
 success_conditions = ["authenticated is true", "identity_verified is true", "human_verification_required is false"]
 element_refs = ["jushuitan.erp.login.account_input", "jushuitan.erp.login.password_input", "jushuitan.erp.login.agreement_checkbox", "jushuitan.erp.login.submit_button", "jushuitan.erp.login.password_notice_confirm", "jushuitan.erp.shell.authenticated_marker", "jushuitan.erp.shell.account_identity_surface"]
-instruction_refs = ["jushuitan.auth.login", "jushuitan.auth.ensure_account_session"]
 unresolved_element_ids = ["UE-ACCOUNT-IDENTITY"]
-unresolved_instruction_ids = ["UI-ENSURE-ACCOUNT-SESSION"]
 timeout_seconds = 60.0
 resume = "verify_then_run"
 recovery = ["capture sanitized evidence and stop before inventory navigation"]
@@ -157,12 +130,10 @@ id = "S001"
 name = "打开库存模块"
 action = "open_inventory_module"
 inputs = []
-outputs = ["inventory_module_opened"]
-success_conditions = ["inventory module marker is visible"]
+outputs = ["inventory_module_active"]
+success_conditions = ["库存模块处于激活状态（module_marker 带 current 类）"]
 element_refs = ["jushuitan.erp.navigation.inventory_module", "jushuitan.erp.inventory.module_marker"]
-instruction_refs = ["jushuitan.inventory.open_module"]
 unresolved_element_ids = []
-unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
 recovery = ["verify module marker before repeating navigation"]
@@ -172,19 +143,17 @@ side_effect = "read"
 max_attempts = 2
 delay_seconds = 0.0
 backoff_multiplier = 1.0
-retryable_errors = ["instruction_execution_failed", "instruction_verification_failed"]
+retryable_errors = ["browser_element_not_found", "browser_element_action_failed"]
 
 [[steps]]
 id = "S002"
 name = "进入商品库存"
 action = "open_product_stock"
 inputs = []
-outputs = ["product_stock_opened"]
-success_conditions = ["product stock page marker is visible"]
+outputs = ["product_stock_active"]
+success_conditions = ["商品库存页签处于活动状态"]
 element_refs = ["jushuitan.erp.inventory.product_stock_entry", "jushuitan.erp.product_stock.page_marker"]
-instruction_refs = ["jushuitan.inventory.open_product_stock"]
 unresolved_element_ids = []
-unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
 recovery = ["verify product stock marker before repeating navigation"]
@@ -194,19 +163,17 @@ side_effect = "read"
 max_attempts = 2
 delay_seconds = 0.0
 backoff_multiplier = 1.0
-retryable_errors = ["instruction_execution_failed", "instruction_verification_failed"]
+retryable_errors = ["browser_element_not_found", "browser_element_action_failed"]
 
 [[steps]]
 id = "S003"
 name = "根据本地配置精确选择品牌"
 action = "select_configured_brand"
 inputs = ["stores.<account_id>.brand_value"]
-outputs = ["selected_brand", "selection_visible"]
-success_conditions = ["only the configured brand is selected", "brand popup is hidden before search"]
-element_refs = ["jushuitan.erp.product_stock.reset_button", "jushuitan.erp.product_stock.brand_selector"]
-instruction_refs = ["jushuitan.inventory.select_brand"]
+outputs = ["requested_brand", "selected_brands"]
+success_conditions = ["回读的选中品牌集合恰好等于配置品牌", "品牌选择动作已验证下拉弹层关闭"]
+element_refs = ["jushuitan.erp.product_stock.reset_button", "jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.brand_selected_option"]
 unresolved_element_ids = []
-unresolved_instruction_ids = []
 timeout_seconds = 30.0
 resume = "verify_then_run"
 recovery = ["normalize the real selected checkbox set before continuing"]
@@ -216,19 +183,17 @@ side_effect = "read"
 max_attempts = 2
 delay_seconds = 0.0
 backoff_multiplier = 1.0
-retryable_errors = ["instruction_execution_failed", "instruction_verification_failed"]
+retryable_errors = ["browser_element_not_found", "browser_element_action_failed"]
 
 [[steps]]
 id = "S004"
 name = "搜索并验证筛选完成"
 action = "search_inventory"
 inputs = ["stores.<account_id>.brand_value"]
-outputs = ["filter_applied"]
-success_conditions = ["filtered result marker is visible", "only the configured brand remains selected", "brand popup is hidden"]
-element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.search_button", "jushuitan.erp.product_stock.filter_applied_marker"]
-instruction_refs = ["jushuitan.inventory.search"]
+outputs = ["row_count", "brands_after_search", "brands_normalized"]
+success_conditions = ["结果行数大于 0", "搜索完成后回读的选中品牌仍恰好等于配置品牌", "品牌选择动作已验证下拉弹层关闭"]
+element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.search_button", "jushuitan.erp.product_stock.result_row", "jushuitan.erp.product_stock.brand_selected_option"]
 unresolved_element_ids = []
-unresolved_instruction_ids = []
 timeout_seconds = 60.0
 resume = "verify_then_run"
 recovery = ["verify and normalize the exact filter before searching again"]
@@ -238,19 +203,17 @@ side_effect = "read"
 max_attempts = 2
 delay_seconds = 0.0
 backoff_multiplier = 1.0
-retryable_errors = ["instruction_execution_failed", "instruction_verification_failed"]
+retryable_errors = ["browser_element_not_found", "browser_element_action_failed"]
 
 [[steps]]
 id = "S005"
 name = "导出库存并验证下载"
 action = "export_inventory_file"
 inputs = ["safe_export_filename", "stores.<account_id>.brand_value"]
-outputs = ["download_path", "sha256", "size_bytes"]
-success_conditions = ["only the configured brand remains selected", "brand popup is hidden", "download path is inside the run directory", "download is non-empty and hash is reproducible"]
-element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.export_menu", "jushuitan.erp.product_stock.export_stock_option"]
-instruction_refs = ["jushuitan.inventory.export_stock"]
+outputs = ["requested_brand", "selected_brands", "download_path", "sha256", "size_bytes"]
+success_conditions = ["回读的选中品牌集合恰好等于配置品牌", "品牌选择动作已验证下拉弹层关闭", "下载文件位于本次运行的 downloads 目录内", "文件非空且哈希可复现"]
+element_refs = ["jushuitan.erp.product_stock.brand_selector", "jushuitan.erp.product_stock.brand_selected_option", "jushuitan.erp.product_stock.export_menu", "jushuitan.erp.product_stock.export_stock_option"]
 unresolved_element_ids = []
-unresolved_instruction_ids = []
 timeout_seconds = 360.0
 resume = "verify_then_run"
 recovery = ["verify an existing completed download before downloading again"]

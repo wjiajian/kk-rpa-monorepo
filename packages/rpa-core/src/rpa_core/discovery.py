@@ -20,7 +20,9 @@ from .catalog import (
 from .contracts import (
     AppManifest,
     AppStatus,
+    COMPACT_COMMAND_DEFAULTS,
     InstructionResolutionStatus,
+    LEGACY_COMMAND_DEFAULTS,
     RequirementSpec,
 )
 from .elements import load_element_catalog
@@ -33,20 +35,6 @@ from .requirements import (
     validate_requirement_consistency,
 )
 
-
-STANDARD_COMMANDS = {
-    "doctor": "rpa-app doctor",
-    "check": "rpa-app check",
-    "test": "rpa-app test",
-    "preview": "rpa-app run --mode preview",
-    "live": "rpa-app run --mode live",
-    "resume": "rpa-app resume",
-}
-
-V2_STANDARD_COMMANDS = {
-    "login": "rpa-app login",
-    "verify_candidates": "rpa-app verify-candidates",
-}
 
 FORBIDDEN_APP_IMPORTS = {
     "drissionpage",
@@ -329,23 +317,21 @@ def validate_application(app_dir: Path, *, require_lock: bool = True) -> Validat
                         path,
                     )
 
-    if manifest.schema_version == 2:
-        command_data = manifest.commands.model_dump(mode="python")
-        for name, expected in STANDARD_COMMANDS.items():
-            if command_data.get(name) != expected:
-                report.add(
-                    "APP_STANDARD_COMMAND_INVALID",
-                    f"command {name!r} must equal {expected!r}",
-                    manifest_path,
-                )
-        for name, expected in V2_STANDARD_COMMANDS.items():
-            if command_data.get(name) != expected:
-                report.add(
-                    "APP_STANDARD_COMMAND_INVALID",
-                    f"command {name!r} must equal {expected!r}",
-                    manifest_path,
-                )
+    command_data = manifest.commands.model_dump(mode="python")
+    command_contract = (
+        LEGACY_COMMAND_DEFAULTS
+        if manifest.schema_version == 2
+        else COMPACT_COMMAND_DEFAULTS
+    )
+    for name, expected in command_contract.items():
+        if command_data.get(name) != expected:
+            report.add(
+                "APP_STANDARD_COMMAND_INVALID",
+                f"command {name!r} must equal {expected!r}",
+                manifest_path,
+            )
 
+    if manifest.schema_version == 2:
         lock_path = app_dir / (manifest.catalog_lock or "catalog.lock.json")
         if not lock_path.is_file():
             report.add(

@@ -147,16 +147,6 @@ expect_count = ">0"
 check_at           = "S004"
 note         = "结果行。2026-09-03 实测未筛选时 21 行，搜索前后不变 —— 单看行数不能证明筛选生效，必须与回读的选中品牌合并判断"
 
-[elements."jushuitan.erp.product_stock.filter_applied_marker"]
-name               = "结果表体（V1 遗留）"
-page               = "product_stock"
-locator            = "css:table tbody"
-frame              = 'css:iframe[src*="/erp-web-group/erp-scm-goods/stockInventoryManagement"]'
-expect_count       = 1
-check_at           = "S004"
-assertion_strength = "weak"
-note               = "V1 用它当作「筛选已生效」的证据，这是错的：2026-09-03 实测搜索前后都是 1，未筛选时结果表体就已存在。仅因遗留 search 指令仍引用而保留，任何 Step 都不得用它做断言 —— 用 result_row 的行数加 brand_selected_option 的回读"
-
 [elements."jushuitan.erp.product_stock.export_menu"]
 name         = "导出菜单"
 page         = "product_stock"

@@ -52,7 +52,7 @@ check_at     = "S004"
 note         = "列表右上角导出下拉入口"
 ```
 
-`expect_count` 是**现在应该成立的断言**，不是历史记录 —— 这是它能发现失效的原因。`check_at` 指定它在哪个导航阶段成立：不带阶段统一检查时，19 条里有 7 条会误报失效（登录框在已登录页面本来就是 0 个）。
+`expect_count` 是**现在应该成立的断言**，不是历史记录 —— 这是它能发现失效的原因。`check_at` 指定它在哪个导航阶段成立；否则登录框在已登录页面会被误报为失效。
 
 ```bash
 uv run rpa-app verify-elements --yes
@@ -65,7 +65,6 @@ uv run rpa-app verify-elements --yes
  ✓ jushuitan.erp.product_stock.brand_selected_option  expect=>0  actual=1
 --- S004 ---
  ✓ jushuitan.erp.product_stock.result_row             expect=>0  actual=24
- ⚠ jushuitan.erp.product_stock.filter_applied_marker  expect=1   actual=1
  ✓ jushuitan.erp.product_stock.export_menu            expect=1   actual=1
 ```
 
@@ -143,10 +142,11 @@ CAPTCHA、滑块、短信验证只检测、留证据、转人工，不绕过。
 
 ## 当前状态（2026-09-04）
 
-- 首个应用 `apps/inventory_jushuitan_export_stock/` 已按 V2 迁移：5 个 Step 全部改为可证伪断言并配套反例
-- `verify-elements` 已在真实浏览器上跑通：6 个阶段全部到达，19 个元素 0 失效，2 条标记为断言过弱
+- 聚水潭与京麦应用均已使用共享 `rpa_core.cli`；应用入口只负责转发命令，业务流程只依赖 `BrowserActions` / `Element` / `Step`
+- 聚水潭 5 个 Step 和京麦 6 个 Step 全部使用可证伪断言；`rpa-app test` 由框架先强制运行反例，再运行应用 pytest
+- `verify-elements` 已在真实浏览器上跑通；当前元素库为 18 个元素，其中 1 条身份文本载体标记为弱断言，业务 Step 不单独依赖它判断成功
 - 真实 Preview 已通过：S001–S005 全部完成，S003/S004 从 DOM 回读到的选中品牌恰好等于配置品牌，无外部业务写入
 - 第二个应用 `apps/report_jingmai_export_product_detail/` 已按精简结构完成实际开发：6 个 Step、26 个真实定位器、离线反例和仓库发现门禁均通过
 - 京麦完整链路已用全新隔离 Profile 验证：从专用稳定入口完成密码登录并回读目标身份，再打开报表、选择跨月日期、导出、查看报表和下载；`STORE_001` 账号边界已确认，26 个真实定位器均有页面或动作证据，下载包内容及 SHA-256 已核验
-- 第二个应用证明新应用不需要 catalog/instruction 快照和应用内运行时；公共 CLI 已进入 `rpa-core`，发现器已兼容精简应用，并修复了点击后新标签页被 SSO 替换时的切换竞态
-- 旧授权、catalog、instruction、双份 requirement 等模块仍被首个应用引用，暂不删除；先迁移真实调用方，再由测试证明可删
+- 两个应用已证明新应用不需要 catalog/instruction 快照和应用内运行时；旧合同模块仅保留为仓库兼容层，新应用不得引用
+- 京麦与聚水潭没有重复定位器，暂不新建公共指令、顶层元素或平台包；第三个应用真实重复后再抽象

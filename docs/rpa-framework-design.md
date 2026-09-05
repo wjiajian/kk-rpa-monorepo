@@ -98,7 +98,7 @@ class BrowserActions(Protocol):
     ) -> None: ...
 ```
 
-这是唯一 import DrissionPage 的地方（`rpa_core/drission.py`）。业务代码只见 `ctx.browser`。
+DrissionPage 只允许出现在适配器 `rpa_core/drission_browser.py` 和生命周期管理器 `rpa_core/browser_manager.py`。业务代码只见 `ctx.browser`。
 
 ### 2.2 Element
 
@@ -244,12 +244,13 @@ kk-rpa-monorepo/
 ├── packages/
 │   ├── rpa-core/src/rpa_core/
 │   │   ├── browser.py                 # BrowserActions 协议 + ElementSpec + 目录加载
-│   │   ├── drission.py                # 唯一 import DrissionPage
+│   │   ├── drission_browser.py        # DrissionPage 动作适配器
+│   │   ├── browser_manager.py         # DrissionPage 浏览器构造与生命周期
 │   │   ├── fake.py                    # FakeBrowser + FakeState
 │   │   ├── step.py                    # Step 协议 + Runner + retry/checkpoint/resume
 │   │   ├── run.py                     # run 目录 / 日志 / 截图 / 产物
 │   │   └── cli.py                     # 全部命令实现
-│   └── rpa_<platform>/                # 平台包，等第二个应用出现再建
+│   └── rpa_<platform>/                # 平台包，等第三个应用证明重复再建
 └── apps/<slug>/
     ├── app.toml                       # id / name / entry
     ├── pyproject.toml, uv.lock, .python-version
@@ -353,10 +354,10 @@ V2 的迭代规则：
 1. ~~**给现有 5 个 Step 补 `verify()` + `counterexamples`。**~~（已完成 2026-09-03）
    最便宜，且立刻产生价值 —— 它会当场暴露 S003（`bool(True)`）和 S004（`exists(table tbody)`，实测搜索前后同为 21 行）是假断言，以及 S003→S004→S005 整条链路从未确认过品牌筛选生效。
 2. ~~**给 `BrowserActions` 加 `count()` 和 `texts()`。**~~（已完成）没有它们，第 1 步写不出真断言。
-3. **把 `real_runtime.py` + `cli.py` 的通用部分上提到 `rpa_core.cli`。**
-   第二个应用已使用共享 CLI；首个应用的旧入口尚待迁移。
+3. ~~**把 `real_runtime.py` + `cli.py` 的通用部分上提到 `rpa_core.cli`。**~~（已完成 2026-09-04）
+   聚水潭和京麦均使用共享 CLI；框架统一执行反例、doctor、元素验证、运行、恢复和浏览器生命周期。
 4. ~~**元素合并为 `elements.toml`，加 `expect_count`，实现 `verify-elements`。**~~（已完成；共享 CLI 调用应用阶段导航并逐项报告）
 5. ~~**第二个应用（非聚水潭）用新结构写。**~~（2026-09-04 已完成京麦商品明细报表导出应用；登录、筛选、导出、查看与下载链路已在真实页面验证）
-6. **按实际使用情况删。** 第二个应用没有使用 catalog/instruction 快照和应用内运行时；旧模块仍有首个应用调用，迁移调用方并由回归测试证明后再删。
+6. ~~**按实际使用情况删。**~~（应用运行路径已完成 2026-09-04）聚水潭已移除应用内运行时、授权流程、instruction 快照和双份 requirement 调用；旧核心合同仅作仓库兼容层，不进入新应用。
 
 **让证据决定删什么。** 第 6 步不要提前做。

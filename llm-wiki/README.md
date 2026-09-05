@@ -44,5 +44,5 @@
 - 浏览器底层：DrissionPage 4.1.1.4（官方文档核验日期 2026-09-03）
 - 架构版本：V2。三层结构 `BrowserActions` → `Element` → `Step`；反例强制是唯一的强制约束
 - 首个应用 `jushuitan.inventory.export_stock` 已按 V2 迁移
-- **迁移中**：`rpa-core` 的 `authorization.py`、`catalog.py`、`instructions.py`、`requirements.py`、`discovery.py` 已判定不需要但尚未删除，等第二个应用证明未被使用后再删。新应用不要使用这些模块
+- 聚水潭和京麦都已使用共享 `rpa_core.cli`；新应用只使用 `BrowserActions` / `Element` / `Step`。`authorization.py`、`catalog.py`、`instructions.py` 等旧合同仅作仓库兼容层，不得进入新应用运行路径
 - 已知的历史教训：V1 的 `success_conditions` 是永不执行的字符串，导致 S003（假执行器）和 S004（假验证器）恒真通过。详见 [ADR-029](decisions/ADR-029-falsifiable-step-assertions.md)

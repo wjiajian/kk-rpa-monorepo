@@ -20,6 +20,30 @@ HASH_PATTERN = r"^sha256:[0-9a-f]{64}$"
 ITEM_ID_PATTERN = r"^[A-Za-z][A-Za-z0-9_.:-]*$"
 SEMVER_PATTERN = r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$"
 
+COMPACT_COMMAND_DEFAULTS: dict[str, str | None] = {
+    "doctor": "rpa-app doctor",
+    "check": None,
+    "test": "rpa-app test",
+    "preview": "rpa-app run",
+    "live": "rpa-app run --live",
+    "resume": "rpa-app resume",
+    "login": None,
+    "verify_candidates": None,
+    "verify_elements": "rpa-app verify-elements",
+}
+
+LEGACY_COMMAND_DEFAULTS: dict[str, str | None] = {
+    "doctor": "rpa-app doctor",
+    "check": "rpa-app check",
+    "test": "rpa-app test",
+    "preview": "rpa-app run --mode preview",
+    "live": "rpa-app run --mode live",
+    "resume": "rpa-app resume",
+    "login": "rpa-app login",
+    "verify_candidates": "rpa-app verify-candidates",
+    "verify_elements": None,
+}
+
 
 class ContractModel(BaseModel):
     """Common validation policy for persisted contracts."""
@@ -111,10 +135,14 @@ class AppCommands(ContractModel):
     """The fixed command surface every independent application exposes."""
 
     doctor: Literal["rpa-app doctor"] = "rpa-app doctor"
-    check: Literal["rpa-app check"] = "rpa-app check"
+    check: Literal["rpa-app check"] | None = None
     test: Literal["rpa-app test"] = "rpa-app test"
-    preview: Literal["rpa-app run --mode preview"] = "rpa-app run --mode preview"
-    live: Literal["rpa-app run --mode live"] = "rpa-app run --mode live"
+    preview: Literal[
+        "rpa-app run", "rpa-app run --mode preview"
+    ] = "rpa-app run"
+    live: Literal[
+        "rpa-app run --live", "rpa-app run --mode live"
+    ] = "rpa-app run --live"
     resume: Literal["rpa-app resume"] = "rpa-app resume"
     login: Literal["rpa-app login"] | None = None
     verify_candidates: Literal["rpa-app verify-candidates"] | None = None
@@ -139,6 +167,26 @@ class AppManifest(ContractModel):
     latest_review: str = ""
     commands: AppCommands = Field(default_factory=AppCommands)
 
+    @model_validator(mode="before")
+    @classmethod
+    def apply_schema_command_defaults(cls, data: Any) -> Any:
+        """Fill commands from the CLI generation that owns each manifest schema."""
+
+        if not isinstance(data, dict):
+            return data
+        values = dict(data)
+        defaults = (
+            LEGACY_COMMAND_DEFAULTS
+            if values.get("schema_version", 1) == 2
+            else COMPACT_COMMAND_DEFAULTS
+        )
+        supplied = values.get("commands")
+        if supplied is None:
+            values["commands"] = dict(defaults)
+        elif isinstance(supplied, dict):
+            values["commands"] = {**defaults, **supplied}
+        return values
+
     @model_validator(mode="after")
     def validate_manifest_relationships(self) -> AppManifest:
         module_name = self.entrypoint.partition(":")[0].partition(".")[0]
@@ -148,21 +196,25 @@ class AppManifest(ContractModel):
                 f"({self.app_slug!r}), got {module_name!r}"
             )
         _require_relative_path(self.configuration_schema, "configuration_schema")
+        command_defaults = (
+            LEGACY_COMMAND_DEFAULTS
+            if self.schema_version == 2
+            else COMPACT_COMMAND_DEFAULTS
+        )
+        for name, expected in command_defaults.items():
+            if getattr(self.commands, name) != expected:
+                raise ValueError(
+                    f"schema_version {self.schema_version} command {name!r} "
+                    f"must equal {expected!r}"
+                )
+
         if self.schema_version == 1:
             if self.catalog_lock is not None:
                 raise ValueError("schema_version 1 must not declare catalog_lock")
-            if self.commands.login is not None or self.commands.verify_candidates is not None:
-                raise ValueError("schema_version 1 must not declare V2 commands")
         else:
             if not self.catalog_lock:
                 raise ValueError("schema_version 2 requires catalog_lock")
             _require_relative_path(self.catalog_lock, "catalog_lock")
-            if self.commands.login != "rpa-app login":
-                raise ValueError("schema_version 2 requires the standard login command")
-            if self.commands.verify_candidates != "rpa-app verify-candidates":
-                raise ValueError(
-                    "schema_version 2 requires the standard verify-candidates command"
-                )
         if self.latest_review:
             _require_relative_path(self.latest_review, "latest_review")
         if self.status in {AppStatus.APPROVED, AppStatus.READY_FOR_PUSH} and not self.latest_review:

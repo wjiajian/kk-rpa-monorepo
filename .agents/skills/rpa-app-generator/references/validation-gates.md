@@ -4,18 +4,16 @@ Run only side-effect-free validation during initial generation.
 
 ## Required checks
 
-- load `app.toml`, Memory, Spec and catalog lock through public `rpa-core` loaders;
-- compare Memory and Spec field by field and recompute their hash;
-- verify manifest identity, revision and hash alignment;
-- verify catalog files, dependency closure and hashes;
-- run Fake Browser instruction, ordered-flow, failure and resume tests;
+- load `app.toml`, `requirement.md` and `elements.toml` through public `rpa-core` loaders;
+- recompute the requirement hash and verify manifest, requirement and Program identity alignment;
+- run framework-enforced Step counterexamples, ordered-flow, failure and resume tests through `rpa-app test`;
 - run syntax/static, architecture-boundary, sensitive-content and ignored-path checks;
 - confirm `.venv`, `.env`, `stores.local.toml`, screenshots, Profiles and runs are untracked;
-- run `uv lock --check` and `git diff --check`.
+- run `uv lock --check`, `uv sync --check --locked`, repository validation and `git diff --check`.
 
-`doctor` may validate local tools and configuration without launching a browser. `test` may execute offline tests. `check` must identify every open `PC-*`, `UE-*` and `UI-*` and return a failing status while blockers exist.
+`doctor` validates local tools and configuration without launching a browser. `test` executes framework counterexamples and offline tests. Normal `run` and `resume` identify open blocker IDs and fail before creating runtime state.
 
-Normal `run` and `resume` must reject blockers before creating `runs/<run_id>/`. `login` and `verify-candidates` must not proceed without an exact real-browser authorization and resolvable candidate scope.
+`verify-elements`, `run` and `resume` are real-browser commands and require the exact user authorization required by `AGENTS.md`; command-line `--yes` is only the program's local confirmation and does not grant the agent permission to launch a browser.
 
 ## Report language
 
@@ -24,7 +22,7 @@ Keep these states separate:
 - framework tests passed;
 - application Fake tests passed;
 - public login page inspected;
-- authenticated candidate verification completed;
+- authenticated element verification completed;
 - real Preview completed;
 - external write verified;
 - developer review passed;

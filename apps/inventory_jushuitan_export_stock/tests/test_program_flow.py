@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from rpa_core.runtime import Runner
+from rpa_core.verification import FakeState
 
-from .helpers import make_browser, make_context, make_program
+from .helpers import BRAND_SELECTED, make_browser, make_context, make_program
 
 
 def test_fake_browser_runs_prepare_and_s001_through_s005_in_order(tmp_path: Path) -> None:
@@ -38,3 +39,24 @@ def test_fake_browser_runs_prepare_and_s001_through_s005_in_order(tmp_path: Path
     assert [record.action for record in browser.actions].count("open") == 1
     assert browser.current_url == "https://www.erp321.com/login.aspx"
     assert not any(record.element_id == "jushuitan.erp.login.account_input" for record in browser.actions)
+
+
+def test_final_verification_rejects_wrong_live_brand_after_download(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "wrong-final-brand"
+    program = make_program()
+    happy_context = make_context(run_dir, make_browser(run_dir))
+    result = program.step("S005").execute(happy_context)
+
+    wrong_context = make_context(
+        run_dir,
+        make_browser(
+            run_dir,
+            state=FakeState(texts={BRAND_SELECTED: ("OTHER_BRAND",)}),
+        ),
+    )
+    wrong_context.outputs["S005"] = result
+
+    assert program.step("S005").verify(wrong_context, result) is False
+    assert program.verify(wrong_context) is False

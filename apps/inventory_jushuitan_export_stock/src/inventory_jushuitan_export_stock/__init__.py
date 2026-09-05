@@ -1,3 +1,3 @@
-"""Inventory export RPA application draft."""
+"""Jushuitan inventory export RPA application."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
