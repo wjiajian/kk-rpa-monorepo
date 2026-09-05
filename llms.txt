@@ -1,37 +1,22 @@
 # kk-rpa-monorepo
 
-> 需求文档驱动的独立 RPA 应用框架。浏览器自动化底层为 DrissionPage，业务应用不得直接依赖 DrissionPage。
+需求文档驱动的独立 RPA 应用框架，浏览器底层为 DrissionPage。
 
-## Start here
+- [仓库约定](AGENTS.md)
+- [V3 框架设计](docs/rpa-framework-design.md)
+- [领域术语](CONTEXT.md)
+- [LLM Wiki](llm-wiki/README.md)
+- [生成应用技能](.agents/skills/rpa-app-generator/SKILL.md)
+- [DrissionPage 版本文档](llm-wiki/drissionpage/README.md)
 
-- [AGENTS.md](AGENTS.md) — 生成、测试和真实运行的最高级仓库规则
-- [框架设计 V2](docs/rpa-framework-design.md) — 完整架构
-- [LLM Wiki 首页](llm-wiki/README.md)
-- [DrissionPage 4.1.1.4 文档](llm-wiki/drissionpage/README.md)
+当前两个应用一起迁移到 rpa-core 0.8.0，不保留旧框架兼容层。应用通过共享 CLI 执行有序 Step，生产无人值守，失败后支持 agent 指定恢复步骤续跑。
 
-## 架构要点
+每一步共用正常场景与反例。正常场景必须成功；每步至少有一个执行成功后由 verify 拒绝的错误结果。动作失败需声明预期异常，意外异常不能冒充验证有效。
 
-- 三层：`BrowserActions`（隔离 DrissionPage）→ `Element`（定位器 + 期望匹配数）→ `Step`（业务单元）
-- 一份需求文档 = 一个应用目录 = 一个程序入口
-- 每个 Step 必须提供 `execute()` / `verify()` / `counterexamples()`；**反例强制是框架唯一的强制约束**
-- 反例携带假浏览器状态，`rpa-app test` 在该状态下真的跑一遍 `execute()`，要求它抛错或 `verify()` 返回 `False`
-- 元素定义在应用内 `elements.toml`，用 `expect_count` 表达当前应成立的断言，`rpa-app verify-elements` 检查失效
-- 业务应用只通过 `ctx.browser` / `ctx.excel` / `ctx.feishu` / `ctx.db` 访问外部系统
-- 真实安全边界是**平台侧只读子账号**；代码里的守卫只能校验声明，而出错的恰恰是声明本身
-- 跨应用共享机制在第三个应用真的重复同一段代码之前不建
+定位器只保存在应用 elements.toml，按页面阶段检查 expect_count。下载目录可指定，默认共享，新 run 前清空、resume 保留；日志与截图按每次运行独立保留。
 
-## 决策记录
+业务通过 ctx.browser / ctx.feishu / ctx.db / ctx.excel 访问外部系统。后续实际写入适配按具体需求实现，事务语义由业务提供。
 
-- [ADR-025：浏览器自动化选用 DrissionPage](llm-wiki/decisions/ADR-025-browser-automation-drissionpage.md)
-- [ADR-028：V2 结构简化](llm-wiki/decisions/ADR-028-v2-structural-simplification.md) — 取代 ADR-026 / ADR-027
-- [ADR-029：可证伪断言作为唯一强制约束](llm-wiki/decisions/ADR-029-falsifiable-step-assertions.md)
+旧授权、资产快照、指令目录、需求哈希和旧检查点机制已删除；agent 通过 resume <run_id> --from-step <step_id> 沿用原业务参数和成功结果续跑。历史决定保存在 Git 与 ADR；出现冲突时遵循当前用户要求和 V3 设计。
 
-## 文档policy
-
-- 库和 API 行为以官方文档为准；实现前重新核对当前版本
-- Wiki 记录项目采用方式，不替代 DrissionPage 官方 API 文档
-- 不在任何可提交文件中保存真实账号、Cookie、Token、店铺名称或本机路径
-
-## 迁移状态（2026-09-03）
-
-`rpa-core` 中的 `authorization.py`、`catalog.py`、`instructions.py`、`requirements.py`、`discovery.py` 已被 V2 判定为不需要，但**尚未删除** —— 按计划等第二个应用（换平台）写完、证明未被使用后再删。新应用不要使用这些模块。
+开发期真实浏览器及外部操作按用户授权范围执行；未经授权不 commit、push 或部署。

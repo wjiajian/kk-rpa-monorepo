@@ -20,20 +20,20 @@ Both now read state back from the page instead.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from hashlib import sha256
-from pathlib import Path
-import re
 import unicodedata
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
-from rpa_core.browser import ElementActionError, ElementLookupError, ElementSpec
-from rpa_core.contracts import ResumePolicy, RetryPolicy, SideEffect
+from rpa_core.browser import (
+    DownloadError,
+    ElementActionError,
+    ElementLookupError,
+    ElementSpec,
+)
+from rpa_core.downloads import download_result_is_valid
 from rpa_core.runtime import ExecutionContext, Step, StepSpec
 from rpa_core.verification import Counterexample, FakeState
-
-from .models import StoreConfig
-
 
 NAV_INVENTORY = "jushuitan.erp.navigation.inventory_module"
 INVENTORY_MARKER = "jushuitan.erp.inventory.module_marker"
@@ -58,16 +58,15 @@ def element(context: ExecutionContext, element_id: str) -> ElementSpec:
     return spec
 
 
-def store(context: ExecutionContext) -> StoreConfig:
-    value = context.metadata.get("store_config")
-    if not isinstance(value, StoreConfig):
-        raise TypeError("execution context metadata must contain StoreConfig")
+def _brand(context: ExecutionContext) -> str:
+    value = context.inputs.get("brand_value")
+    if not isinstance(value, str) or not value:
+        raise ValueError("run inputs must contain brand_value")
     return value
 
 
 def _normalize(value: str) -> str:
     """Fold width, case and whitespace so page text compares to configuration."""
-
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
@@ -79,31 +78,7 @@ def _capture(context: ExecutionContext, name: str) -> None:
     try:
         context.browser.screenshot(name=name)
     except Exception:
-        # Evidence capture must never replace the primary failure.
         pass
-
-
-def _retry() -> RetryPolicy:
-    return RetryPolicy(
-        max_attempts=2,
-        delay_seconds=0.0,
-        backoff_multiplier=1.0,
-        retryable_errors=["browser_element_not_found", "browser_element_action_failed"],
-    )
-
-
-def _no_retry() -> RetryPolicy:
-    return RetryPolicy(
-        max_attempts=1,
-        delay_seconds=0.0,
-        backoff_multiplier=1.0,
-        retryable_errors=[],
-    )
-
-
-# --------------------------------------------------------------------------
-# S001 / S002 — navigation
-# --------------------------------------------------------------------------
 
 
 class _NavigationStep(Step):
@@ -117,8 +92,7 @@ class _NavigationStep(Step):
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
         context.browser.click(element(context, self.entry_id))
         visible = context.browser.exists(
-            element(context, self.marker_id),
-            timeout=self.marker_timeout,
+            element(context, self.marker_id), timeout=self.marker_timeout
         )
         return {self.output_key: visible}
 
@@ -126,28 +100,17 @@ class _NavigationStep(Step):
         return (
             isinstance(result, Mapping)
             and bool(result.get(self.output_key))
-            and context.browser.exists(
-                element(context, self.marker_id),
-                timeout=0.0,
-            )
+            and context.browser.exists(element(context, self.marker_id), timeout=0.0)
         )
-
-    def verify_recovery(
-        self,
-        context: ExecutionContext,
-        checkpoint: Mapping[str, Any],
-    ) -> bool:
-        # Re-read the live page rather than trusting the stored result.
-        return context.browser.exists(element(context, self.marker_id), timeout=5.0)
 
     def counterexamples(self) -> Iterable[Counterexample]:
         yield Counterexample(
-            "点击后目标页标识未出现",
-            FakeState(hidden=(self.marker_id,)),
+            "点击后目标页标识未出现", FakeState(hidden=(self.marker_id,))
         )
         yield Counterexample(
             "入口元素不存在",
             FakeState(hidden=(self.entry_id,)),
+            expected_error=ElementLookupError,
         )
 
 
@@ -165,17 +128,11 @@ class OpenProductStock(_NavigationStep):
     marker_timeout = 15.0
 
 
-# --------------------------------------------------------------------------
-# S003 — brand selection, verified by reading the selection back
-# --------------------------------------------------------------------------
-
-
 class SelectBrand(Step):
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
-        brand = store(context).brand_value
+        brand = _brand(context)
         context.browser.click(element(context, RESET_BUTTON))
         context.browser.select(element(context, BRAND_SELECTOR), brand)
-        # The assertion reads the component's real checked state, never the input.
         selected = context.browser.texts(element(context, BRAND_SELECTED))
         return {"requested_brand": brand, "selected_brands": list(selected)}
 
@@ -183,37 +140,21 @@ class SelectBrand(Step):
         if not isinstance(result, Mapping):
             return False
         requested = _normalize(str(result.get("requested_brand", "")))
-        configured = _normalize(store(context).brand_value)
+        configured = _normalize(_brand(context))
         selected = result.get("selected_brands")
-        if (
-            not requested
-            or requested != configured
-            or not isinstance(selected, list)
-        ):
+        if not requested or requested != configured or (not isinstance(selected, list)):
             return False
         live_selected = context.browser.texts(element(context, BRAND_SELECTED))
-        return (
-            _brand_set(selected) == {requested}
-            and _brand_set(live_selected) == {requested}
-        )
-
-    def verify_recovery(
-        self,
-        context: ExecutionContext,
-        checkpoint: Mapping[str, Any],
-    ) -> bool:
-        # Re-read the live selection instead of trusting the stored result.
-        selected = context.browser.texts(element(context, BRAND_SELECTED))
-        return _brand_set(selected) == {_normalize(store(context).brand_value)}
+        return _brand_set(selected) == {requested} and _brand_set(live_selected) == {
+            requested
+        }
 
     def counterexamples(self) -> Iterable[Counterexample]:
         yield Counterexample(
-            "品牌未被选中（回读为空）",
-            FakeState(texts={BRAND_SELECTED: ()}),
+            "品牌未被选中（回读为空）", FakeState(texts={BRAND_SELECTED: ()})
         )
         yield Counterexample(
-            "选中了另一个品牌",
-            FakeState(texts={BRAND_SELECTED: ("其他品牌",)}),
+            "选中了另一个品牌", FakeState(texts={BRAND_SELECTED: ("其他品牌",)})
         )
         yield Counterexample(
             "选中了多个品牌",
@@ -222,12 +163,8 @@ class SelectBrand(Step):
         yield Counterexample(
             "重置按钮不存在",
             FakeState(hidden=(RESET_BUTTON,)),
+            expected_error=ElementLookupError,
         )
-
-
-# --------------------------------------------------------------------------
-# S004 — search, verified by result rows AND the surviving brand selection
-# --------------------------------------------------------------------------
 
 
 class SearchInventory(Step):
@@ -240,14 +177,12 @@ class SearchInventory(Step):
     """
 
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
-        brand = store(context).brand_value
+        brand = _brand(context)
         selector = element(context, BRAND_SELECTOR)
         selected_target = element(context, BRAND_SELECTED)
         context.browser.select(selector, brand)
         context.browser.click(element(context, SEARCH_BUTTON))
         row_count = context.browser.count(element(context, RESULT_ROW), timeout=20.0)
-        # Read what the platform left behind BEFORE re-normalising, so a silent
-        # reset is visible to the assertion instead of being papered over.
         after_search = list(context.browser.texts(selected_target))
         context.browser.select(selector, brand)
         normalized = list(context.browser.texts(selected_target))
@@ -277,30 +212,15 @@ class SearchInventory(Step):
         return (
             row_count > 0
             and _brand_set(after) == {requested}
-            and _brand_set(normalized) == {requested}
-            and live_rows > 0
-            and _brand_set(live_selected) == {requested}
+            and (_brand_set(normalized) == {requested})
+            and (live_rows > 0)
+            and (_brand_set(live_selected) == {requested})
         )
-
-    def verify_recovery(
-        self,
-        context: ExecutionContext,
-        checkpoint: Mapping[str, Any],
-    ) -> bool:
-        rows = context.browser.count(element(context, RESULT_ROW), timeout=5.0)
-        selected = context.browser.texts(element(context, BRAND_SELECTED))
-        return rows > 0 and _brand_set(selected) == {
-            _normalize(store(context).brand_value)
-        }
 
     def counterexamples(self) -> Iterable[Counterexample]:
+        yield Counterexample("筛选后没有任何结果行", FakeState(counts={RESULT_ROW: 0}))
         yield Counterexample(
-            "筛选后没有任何结果行",
-            FakeState(counts={RESULT_ROW: 0}),
-        )
-        yield Counterexample(
-            "搜索后平台把品牌选择重置了",
-            FakeState(texts={BRAND_SELECTED: ()}),
+            "搜索后平台把品牌选择重置了", FakeState(texts={BRAND_SELECTED: ()})
         )
         yield Counterexample(
             "搜索后选中集合变成了多个品牌",
@@ -309,23 +229,21 @@ class SearchInventory(Step):
         yield Counterexample(
             "搜索按钮不存在",
             FakeState(hidden=(SEARCH_BUTTON,)),
+            expected_error=ElementLookupError,
         )
 
 
-# --------------------------------------------------------------------------
-# S005 — export, verified against the selected brand and artifact on disk
-# --------------------------------------------------------------------------
+def _empty_download(context, result):
+    Path(result["download_path"]).write_bytes(b"")
 
 
 class ExportStock(Step):
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
-        brand = store(context).brand_value
-        filename = str(context.metadata["export_filename"])
+        brand = _brand(context)
+        filename = str(context.inputs["export_filename"])
         try:
             context.browser.select(element(context, BRAND_SELECTOR), brand)
-            selected = list(
-                context.browser.texts(element(context, BRAND_SELECTED))
-            )
+            selected = list(context.browser.texts(element(context, BRAND_SELECTED)))
         except Exception:
             _capture(context, "s005-brand-normalise-failed.png")
             raise
@@ -350,172 +268,68 @@ class ExportStock(Step):
             "requested_brand": brand,
             "selected_brands": selected,
             "download_path": str(reference.path),
-            "sha256": reference.sha256,
             "size_bytes": reference.size_bytes,
+            "status": reference.status,
         }
 
     def verify(self, context: ExecutionContext, result: Any) -> bool:
         if not isinstance(result, Mapping):
             return False
         requested = _normalize(str(result.get("requested_brand", "")))
-        configured = _normalize(store(context).brand_value)
+        configured = _normalize(_brand(context))
         selected = result.get("selected_brands")
-        if (
-            not requested
-            or requested != configured
-            or not isinstance(selected, list)
-        ):
+        if not requested or requested != configured or (not isinstance(selected, list)):
             return False
         live_selected = context.browser.texts(element(context, BRAND_SELECTED))
-        if (
-            _brand_set(selected) != {requested}
-            or _brand_set(live_selected) != {requested}
-        ):
+        if _brand_set(selected) != {requested} or _brand_set(live_selected) != {
+            requested
+        }:
             return False
-        path = Path(str(result.get("download_path", "")))
-        if path.is_symlink() or not path.is_file():
-            return False
-        try:
-            path.resolve().relative_to((Path(context.run_dir) / "downloads").resolve())
-        except ValueError:
-            return False
-        content = path.read_bytes()
-        expected_hash = str(result.get("sha256", ""))
-        try:
-            size = int(result["size_bytes"])
-        except (KeyError, TypeError, ValueError):
-            return False
-        return (
-            bool(content)
-            and size == len(content)
-            and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", expected_hash))
-            and expected_hash == f"sha256:{sha256(content).hexdigest()}"
-        )
-
-    def verify_recovery(
-        self,
-        context: ExecutionContext,
-        checkpoint: Mapping[str, Any],
-    ) -> bool:
-        # Re-read the live brand and verify the stored artifact before skipping.
-        result = checkpoint.get("result")
-        return isinstance(result, Mapping) and self.verify(context, result)
+        return download_result_is_valid(result, context.download_dir)
 
     def counterexamples(self) -> Iterable[Counterexample]:
+        yield Counterexample("下载文件为空", after_execute=_empty_download)
         yield Counterexample(
             "导出菜单展开后没有导出库存选项",
             FakeState(hidden=(EXPORT_OPTION,)),
+            expected_error=ElementLookupError,
         )
         yield Counterexample(
             "点击导出后没有产生下载",
             FakeState(downloads_available=False),
+            expected_error=DownloadError,
         )
         yield Counterexample(
             "导出菜单不存在",
             FakeState(hidden=(EXPORT_MENU,)),
+            expected_error=ElementLookupError,
         )
         yield Counterexample(
             "导出前选中了另一个品牌",
             FakeState(texts={BRAND_SELECTED: ("其他品牌",)}),
+            expected_error=ElementActionError,
         )
 
 
-# --------------------------------------------------------------------------
-# Program assembly
-# --------------------------------------------------------------------------
-
-
 def build_steps() -> tuple[Step, ...]:
-    common: dict[str, Any] = {
-        "retry_policy": _retry(),
-        "resume_policy": ResumePolicy.VERIFY_THEN_RUN,
-        "side_effect": SideEffect.READ,
-    }
     return (
         OpenInventoryModule(
-            StepSpec(
-                step_id="S001",
-                name="打开库存模块",
-                timeout_seconds=30.0,
-                declared_outputs=("inventory_module_active",),
-                success_conditions=("库存模块处于激活状态（module_marker 带 current 类）",),
-                recovery=("重新读取模块标识后再决定是否重复导航",),
-                **common,
-            )
+            StepSpec(step_id="S001", name="打开库存模块", timeout_seconds=30.0)
         ),
         OpenProductStock(
-            StepSpec(
-                step_id="S002",
-                name="进入商品库存",
-                timeout_seconds=30.0,
-                declared_outputs=("product_stock_active",),
-                success_conditions=("商品库存页签处于活动状态",),
-                recovery=("重新读取页签状态后再决定是否重复导航",),
-                **common,
-            )
+            StepSpec(step_id="S002", name="进入商品库存", timeout_seconds=30.0)
         ),
         SelectBrand(
-            StepSpec(
-                step_id="S003",
-                name="选择本地配置品牌",
-                timeout_seconds=30.0,
-                declared_inputs=("brand_value",),
-                declared_outputs=("requested_brand", "selected_brands"),
-                success_conditions=(
-                    "回读的选中品牌集合恰好等于配置品牌",
-                    "品牌选择动作已验证下拉弹层关闭",
-                ),
-                recovery=("回读当前选中集合后再决定是否重新选择",),
-                **common,
-            )
+            StepSpec(step_id="S003", name="选择本地配置品牌", timeout_seconds=30.0)
         ),
         SearchInventory(
-            StepSpec(
-                step_id="S004",
-                name="搜索并验证筛选",
-                timeout_seconds=60.0,
-                declared_inputs=("brand_value",),
-                declared_outputs=(
-                    "row_count",
-                    "brands_after_search",
-                    "brands_normalized",
-                ),
-                success_conditions=(
-                    "结果行数大于 0",
-                    "搜索完成后回读的选中品牌仍恰好等于配置品牌",
-                    "品牌选择动作已验证下拉弹层关闭",
-                ),
-                recovery=("回读结果行数和选中集合后再决定是否重新搜索",),
-                **common,
-            )
+            StepSpec(step_id="S004", name="搜索并验证筛选", timeout_seconds=60.0)
         ),
         ExportStock(
-            StepSpec(
-                step_id="S005",
-                name="导出并验证库存文件",
-                timeout_seconds=360.0,
-                declared_inputs=("filename", "brand_value"),
-                declared_outputs=(
-                    "requested_brand",
-                    "selected_brands",
-                    "download_path",
-                    "sha256",
-                    "size_bytes",
-                ),
-                success_conditions=(
-                    "回读的选中品牌集合恰好等于配置品牌",
-                    "品牌选择动作已验证下拉弹层关闭",
-                    "下载文件位于本次运行的 downloads 目录内",
-                    "文件非空且哈希可复现",
-                ),
-                recovery=("校验已存在的完整下载后再决定是否重新导出",),
-                **{**common, "retry_policy": _no_retry()},
-            )
+            StepSpec(step_id="S005", name="导出并验证库存文件", timeout_seconds=360.0)
         ),
     )
 
-
-InputFactory = Callable[[ExecutionContext], Mapping[str, object]]
 
 __all__ = [
     "BRAND_SELECTED",
@@ -530,5 +344,4 @@ __all__ = [
     "SelectBrand",
     "build_steps",
     "element",
-    "store",
 ]

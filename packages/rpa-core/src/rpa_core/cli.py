@@ -1,460 +1,294 @@
-"""Shared command surface for compact V2 RPA applications."""
+"""Shared development checks and unattended application commands."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
-from .browser_manager import (
-    BrowserLaunchSpec,
-    BrowserLifecyclePolicy,
-    BrowserManager,
-)
+import tomllib
+
+from .browser_manager import BrowserLaunchSpec, BrowserLifecyclePolicy, BrowserManager
 from .contracts import RunMode
+from .diagnostics import exception_diagnostics
+from .downloads import prepare_download_directory
 from .elements import ElementEntry, element_specs, load_element_catalog
-from .runtime import BaseProgram, CheckpointStore, ExecutionContext, Runner, Step
+from .runtime import (
+    BaseProgram,
+    ExecutionContext,
+    Runner,
+    RuntimeContractError,
+    Step,
+    validate_resume,
+)
 from .verification import Counterexample, assert_steps_are_falsifiable
-
-
-class ApplicationBlockedError(RuntimeError):
-    """A real command reached an application with open requirement items."""
-
-    error_code = "application_run_blocked"
-
-    def __init__(self, blocker_ids: Iterable[str]) -> None:
-        self.blocker_ids = tuple(dict.fromkeys(str(item) for item in blocker_ids))
-        super().__init__("real execution is blocked by unresolved requirement items")
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeOptions:
-    """Application-supplied local settings needed by the shared runtime."""
-
     account_id: str
     profile_dir: Path
+    download_dir: Path
     debug_port: int = 0
     browser_path: Path | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
-RuntimeLoader = Callable[[str, Mapping[str, Any] | None], RuntimeOptions]
-BlockerLoader = Callable[[], Iterable[str]]
-ElementVerifier = Callable[
-    [ExecutionContext, Mapping[str, ElementEntry]],
-    Mapping[str, Any],
-]
-CounterexampleContextFactory = Callable[[Step, Counterexample, Path], ExecutionContext]
-
-
-class _BrowserLaunchedCommandError(RuntimeError):
-    """Preserve the original CLI error after a real browser was started."""
-
-    real_browser_launched = True
-
-    def __init__(self, cause: Exception) -> None:
-        self.cause = cause
-        self.error_code = getattr(cause, "error_code", "application_command_failed")
-        self.exception_type = type(cause).__name__
-        self.blocker_ids = tuple(getattr(cause, "blocker_ids", ()))
-        super().__init__(str(cause))
+    inputs: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class ApplicationDefinition:
-    """The small Python seam between one application and the shared CLI."""
-
     app_dir: Path
     build_program: Callable[[], BaseProgram]
-    load_runtime_options: RuntimeLoader
-    element_blocker_ids: Mapping[str, str]
-    additional_blockers: BlockerLoader = lambda: ()
-    verify_element_stages: ElementVerifier | None = None
-    build_counterexample_context: CounterexampleContextFactory | None = None
-
-    @property
-    def elements_path(self) -> Path:
-        return self.app_dir / "elements.toml"
+    load_runtime_options: Callable[[str], RuntimeOptions]
+    build_test_context: Callable[[Step, Counterexample | None, Path], ExecutionContext]
+    verify_element_stages: Callable[
+        [ExecutionContext, Mapping[str, ElementEntry]], Mapping[str, Any]
+    ]
+    build_services: Callable[[ExecutionContext], Mapping[str, Any]] = lambda context: {}
 
 
-def main(
-    application: ApplicationDefinition,
-    argv: Sequence[str] | None = None,
-) -> int:
-    """Run one application's standard CLI without an application-local runtime."""
+def validate_application(application: ApplicationDefinition) -> None:
+    manifest = tomllib.loads(
+        (application.app_dir / "app.toml").read_text(encoding="utf-8")
+    )
+    if manifest.get("app_id") != application.build_program().spec.app_id:
+        raise ValueError("app.toml and program app IDs differ")
+    if not manifest.get("name") or not manifest.get("entrypoint"):
+        raise ValueError("app.toml needs name and entrypoint")
+    if not (application.app_dir / "requirement.md").is_file():
+        raise ValueError("requirement.md is missing")
+    load_element_catalog(application.app_dir / "elements.toml")
 
-    args = _parser().parse_args(argv)
+
+def collect_blockers(application: ApplicationDefinition) -> tuple[str, ...]:
+    return tuple(
+        key
+        for key, entry in load_element_catalog(
+            application.app_dir / "elements.toml"
+        ).items()
+        if not entry.spec.is_resolved
+    )
+
+
+def main(application: ApplicationDefinition, argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="rpa-app")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("doctor", "run", "verify-elements"):
+        command = commands.add_parser(name)
+        command.add_argument("--account", default="STORE_001")
+        if name == "run":
+            command.add_argument(
+                "--preview",
+                action="store_true",
+                help="use preview mode in configured business services",
+            )
+    resume = commands.add_parser("resume")
+    resume.add_argument("run_id")
+    resume.add_argument(
+        "--from-step",
+        required=True,
+        help="step selected after inspecting and preparing the browser",
+    )
+    commands.add_parser("test")
+    args = parser.parse_args(argv)
     try:
+        validate_application(application)
         if args.command == "doctor":
-            return _doctor(application)
+            return _doctor(application, args.account)
         if args.command == "test":
             return _test(application)
-        if args.command == "verify-elements":
-            return _verify_elements(
-                application,
-                account=args.account,
-                confirmed=args.yes,
-            )
-        if args.command == "run":
-            mode = RunMode.LIVE if args.live else RunMode.PREVIEW
-            return _execute(
-                application,
-                account=args.account,
-                run_id=_new_run_id(),
-                mode=mode,
-                resume=False,
-                confirmed=args.yes,
-            )
         if args.command == "resume":
+            previous = _read_failed_run(application, args.run_id, args.from_step)
             return _execute(
                 application,
-                account=args.account,
-                run_id=args.run_id,
-                mode=None,
-                resume=True,
-                confirmed=args.yes,
+                account=previous["account_id"],
+                mode=RunMode(previous["mode"]),
+                previous=previous,
+                from_step=args.from_step,
             )
-    except Exception as error:  # noqa: BLE001 - stable CLI boundary
+        return _execute(
+            application,
+            account=args.account,
+            mode=RunMode.PREVIEW if getattr(args, "preview", False) else RunMode.LIVE,
+            verify_elements=args.command == "verify-elements",
+        )
+    except Exception as error:
         _print(
             {
                 "ok": False,
                 "error": getattr(error, "error_code", "application_command_failed"),
-                "exception_type": getattr(
-                    error,
-                    "exception_type",
-                    type(error).__name__,
-                ),
-                "blockers": list(getattr(error, "blocker_ids", ())),
-                "real_browser_launched": bool(
-                    getattr(error, "real_browser_launched", False)
-                ),
+                "exception_type": type(error).__name__,
+                "step_id": getattr(error, "step_id", None),
+                "run_id": getattr(error, "run_id", None),
+                "diagnostics": exception_diagnostics(error),
             }
         )
         return 2
-    raise AssertionError(f"unhandled command: {args.command}")
 
 
-def collect_blockers(application: ApplicationDefinition) -> tuple[str, ...]:
-    """Return exact open IDs without creating runtime files or a browser."""
+def _test(application: ApplicationDefinition) -> int:
+    with TemporaryDirectory(prefix="rpa-app-test-") as temporary:
+        root = Path(temporary).resolve()
+        serial = 0
 
-    entries = load_element_catalog(application.elements_path)
-    blockers = [
-        application.element_blocker_ids.get(element_id, f"UE-{element_id}")
-        for element_id, entry in entries.items()
-        if not entry.spec.is_resolved
-    ]
-    blockers.extend(str(item) for item in application.additional_blockers())
-    return tuple(dict.fromkeys(blockers))
+        def context_factory(
+            step: Step, case: Counterexample | None
+        ) -> ExecutionContext:
+            nonlocal serial
+            serial += 1
+            return application.build_test_context(step, case, root / str(serial))
 
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rpa-app")
-    commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("doctor")
-    commands.add_parser("test")
-
-    verify = commands.add_parser("verify-elements")
-    verify.add_argument("--account", default="STORE_001")
-    verify.add_argument("--yes", action="store_true")
-
-    run = commands.add_parser("run")
-    run.add_argument("--account", default="STORE_001")
-    run.add_argument("--live", action="store_true")
-    run.add_argument("--yes", action="store_true")
-
-    resume = commands.add_parser("resume")
-    resume.add_argument("run_id")
-    resume.add_argument("--account", default="STORE_001")
-    resume.add_argument("--yes", action="store_true")
-    return parser
+        assert_steps_are_falsifiable(application.build_program().steps, context_factory)
+    return subprocess.run(
+        [sys.executable, "-m", "pytest"], cwd=application.app_dir, check=False
+    ).returncode
 
 
-def _doctor(application: ApplicationDefinition) -> int:
-    program = application.build_program()
-    entries = load_element_catalog(application.elements_path)
+def _doctor(application: ApplicationDefinition, account: str) -> int:
     blockers = collect_blockers(application)
-    python_supported = sys.version_info[:2] == (3, 12)
-    local_store_config_exists = (
-        application.app_dir / "config" / "stores.local.toml"
-    ).is_file()
-    runtime_configuration_valid = False
-    runtime_configuration_error: str | None = None
-    browser_path: Path | None = None
+    configuration_error = None
+    options = None
     try:
-        options = application.load_runtime_options("STORE_001", None)
-        runtime_configuration_valid = True
-        browser_path = options.browser_path
-    except Exception as error:  # noqa: BLE001 - doctor reports invalid local setup
-        runtime_configuration_error = type(error).__name__
-    browser_available, browser_detail = _browser_status(browser_path)
-    dependencies_synchronized, dependency_detail = _dependency_status(
-        application.app_dir
+        options = application.load_runtime_options(account)
+    except Exception as error:
+        configuration_error = type(error).__name__
+    browser_ok, browser_detail = _browser_status(
+        options.browser_path if options else None
     )
+    dependencies_ok, dependency_detail = _dependency_status(application.app_dir)
     ok = (
-        python_supported
-        and local_store_config_exists
-        and runtime_configuration_valid
-        and browser_available
-        and dependencies_synchronized
+        sys.version_info[:2] == (3, 12)
+        and options is not None
+        and browser_ok
+        and dependencies_ok
         and not blockers
     )
     _print(
         {
             "ok": ok,
-            "app_id": program.spec.app_id,
-            "program_id": program.spec.program_id,
-            "python_supported": python_supported,
-            "local_store_config_exists": local_store_config_exists,
-            "runtime_configuration_valid": runtime_configuration_valid,
-            "runtime_configuration_error": runtime_configuration_error,
-            "browser_available": browser_available,
+            "account": account,
+            "configuration_error": configuration_error,
+            "browser_available": browser_ok,
             "browser_detail": browser_detail,
-            "dependencies_synchronized": dependencies_synchronized,
+            "dependencies_synchronized": dependencies_ok,
             "dependency_detail": dependency_detail,
-            "element_count": len(entries),
-            "blockers": list(blockers),
+            "blockers": blockers,
             "real_browser_launched": False,
         }
     )
     return 0 if ok else 2
 
 
-def _test(application: ApplicationDefinition) -> int:
-    if application.build_counterexample_context is None:
-        raise RuntimeError(
-            "application must define build_counterexample_context for rpa-app test"
-        )
-    program = application.build_program()
-    with TemporaryDirectory(prefix="rpa-app-test-") as temporary:
-        temporary_root = Path(temporary)
-        assert_steps_are_falsifiable(
-            program.steps,
-            lambda step, case: application.build_counterexample_context(
-                step,
-                case,
-                temporary_root,
-            ),
-        )
-    completed = subprocess.run(
-        [sys.executable, "-m", "pytest"],
-        cwd=application.app_dir,
-        check=False,
-    )
-    return int(completed.returncode)
-
-
-def _verify_elements(
-    application: ApplicationDefinition,
-    *,
-    account: str,
-    confirmed: bool,
-) -> int:
-    if not confirmed:
-        raise RuntimeError("verify-elements requires --yes")
-    entries = load_element_catalog(application.elements_path)
-    unresolved = [entry.id for entry in entries.values() if not entry.spec.is_resolved]
-    if unresolved:
-        _print(
-            {
-                "ok": False,
-                "error": "unresolved_element_locators",
-                "elements": unresolved,
-                "real_browser_launched": False,
-            }
-        )
-        return 2
-    blockers = collect_blockers(application)
-    if blockers:
-        raise ApplicationBlockedError(blockers)
-    if application.verify_element_stages is None:
-        _print(
-            {
-                "ok": False,
-                "error": "application_stage_verification_required",
-                "detail": "application does not define a stage verifier",
-                "real_browser_launched": False,
-            }
-        )
-        return 2
-
-    run_id = _new_run_id().replace("run-", "verify-elements-", 1)
-    run_dir = application.app_dir / "runs" / run_id
-    options = application.load_runtime_options(account, None)
-    program = application.build_program()
-    manager = BrowserManager(application.app_dir / "runtime" / "browser-manager")
-    session = None
-    failed = True
-    browser_launched = False
-    try:
-        try:
-            session = manager.start(
-                BrowserLaunchSpec(
-                    account_id=options.account_id,
-                    profile_id=f"{application.app_dir.name}.{options.account_id}",
-                    profile_dir=options.profile_dir,
-                    requested_port=options.debug_port,
-                    browser_path=options.browser_path,
-                    lifecycle=BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE,
-                ),
-                run_id=run_id,
-                run_dir=run_dir,
-                action_timeout=15.0,
-                download_timeout=300.0,
-            )
-            browser_launched = True
-            context = ExecutionContext(
-                app_id=program.spec.app_id,
-                program_id=program.spec.program_id,
-                program_version=program.spec.version,
-                requirement_hash=program.spec.requirement_hash,
-                run_id=run_id,
-                account_id=options.account_id,
-                mode=RunMode.PREVIEW,
-                run_dir=run_dir,
-                services={
-                    "browser": session.actions,
-                    "elements": element_specs(entries),
-                },
-                metadata={"app_dir": str(application.app_dir), **dict(options.metadata)},
-            )
-            result = dict(application.verify_element_stages(context, entries))
-            result.update(
-                {
-                    "command": "verify-elements",
-                    "account": options.account_id,
-                    "run_id": run_id,
-                    "real_browser_launched": True,
-                }
-            )
-            failed = not bool(result.get("ok"))
-            _print(result)
-            return 2 if failed else 0
-        finally:
-            try:
-                if session is not None and session.active:
-                    manager.finish(session, failed=failed)
-            finally:
-                manager.shutdown()
-    except Exception as error:
-        if browser_launched:
-            raise _BrowserLaunchedCommandError(error) from error
-        raise
+def _read_failed_run(
+    application: ApplicationDefinition, run_id: str, from_step: str
+) -> Mapping[str, Any]:
+    if Path(run_id).name != run_id or run_id in {"", ".", ".."}:
+        raise RuntimeContractError("run_id must be a run directory name")
+    path = application.app_dir / "runs" / run_id / "result.json"
+    previous = json.loads(path.read_text(encoding="utf-8"))
+    validate_resume(application.build_program(), previous, from_step)
+    if previous.get("run_id") != run_id:
+        raise RuntimeContractError("run ID differs from its directory")
+    return previous
 
 
 def _execute(
     application: ApplicationDefinition,
     *,
     account: str,
-    run_id: str,
-    mode: RunMode | None,
-    resume: bool,
-    confirmed: bool,
+    mode: RunMode,
+    verify_elements: bool = False,
+    previous: Mapping[str, Any] | None = None,
+    from_step: str | None = None,
 ) -> int:
     blockers = collect_blockers(application)
     if blockers:
-        raise ApplicationBlockedError(blockers)
-    if not confirmed:
-        raise RuntimeError("real execution requires --yes")
-
-    checkpoint: Mapping[str, Any] | None = None
-    run_dir = application.app_dir / "runs" / run_id
-    if resume:
-        checkpoint = CheckpointStore(run_dir / "checkpoint.json").load()
-        if checkpoint is None:
-            raise RuntimeError("resume checkpoint does not exist")
-        raw_identity = checkpoint.get("identity")
-        if not isinstance(raw_identity, Mapping):
-            raise RuntimeError("resume checkpoint identity is missing")
-        mode = RunMode(str(raw_identity.get("mode", "")))
-    assert mode is not None
-
-    options = application.load_runtime_options(account, checkpoint)
-    program = application.build_program()
-    entries = load_element_catalog(application.elements_path)
-    if checkpoint is not None:
-        preflight_context = ExecutionContext(
-            app_id=program.spec.app_id,
-            program_id=program.spec.program_id,
-            program_version=program.spec.version,
-            requirement_hash=program.spec.requirement_hash,
-            run_id=run_id,
-            account_id=options.account_id,
-            mode=mode,
-            run_dir=run_dir,
+        _print(
+            {
+                "ok": False,
+                "error": "unresolved_element_locators",
+                "elements": blockers,
+                "real_browser_launched": False,
+            }
         )
-        CheckpointStore.validate_identity(checkpoint, preflight_context)
-        Runner._validate_checkpoint_steps(checkpoint, program)
+        return 2
+    options = application.load_runtime_options(account)
+    program = application.build_program()
+    entries = load_element_catalog(application.app_dir / "elements.toml")
+    run_id = _new_run_id()
+    run_dir = application.app_dir / "runs" / run_id
+    context = ExecutionContext(
+        app_id=program.spec.app_id,
+        run_id=run_id,
+        account_id=options.account_id,
+        run_dir=run_dir,
+        download_dir=Path(previous["download_dir"])
+        if previous is not None
+        else options.download_dir,
+        mode=mode,
+        services={"elements": element_specs(entries)},
+        metadata=dict(options.metadata),
+        inputs=dict(previous["inputs"] if previous is not None else options.inputs),
+    )
+    context.services.update(application.build_services(context))
     manager = BrowserManager(application.app_dir / "runtime" / "browser-manager")
     session = None
     failed = True
-    browser_launched = False
     try:
-        try:
-            session = manager.start(
-                BrowserLaunchSpec(
-                    account_id=options.account_id,
-                    profile_id=f"{application.app_dir.name}.{options.account_id}",
-                    profile_dir=options.profile_dir,
-                    requested_port=options.debug_port,
-                    browser_path=options.browser_path,
-                    lifecycle=BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE,
-                ),
-                run_id=run_id,
-                run_dir=run_dir,
-                action_timeout=15.0,
-                download_timeout=300.0,
-            )
-            browser_launched = True
-            context = ExecutionContext(
-                app_id=program.spec.app_id,
-                program_id=program.spec.program_id,
-                program_version=program.spec.version,
-                requirement_hash=program.spec.requirement_hash,
-                run_id=run_id,
+        session = manager.start(
+            BrowserLaunchSpec(
                 account_id=options.account_id,
-                mode=mode,
-                run_dir=run_dir,
-                services={
-                    "browser": session.actions,
-                    "elements": element_specs(entries),
-                },
-                metadata={"app_dir": str(application.app_dir), **dict(options.metadata)},
+                profile_id=f"{application.app_dir.name}.{options.account_id}",
+                profile_dir=options.profile_dir,
+                requested_port=options.debug_port,
+                browser_path=options.browser_path,
+                lifecycle=BrowserLifecyclePolicy.KEEP_OPEN_ON_FAILURE,
+            ),
+            run_id=run_id,
+            run_dir=run_dir,
+            action_timeout=15.0,
+            download_timeout=300.0,
+            download_dir=context.download_dir,
+        )
+        context.services["browser"] = session.actions
+        if previous is None:
+            prepare_download_directory(
+                context.download_dir, app_dir=application.app_dir, run_dir=run_dir
             )
-            result = (
-                Runner().resume(program, context)
-                if resume
-                else Runner().run(program, context)
-            )
-            failed = False
-            _print(
-                {
-                    "ok": True,
-                    "run_id": result.run_id,
-                    "status": result.status,
-                    "completed_steps": list(result.completed_steps),
-                    "skipped_steps": list(result.skipped_steps),
-                }
-            )
-            return 0
+        if verify_elements:
+            payload = dict(application.verify_element_stages(context, entries))
+            failed = not bool(payload.get("ok"))
+            payload.update(run_id=run_id, real_browser_launched=True)
+            _print(payload)
+            return 2 if failed else 0
+        result = Runner().run(program, context, previous=previous, from_step=from_step)
+        failed = False
+        _print(
+            {
+                "ok": True,
+                "run_id": result.run_id,
+                "status": result.status,
+                "completed_steps": result.completed_steps,
+                "download_dir": str(context.download_dir),
+                "resumed_from": previous["run_id"] if previous is not None else None,
+            }
+        )
+        return 0
+    finally:
+        try:
+            if session is not None and session.active:
+                manager.finish(session, failed=failed)
         finally:
-            try:
-                if session is not None and session.active:
-                    manager.finish(session, failed=failed)
-            finally:
-                manager.shutdown()
-    except Exception as error:
-        if browser_launched:
-            raise _BrowserLaunchedCommandError(error) from error
-        raise
+            manager.shutdown()
 
 
 def _browser_status(configured_path: Path | None) -> tuple[bool, str]:
@@ -525,14 +359,3 @@ def _new_run_id() -> str:
 
 def _print(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-
-
-__all__ = [
-    "ApplicationBlockedError",
-    "ApplicationDefinition",
-    "CounterexampleContextFactory",
-    "ElementVerifier",
-    "RuntimeOptions",
-    "collect_blockers",
-    "main",
-]

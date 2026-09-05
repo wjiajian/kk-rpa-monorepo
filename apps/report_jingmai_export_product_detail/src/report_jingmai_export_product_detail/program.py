@@ -2,24 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, date, datetime, timedelta
-from hashlib import sha256
-from pathlib import Path
 import re
-import tomllib
+from collections.abc import Callable, Iterable, Mapping
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import tomllib
 from rpa_core.browser import (
-    DownloadRef,
+    DownloadError,
+    ElementLookupError,
     ElementSpec,
     FakeBrowserActions,
     FakeDownload,
+    NavigationError,
     SecretValue,
 )
 from rpa_core.cli import ApplicationDefinition, RuntimeOptions
-from rpa_core.contracts import ResumePolicy, RetryPolicy, RunMode, SideEffect
+from rpa_core.contracts import RunMode
+from rpa_core.downloads import download_result_is_valid, resolve_download_directory
 from rpa_core.elements import (
     ElementEntry,
     check_element_expectations,
@@ -29,21 +31,12 @@ from rpa_core.elements import (
 from rpa_core.runtime import BaseProgram, ExecutionContext, ProgramSpec, Step, StepSpec
 from rpa_core.verification import Counterexample, FakeState
 
-
 APP_ID = "jingmai.reports.export_product_detail"
-PROGRAM_ID = "jingmai-product-detail-export"
-PROGRAM_VERSION = "0.1.0"
-REQUIREMENT_HASH = "sha256:e230ef486a961af966bcf7e80be44810b946a079ad82c9614f8070127541c1aa"
 APP_DIR = Path(__file__).resolve().parents[2]
-
 HOME_URL = "https://shop.jd.com/jdm/home"
 LOGIN_URL = "https://passport.shop.jd.com/login/index.action"
-REPORT_URL = (
-    "https://jdsz.jd.com/szweb/view/reports-center/"
-    "recommend-report-temp.html"
-)
+REPORT_URL = "https://jdsz.jd.com/szweb/view/reports-center/recommend-report-temp.html"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-
 AUTHENTICATED_MARKER = "jingmai.shell.authenticated_marker"
 ACCOUNT_IDENTITY = "jingmai.shell.account_identity_surface"
 LOGIN_USERNAME_INPUT = "jingmai.login.username_input"
@@ -71,31 +64,6 @@ REPORT_NAMES = "jdsz.downloads.report_names"
 REPORT_STATUSES = "jdsz.downloads.report_statuses"
 MATCHING_DOWNLOAD_BUTTON = "jdsz.downloads.first_matching_download_button"
 
-ELEMENT_BLOCKER_IDS = {
-    AUTHENTICATED_MARKER: "UE-AUTHENTICATED-MARKER",
-    ACCOUNT_IDENTITY: "UE-ACCOUNT-IDENTITY",
-    LOGIN_USERNAME_INPUT: "UE-LOGIN-USERNAME",
-    LOGIN_PASSWORD_INPUT: "UE-LOGIN-PASSWORD",
-    LOGIN_SUBMIT_BUTTON: "UE-LOGIN-SUBMIT",
-    PRODUCT_DETAIL_ENTRY: "UE-PRODUCT-DETAIL-ENTRY",
-    PRODUCT_DETAIL_PAGE: "UE-PRODUCT-DETAIL-PAGE",
-    START_DATE_INPUT: "UE-START-DATE",
-    END_DATE_INPUT: "UE-END-DATE",
-    DATE_VALUES: "UE-DATE-VALUES",
-    REPORT_ROWS: "UE-REPORT-ROWS",
-    DOWNLOAD_REPORT_BUTTON: "UE-DOWNLOAD-REPORT",
-    EXPORT_READY_DIALOG: "UE-EXPORT-DIALOG",
-    DIALOG_REPORT_NAME: "UE-DIALOG-REPORT-NAME",
-    VIEW_EXPORTS_BUTTON: "UE-VIEW-EXPORTS",
-    DOWNLOADS_PAGE: "UE-DOWNLOADS-PAGE",
-    REFRESH_REPORTS_BUTTON: "UE-REFRESH-REPORTS",
-    REPORT_SEARCH_INPUT: "UE-REPORT-SEARCH-INPUT",
-    REPORT_SEARCH_BUTTON: "UE-REPORT-SEARCH-BUTTON",
-    REPORT_NAMES: "UE-REPORT-NAMES",
-    REPORT_STATUSES: "UE-REPORT-STATUSES",
-    MATCHING_DOWNLOAD_BUTTON: "UE-MATCHING-DOWNLOAD",
-}
-
 
 class ApplicationStateError(RuntimeError):
     error_code = "application_state_invalid"
@@ -114,90 +82,29 @@ class ManualLoginVerificationRequired(ApplicationStateError):
 
 
 def expected_dialog_name(target_date: str) -> str:
-    return (
-        f"经营状况-商品明细报表-{target_date}-{target_date}-"
-        "全部-全部-汇总展示"
-    )
+    return f"经营状况-商品明细报表-{target_date}-{target_date}-全部-全部-汇总展示"
 
 
 def expected_report_filename(target_date: str) -> str:
-    return (
-        f"经营状况-商品明细日报-{target_date}-全部-全部-汇总-SKU.xlsx"
-    )
+    return f"经营状况-商品明细日报-{target_date}-全部-全部-汇总-SKU.xlsx"
 
 
 def local_download_filename(target_date: str) -> str:
     return f"jingmai-product-detail-{target_date}.xlsx"
 
 
-def target_date_from_checkpoint(
-    checkpoint: Mapping[str, Any] | None,
-    *,
-    now: datetime | None = None,
-) -> str:
-    """Keep the original business date when a run resumes on a later day."""
-
-    if checkpoint is not None:
-        steps = checkpoint.get("steps")
-        if isinstance(steps, Mapping):
-            for raw_step in steps.values():
-                if not isinstance(raw_step, Mapping):
-                    continue
-                result = raw_step.get("result")
-                if isinstance(result, Mapping):
-                    candidate = result.get("target_date")
-                    if isinstance(candidate, str) and _is_iso_date(candidate):
-                        return candidate
-        created_at = checkpoint.get("created_at")
-        if isinstance(created_at, str):
-            try:
-                created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            except ValueError:
-                created = None
-            if created is not None:
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=UTC)
-                return (created.astimezone(SHANGHAI).date() - timedelta(days=1)).isoformat()
-
+def target_date_for_run(*, now: datetime | None = None) -> str:
     current = now or datetime.now(SHANGHAI)
     if current.tzinfo is None:
         current = current.replace(tzinfo=SHANGHAI)
     return (current.astimezone(SHANGHAI).date() - timedelta(days=1)).isoformat()
 
 
-class BrowserVerifiedStep(Step):
-    def verify_recovery(
-        self,
-        context: ExecutionContext,
-        checkpoint: Mapping[str, Any],
-    ) -> bool:
-        result = checkpoint.get("result")
-        return isinstance(result, Mapping) and self.verify(context, result)
-
-
-class EnsureSessionStep(BrowserVerifiedStep):
+class EnsureSessionStep(Step):
     def __init__(self) -> None:
         super().__init__(
             StepSpec(
-                step_id="S001",
-                name="登录并确认目标京麦账号会话",
-                retry_policy=RetryPolicy(max_attempts=1),
-                side_effect=SideEffect.READ,
-                timeout_seconds=75.0,
-                declared_outputs=(
-                    "target_date",
-                    "login_performed",
-                    "authenticated",
-                    "identity_verified",
-                ),
-                success_conditions=(
-                    "an unauthenticated session logs in through the stable Jingmai URL",
-                    "authenticated marker exists",
-                    "page identity exactly matches local expected identity",
-                ),
-                recovery=(
-                    "CAPTCHA, slider, SMS, or an unknown login state is retained for manual handling",
-                ),
+                step_id="S001", name="登录并确认目标京麦账号会话", timeout_seconds=75.0
             )
         )
 
@@ -209,47 +116,32 @@ class EnsureSessionStep(BrowserVerifiedStep):
             isinstance(result, Mapping)
             and result.get("target_date") == _target_date(context)
             and context.browser.exists(_element(context, AUTHENTICATED_MARKER))
-            and _identities(context) == [_expected_identity(context)]
+            and (_identities(context) == [_expected_identity(context)])
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
         yield Counterexample(
             "未登录且登录表单不可用",
             FakeState(
-                hidden=(
-                    AUTHENTICATED_MARKER,
-                    ACCOUNT_IDENTITY,
-                    LOGIN_USERNAME_INPUT,
-                )
+                hidden=(AUTHENTICATED_MARKER, ACCOUNT_IDENTITY, LOGIN_USERNAME_INPUT)
             ),
+            expected_error=ApplicationStateError,
         )
         yield Counterexample(
             "提交登录后仍未建立会话",
             FakeState(hidden=(AUTHENTICATED_MARKER, ACCOUNT_IDENTITY)),
+            expected_error=ManualLoginVerificationRequired,
         )
         yield Counterexample(
-            "登录的是其他账号",
-            FakeState(texts={ACCOUNT_IDENTITY: ("OTHER_ACCOUNT",)}),
+            "登录的是其他账号", FakeState(texts={ACCOUNT_IDENTITY: ("OTHER_ACCOUNT",)})
         )
 
 
-class OpenProductDetailStep(BrowserVerifiedStep):
+class OpenProductDetailStep(Step):
     def __init__(self) -> None:
         super().__init__(
             StepSpec(
-                step_id="S002",
-                name="打开经营状况商品明细报表",
-                retry_policy=RetryPolicy(
-                    max_attempts=2,
-                    retryable_errors=[
-                        "browser_navigation_failed",
-                        "browser_element_not_found",
-                        "application_state_invalid",
-                    ],
-                ),
-                side_effect=SideEffect.READ,
-                timeout_seconds=45.0,
-                success_conditions=("product-detail page marker exists",),
+                step_id="S002", name="打开经营状况商品明细报表", timeout_seconds=45.0
             )
         )
 
@@ -261,46 +153,24 @@ class OpenProductDetailStep(BrowserVerifiedStep):
         return (
             isinstance(result, Mapping)
             and result.get("target_date") == _target_date(context)
-            and context.browser.count(_element(context, PRODUCT_DETAIL_PAGE)) == 1
+            and (context.browser.count(_element(context, PRODUCT_DETAIL_PAGE)) == 1)
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
         yield Counterexample(
             "查看详情入口不存在",
             FakeState(hidden=(PRODUCT_DETAIL_ENTRY,)),
+            expected_error=ApplicationStateError,
         )
         yield Counterexample(
-            "点击后未进入商品明细页",
-            FakeState(counts={PRODUCT_DETAIL_PAGE: 0}),
+            "点击后未进入商品明细页", FakeState(counts={PRODUCT_DETAIL_PAGE: 0})
         )
 
 
-class SelectYesterdayStep(BrowserVerifiedStep):
+class SelectYesterdayStep(Step):
     def __init__(self) -> None:
         super().__init__(
-            StepSpec(
-                step_id="S003",
-                name="选择昨日统计日期",
-                retry_policy=RetryPolicy(
-                    max_attempts=2,
-                    retryable_errors=[
-                        "browser_element_not_found",
-                        "step_verification_failed",
-                    ],
-                ),
-                side_effect=SideEffect.READ,
-                timeout_seconds=30.0,
-                declared_outputs=(
-                    "target_date",
-                    "selected_dates",
-                    "row_count",
-                    "row_dates",
-                ),
-                success_conditions=(
-                    "the combined date range equals the original run's yesterday",
-                    "every returned row carries the target date",
-                ),
-            )
+            StepSpec(step_id="S003", name="选择昨日统计日期", timeout_seconds=30.0)
         )
 
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
@@ -321,10 +191,10 @@ class SelectYesterdayStep(BrowserVerifiedStep):
         return (
             isinstance(result, Mapping)
             and result.get("target_date") == target
-            and _selected_dates(context) == [target, target]
-            and context.browser.count(_element(context, REPORT_ROWS)) > 0
+            and (_selected_dates(context) == [target, target])
+            and (context.browser.count(_element(context, REPORT_ROWS)) > 0)
             and bool(row_dates)
-            and all(value == target for value in row_dates)
+            and all((value == target for value in row_dates))
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
@@ -337,32 +207,19 @@ class SelectYesterdayStep(BrowserVerifiedStep):
             FakeState(counts={REPORT_ROWS: 0}, texts={REPORT_ROW_DATES: ()}),
         )
         yield Counterexample(
-            "结果行仍属于其他日期",
-            FakeState(texts={REPORT_ROW_DATES: ("2099-01-01",)}),
+            "结果行仍属于其他日期", FakeState(texts={REPORT_ROW_DATES: ("2099-01-01",)})
         )
         yield Counterexample(
             "组合日期控件不存在",
             FakeState(hidden=(START_DATE_INPUT, DATE_VALUES)),
+            expected_error=ElementLookupError,
         )
 
 
-class RequestExportStep(BrowserVerifiedStep):
+class RequestExportStep(Step):
     def __init__(self) -> None:
         super().__init__(
-            StepSpec(
-                step_id="S004",
-                name="生成商品明细导出任务",
-                retry_policy=RetryPolicy(max_attempts=1),
-                resume_policy=ResumePolicy.MANUAL,
-                side_effect=SideEffect.WRITE,
-                timeout_seconds=30.0,
-                declared_outputs=("target_date", "report_name"),
-                success_conditions=(
-                    "export-ready dialog is visible",
-                    "dialog report name exactly matches the target date",
-                ),
-                recovery=("never repeat an uncertain export request automatically",),
-            )
+            StepSpec(step_id="S004", name="生成商品明细导出任务", timeout_seconds=30.0)
         )
 
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
@@ -383,57 +240,39 @@ class RequestExportStep(BrowserVerifiedStep):
             isinstance(result, Mapping)
             and result.get("target_date") == target
             and context.browser.exists(_element(context, EXPORT_READY_DIALOG))
-            and _dialog_report_name(_texts(context, DIALOG_REPORT_NAME))
-            == expected_dialog_name(target)
+            and (
+                _dialog_report_name(_texts(context, DIALOG_REPORT_NAME))
+                == expected_dialog_name(target)
+            )
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
         yield Counterexample(
-            "导出确认弹窗未出现",
-            FakeState(hidden=(EXPORT_READY_DIALOG,)),
+            "导出确认弹窗未出现", FakeState(hidden=(EXPORT_READY_DIALOG,))
         )
         yield Counterexample(
             "弹窗对应的是其他日期",
-            FakeState(
-                texts={DIALOG_REPORT_NAME: ("经营状况-商品明细报表-其他日期",)}
-            ),
+            FakeState(texts={DIALOG_REPORT_NAME: ("经营状况-商品明细报表-其他日期",)}),
         )
         yield Counterexample(
             "下载报表按钮不存在",
             FakeState(hidden=(DOWNLOAD_REPORT_BUTTON,)),
+            expected_error=ElementLookupError,
         )
 
 
-class OpenDownloadsStep(BrowserVerifiedStep):
+class OpenDownloadsStep(Step):
     def __init__(self) -> None:
         super().__init__(
-            StepSpec(
-                step_id="S005",
-                name="打开报表下载页",
-                retry_policy=RetryPolicy(
-                    max_attempts=2,
-                    retryable_errors=[
-                        "browser_navigation_failed",
-                        "browser_element_not_found",
-                        "application_state_invalid",
-                    ],
-                ),
-                side_effect=SideEffect.READ,
-                timeout_seconds=30.0,
-                declared_outputs=("target_date", "downloads_opened"),
-                success_conditions=("new download tab is active and its marker exists",),
-            )
+            StepSpec(step_id="S005", name="打开报表下载页", timeout_seconds=30.0)
         )
 
     def execute(self, context: ExecutionContext) -> Mapping[str, object]:
         context.browser.click_and_switch_to_new_tab(
-            _element(context, VIEW_EXPORTS_BUTTON),
-            timeout=15.0,
+            _element(context, VIEW_EXPORTS_BUTTON), timeout=15.0
         )
         page_marker = _ready_element(
-            context,
-            DOWNLOADS_PAGE,
-            error="downloads page is unavailable",
+            context, DOWNLOADS_PAGE, error="downloads page is unavailable"
         )
         return {
             "target_date": _target_date(context),
@@ -444,50 +283,29 @@ class OpenDownloadsStep(BrowserVerifiedStep):
         return (
             isinstance(result, Mapping)
             and result.get("target_date") == _target_date(context)
-            and context.browser.count(_element(context, DOWNLOADS_PAGE)) == 1
+            and (context.browser.count(_element(context, DOWNLOADS_PAGE)) == 1)
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
         yield Counterexample(
             "查看按钮没有打开新标签页",
             FakeState(new_tabs_available=False),
+            expected_error=NavigationError,
         )
         yield Counterexample(
-            "新标签页不是报表下载页",
-            FakeState(counts={DOWNLOADS_PAGE: 0}),
+            "新标签页不是报表下载页", FakeState(counts={DOWNLOADS_PAGE: 0})
         )
 
 
-class DownloadMatchingReportStep(BrowserVerifiedStep):
+def _empty_download(context, result):
+    Path(result["download_path"]).write_bytes(b"")
+
+
+class DownloadMatchingReportStep(Step):
     def __init__(self) -> None:
         super().__init__(
             StepSpec(
-                step_id="S006",
-                name="匹配并下载本次商品明细报表",
-                retry_policy=RetryPolicy(
-                    max_attempts=3,
-                    delay_seconds=2.0,
-                    retryable_errors=[
-                        "report_not_ready",
-                        "browser_download_failed",
-                        "browser_element_not_found",
-                        "application_state_invalid",
-                    ],
-                ),
-                side_effect=SideEffect.READ,
-                timeout_seconds=300.0,
-                declared_outputs=(
-                    "target_date",
-                    "source_filename",
-                    "download_path",
-                    "sha256",
-                    "size_bytes",
-                ),
-                success_conditions=(
-                    "an exact filename match has status 已生成",
-                    "the downloaded file is non-empty inside the run directory",
-                    "the recorded size and sha256 match a fresh read",
-                ),
+                step_id="S006", name="匹配并下载本次商品明细报表", timeout_seconds=300.0
             )
         )
 
@@ -495,14 +313,12 @@ class DownloadMatchingReportStep(BrowserVerifiedStep):
         target = _target_date(context)
         expected = expected_report_filename(target)
         refresh = _ready_element(
-            context,
-            REFRESH_REPORTS_BUTTON,
-            error="report download list is unavailable",
+            context, REFRESH_REPORTS_BUTTON, error="report download list is unavailable"
         )
         context.browser.click(refresh)
         context.browser.input(_element(context, REPORT_SEARCH_INPUT), expected)
         context.browser.click(_element(context, REPORT_SEARCH_BUTTON))
-        names, statuses = _report_rows(context)
+        (names, statuses) = _report_rows(context)
         if not names or names[0] != expected:
             raise ReportNotReadyError("first filtered row is not the target report")
         if not statuses or statuses[0] != "已生成":
@@ -525,8 +341,10 @@ class DownloadMatchingReportStep(BrowserVerifiedStep):
             return False
         target = _target_date(context)
         expected = expected_report_filename(target)
-        names, statuses = _report_rows(context)
-        ready = bool(names and statuses and names[0] == expected and statuses[0] == "已生成")
+        (names, statuses) = _report_rows(context)
+        ready = bool(
+            names and statuses and (names[0] == expected) and (statuses[0] == "已生成")
+        )
         return (
             result.get("target_date") == target
             and result.get("source_filename") == expected
@@ -535,6 +353,7 @@ class DownloadMatchingReportStep(BrowserVerifiedStep):
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
+        yield Counterexample("下载文件为空", after_execute=_empty_download)
         yield Counterexample(
             "筛选首行不是本次文件",
             FakeState(
@@ -547,36 +366,23 @@ class DownloadMatchingReportStep(BrowserVerifiedStep):
                 }
             ),
             metadata={"target_date": "2099-01-01"},
+            expected_error=ReportNotReadyError,
         )
         yield Counterexample(
             "本次报表仍在生成",
             FakeState(texts={REPORT_STATUSES: ("生成中",)}),
+            expected_error=ReportNotReadyError,
         )
         yield Counterexample(
             "下载动作没有返回文件",
             FakeState(downloads_available=False),
+            expected_error=DownloadError,
         )
 
 
-class JingmaiProductDetailProgram(BaseProgram):
-    def prepare(self, context: ExecutionContext) -> None:
-        _target_date(context)
-        _expected_identity(context)
-
-    def verify(self, context: ExecutionContext) -> bool:
-        result = context.outputs.get("S006")
-        return self.step("S006").verify(context, result)
-
-
-def build_program() -> JingmaiProductDetailProgram:
-    return JingmaiProductDetailProgram(
-        ProgramSpec(
-            app_id=APP_ID,
-            program_id=PROGRAM_ID,
-            version=PROGRAM_VERSION,
-            requirement_hash=REQUIREMENT_HASH,
-            name="京麦商品明细报表导出",
-        ),
+def build_program() -> BaseProgram:
+    return BaseProgram(
+        ProgramSpec(app_id=APP_ID, name="京麦商品明细报表导出"),
         [
             EnsureSessionStep(),
             OpenProductDetailStep(),
@@ -589,11 +395,9 @@ def build_program() -> JingmaiProductDetailProgram:
 
 
 def verify_element_stages(
-    context: ExecutionContext,
-    entries: Mapping[str, ElementEntry],
+    context: ExecutionContext, entries: Mapping[str, ElementEntry]
 ) -> Mapping[str, object]:
     """Reach each declared page stage and check every live locator."""
-
     program = build_program()
     checks = []
     reached: list[str] = []
@@ -602,12 +406,11 @@ def verify_element_stages(
     export_attempted = False
 
     def sweep(stage: str) -> None:
-        checks.extend(
-            check_element_expectations(context.browser, entries, stage=stage)
-        )
+        checks.extend(check_element_expectations(context.browser, entries, stage=stage))
         reached.append(stage)
 
-    program.prepare(context)
+    _target_date(context)
+    _expected_identity(context)
     declared_stages = {entry.check_at for entry in entries.values()}
     for step in program.steps:
         context.current_step_id = step.spec.step_id
@@ -623,10 +426,7 @@ def verify_element_stages(
                     sweep("S001-login-page")
                     login_page_checked = True
 
-                result = _ensure_target_session(
-                    context,
-                    on_login_page=check_login_page,
-                )
+                result = _ensure_target_session(context, on_login_page=check_login_page)
                 if not login_page_checked:
                     skipped.append("S001-login-page")
             elif step.spec.step_id == "S002":
@@ -649,7 +449,7 @@ def verify_element_stages(
                     "error_code": "step_verification_failed",
                 }
                 break
-        except Exception as error:  # noqa: BLE001 - return a complete locator report
+        except Exception as error:
             navigation_failure = {
                 "step_id": step.spec.step_id,
                 "phase": "execute",
@@ -658,12 +458,11 @@ def verify_element_stages(
                 "message": str(error)[:200],
             }
             break
-
     unreached = sorted(declared_stages - set(reached) - set(skipped))
     failures = [item for item in checks if not item.ok]
     evidence = context.browser.screenshot(name="verify-elements.png")
     return {
-        "ok": not failures and not unreached and navigation_failure is None,
+        "ok": not failures and (not unreached) and (navigation_failure is None),
         "reached_stages": reached,
         "skipped_stages": skipped,
         "unreached_stages": unreached,
@@ -687,11 +486,8 @@ def verify_element_stages(
     }
 
 
-def load_runtime_options(
-    account: str,
-    checkpoint: Mapping[str, Any] | None,
-) -> RuntimeOptions:
-    if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", account):
+def load_runtime_options(account: str) -> RuntimeOptions:
+    if not re.fullmatch("[A-Z][A-Z0-9_]{0,63}", account):
         raise LocalConfigurationError("account must be a stable uppercase alias")
     store = _load_store(account)
     profile_dir = _safe_app_path(str(store.get("profile_directory", "")))
@@ -702,7 +498,7 @@ def load_runtime_options(
         raise LocalConfigurationError(
             "read_only_export_account must be explicitly confirmed true"
         )
-    login_username, login_password = _load_login_credentials()
+    (login_username, login_password) = _load_login_credentials()
     debug_port = store.get("debug_port", 0)
     if isinstance(debug_port, bool) or not isinstance(debug_port, int):
         raise LocalConfigurationError("debug_port must be an integer")
@@ -717,49 +513,20 @@ def load_runtime_options(
     return RuntimeOptions(
         account_id=account,
         profile_dir=profile_dir,
+        download_dir=resolve_download_directory(
+            APP_DIR, str(store.get("download_directory", "../../runs/downloads"))
+        ),
         debug_port=debug_port,
         browser_path=browser_path,
+        inputs={"target_date": target_date_for_run()},
         metadata={
             "expected_identity": SecretValue(
-                expected_identity,
-                label=f"{account}.expected_identity",
+                expected_identity, label=f"{account}.expected_identity"
             ),
-            "login_username": SecretValue(
-                login_username,
-                label=f"{account}.username",
-            ),
-            "login_password": SecretValue(
-                login_password,
-                label=f"{account}.password",
-            ),
-            "target_date": target_date_from_checkpoint(checkpoint),
+            "login_username": SecretValue(login_username, label=f"{account}.username"),
+            "login_password": SecretValue(login_password, label=f"{account}.password"),
             "read_only_export_account": True,
         },
-    )
-
-
-def additional_blockers() -> tuple[str, ...]:
-    blockers: list[str] = []
-    if not _store_configuration_is_ready("STORE_001"):
-        blockers.append("PC-READONLY-ACCOUNT")
-    try:
-        _load_login_credentials()
-    except LocalConfigurationError:
-        blockers.append("LOCAL-LOGIN-CREDENTIALS")
-    return tuple(blockers)
-
-
-def _store_configuration_is_ready(account: str) -> bool:
-    try:
-        store = _load_store(account)
-    except LocalConfigurationError:
-        return False
-    identity = store.get("expected_identity")
-    return (
-        store.get("read_only_export_account") is True
-        and isinstance(identity, str)
-        and bool(identity.strip())
-        and not identity.strip().startswith("<")
     )
 
 
@@ -768,7 +535,9 @@ def _load_store(account: str) -> Mapping[str, Any]:
     try:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
-        raise LocalConfigurationError("local store configuration is unavailable") from error
+        raise LocalConfigurationError(
+            "local store configuration is unavailable"
+        ) from error
     stores = document.get("stores")
     if not isinstance(stores, Mapping):
         raise LocalConfigurationError("local configuration must define stores")
@@ -791,9 +560,9 @@ def _load_login_credentials() -> tuple[str, str]:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key, raw_value = line.split("=", 1)
+        (key, raw_value) = line.split("=", 1)
         value = raw_value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        if len(value) >= 2 and value[0] == value[-1] and (value[0] in {"'", '"'}):
             value = value[1:-1]
         values[key.strip()] = value
     username = values.get("username", "")
@@ -802,13 +571,15 @@ def _load_login_credentials() -> tuple[str, str]:
         raise LocalConfigurationError(
             "application .env must define non-empty username and password"
         )
-    return username, password
+    return (username, password)
 
 
 def _safe_app_path(raw: str) -> Path:
     candidate = Path(raw)
     if not raw.strip() or candidate.is_absolute() or ".." in candidate.parts:
-        raise LocalConfigurationError("profile_directory must stay inside the application")
+        raise LocalConfigurationError(
+            "profile_directory must stay inside the application"
+        )
     resolved_app = APP_DIR.resolve()
     resolved = (APP_DIR / candidate).resolve()
     try:
@@ -831,29 +602,21 @@ def _element(context: ExecutionContext, element_id: str) -> ElementSpec:
 
 
 def _ready_element(
-    context: ExecutionContext,
-    element_id: str,
-    *,
-    error: str,
+    context: ExecutionContext, element_id: str, *, error: str
 ) -> ElementSpec:
     element = _element(context, element_id)
     for _ in range(2):
         if context.browser.exists(element, timeout=10.0):
             return element
-        # 京麦的 SSO 外层会在 document loaded 后替换一次 #brand；下一次
-        # 查询重新解析 iframe，避免继续使用已经失效的 frame 对象。
     raise ApplicationStateError(error)
 
 
 def _ensure_target_session(
-    context: ExecutionContext,
-    *,
-    on_login_page: Callable[[], None] | None = None,
+    context: ExecutionContext, *, on_login_page: Callable[[], None] | None = None
 ) -> Mapping[str, object]:
     context.browser.open(HOME_URL, wait="complete")
     authenticated = context.browser.exists(
-        _element(context, AUTHENTICATED_MARKER),
-        timeout=5.0,
+        _element(context, AUTHENTICATED_MARKER), timeout=5.0
     )
     login_performed = False
     if not authenticated:
@@ -875,24 +638,21 @@ def _ensure_target_session(
         )
         if on_login_page is not None:
             on_login_page()
-        username, password = _login_credentials(context)
+        (username, password) = _login_credentials(context)
         context.browser.input(username_input, username)
         context.browser.input(password_input, password)
         context.browser.click(submit_button)
         login_performed = True
         authenticated = context.browser.exists(
-            _element(context, AUTHENTICATED_MARKER),
-            timeout=45.0,
+            _element(context, AUTHENTICATED_MARKER), timeout=45.0
         )
         if not authenticated:
             evidence = context.browser.screenshot(
                 name=f"login-manual-{context.run_id}.png"
             )
             raise ManualLoginVerificationRequired(
-                "login did not reach the authenticated page; complete any CAPTCHA, "
-                f"slider, or SMS check manually and resume (evidence: {evidence.path.name})"
+                f"login did not reach the authenticated page; resolve any CAPTCHA, slider, or SMS check before starting a new run (evidence: {evidence.path.name})"
             )
-
     identities = _identities(context, timeout=20.0) if authenticated else []
     return {
         "target_date": _target_date(context),
@@ -902,16 +662,14 @@ def _ensure_target_session(
     }
 
 
-def _login_credentials(
-    context: ExecutionContext,
-) -> tuple[SecretValue, SecretValue]:
+def _login_credentials(context: ExecutionContext) -> tuple[SecretValue, SecretValue]:
     username = context.metadata.get("login_username")
     password_secret = context.metadata.get("login_password")
     if not isinstance(username, SecretValue) or not isinstance(
         password_secret, SecretValue
     ):
         raise LocalConfigurationError("login credentials are not bound securely")
-    return username, password_secret
+    return (username, password_secret)
 
 
 def _open_product_detail_entry(context: ExecutionContext) -> ElementSpec:
@@ -924,14 +682,11 @@ def _open_product_detail_entry(context: ExecutionContext) -> ElementSpec:
 
 
 def _activate_product_detail(
-    context: ExecutionContext,
-    entry: ElementSpec,
+    context: ExecutionContext, entry: ElementSpec
 ) -> Mapping[str, object]:
     context.browser.click_and_switch_to_new_tab(entry, timeout=20.0)
     page_marker = _ready_element(
-        context,
-        PRODUCT_DETAIL_PAGE,
-        error="product-detail page is unavailable",
+        context, PRODUCT_DETAIL_PAGE, error="product-detail page is unavailable"
     )
     return {
         "target_date": _target_date(context),
@@ -940,30 +695,22 @@ def _activate_product_detail(
 
 
 def _texts(
-    context: ExecutionContext,
-    element_id: str,
-    *,
-    timeout: float = 0.0,
+    context: ExecutionContext, element_id: str, *, timeout: float = 0.0
 ) -> list[str]:
     return [
         item.strip()
         for item in context.browser.texts(
-            _element(context, element_id),
-            timeout=timeout,
+            _element(context, element_id), timeout=timeout
         )
         if item.strip()
     ]
 
 
 def _report_rows(context: ExecutionContext) -> tuple[list[str], list[str]]:
-    return _texts(context, REPORT_NAMES), _texts(context, REPORT_STATUSES)
+    return (_texts(context, REPORT_NAMES), _texts(context, REPORT_STATUSES))
 
 
-def _identities(
-    context: ExecutionContext,
-    *,
-    timeout: float = 0.0,
-) -> list[str]:
+def _identities(context: ExecutionContext, *, timeout: float = 0.0) -> list[str]:
     return [
         " ".join(value.split()).casefold()
         for value in _texts(context, ACCOUNT_IDENTITY, timeout=timeout)
@@ -974,22 +721,20 @@ def _selected_dates(context: ExecutionContext) -> list[str]:
     values = _texts(context, DATE_VALUES)
     if len(values) != 1:
         return []
-    return re.findall(r"\b\d{4}-\d{2}-\d{2}\b", values[0])
+    return re.findall("\\b\\d{4}-\\d{2}-\\d{2}\\b", values[0])
 
 
 def _select_target_date(context: ExecutionContext, target: str) -> None:
     context.browser.click(_element(context, START_DATE_INPUT))
     months = _texts(context, CALENDAR_MONTH)
-    if len(months) != 1 or not re.fullmatch(r"\d{4}-\d{2}", months[0]):
+    if len(months) != 1 or not re.fullmatch("\\d{4}-\\d{2}", months[0]):
         raise ApplicationStateError("calendar month is unavailable")
-
     displayed = date.fromisoformat(f"{months[0]}-01")
     desired = date.fromisoformat(f"{target[:7]}-01")
     month_delta = (desired.year - displayed.year) * 12 + desired.month - displayed.month
     direction = CALENDAR_NEXT_MONTH if month_delta > 0 else CALENDAR_PREVIOUS_MONTH
     for _ in range(abs(month_delta)):
         context.browser.click(_element(context, direction))
-
     if _texts(context, CALENDAR_MONTH) != [target[:7]]:
         raise ApplicationStateError("calendar did not reach target month")
     context.browser.select(_element(context, START_DATE_INPUT), target[-2:])
@@ -998,14 +743,14 @@ def _select_target_date(context: ExecutionContext, target: str) -> None:
 def _dialog_report_name(values: list[str]) -> str:
     if len(values) != 1:
         return ""
-    match = re.search(r"报表【([^】]+)】已生成", values[0])
+    match = re.search("报表【([^】]+)】已生成", values[0])
     return match.group(1).strip() if match else ""
 
 
 def _target_date(context: ExecutionContext) -> str:
-    value = context.metadata.get("target_date")
+    value = context.inputs.get("target_date")
     if not isinstance(value, str) or not _is_iso_date(value):
-        raise ApplicationStateError("metadata.target_date must be an ISO date")
+        raise ApplicationStateError("inputs.target_date must be an ISO date")
     return value
 
 
@@ -1024,68 +769,45 @@ def _is_iso_date(value: str) -> bool:
 
 
 def _download_result_is_valid(
-    context: ExecutionContext,
-    result: Mapping[str, Any],
+    context: ExecutionContext, result: Mapping[str, Any]
 ) -> bool:
-    raw_path = result.get("download_path")
-    if not isinstance(raw_path, str) or not raw_path:
-        return False
-    path = Path(raw_path)
-    expected_root = (context.run_dir / "downloads").resolve()
-    try:
-        path.resolve().relative_to(expected_root)
-        actual = DownloadRef.from_path(path)
-    except (ValueError, OSError, RuntimeError):
-        return False
-    return (
-        result.get("status") == "completed"
-        and result.get("sha256") == actual.sha256
-        and result.get("size_bytes") == actual.size_bytes
-        and actual.size_bytes > 0
-    )
+    return download_result_is_valid(result, context.download_dir)
 
 
-def build_counterexample_context(
-    step: Step,
-    case: Counterexample,
-    temporary_root: Path,
+def build_test_context(
+    step: Step, case: Counterexample | None, temporary_root: Path
 ) -> ExecutionContext:
     """Build the deterministic happy page with one counterexample applied."""
-
+    state = case.state if case is not None else FakeState()
     target_date = "2026-09-03"
     expected_identity = "ACCOUNT_ALIAS_001"
     entries = load_element_catalog(APP_DIR / "elements.toml")
-    visible = set(entries) - set(case.state.hidden)
+    visible = set(entries) - set(state.hidden)
     text_lists = {
         ACCOUNT_IDENTITY: (expected_identity,),
         DATE_VALUES: (f"{target_date}  至  {target_date}",),
         CALENDAR_MONTH: (target_date[:7],),
         DIALOG_REPORT_NAME: (
-            "数据将采用离线任务的方式下载，"
-            f"报表【{expected_dialog_name(target_date)}】已生成，"
-            "您可以前往我的报表查看。"
+            f"数据将采用离线任务的方式下载，报表【{expected_dialog_name(target_date)}】已生成，您可以前往我的报表查看。",
         ),
         REPORT_NAMES: (expected_report_filename(target_date),),
         REPORT_ROW_DATES: (target_date, target_date),
         REPORT_STATUSES: ("已生成",),
     }
-    for hidden in case.state.hidden:
+    for hidden in state.hidden:
         text_lists.pop(hidden, None)
-    text_lists.update(
-        {key: tuple(value) for key, value in case.state.texts.items()}
-    )
+    text_lists.update({key: tuple(value) for (key, value) in state.texts.items()})
     counts = {REPORT_ROWS: 2}
-    for hidden in case.state.hidden:
+    for hidden in state.hidden:
         counts.pop(hidden, None)
-    counts.update(case.state.counts)
+    counts.update(state.counts)
     downloads = (
         {
             MATCHING_DOWNLOAD_BUTTON: FakeDownload(
-                "source.xlsx",
-                b"PK\x03\x04deterministic fake workbook",
+                "source.xlsx", b"PK\x03\x04deterministic fake workbook"
             )
         }
-        if case.state.downloads_available
+        if state.downloads_available
         else {}
     )
     new_tabs = (
@@ -1093,13 +815,10 @@ def build_counterexample_context(
             PRODUCT_DETAIL_ENTRY: "https://jdsz.jd.com/product-detail",
             VIEW_EXPORTS_BUTTON: "https://jdsz.jd.com/download-center",
         }
-        if case.state.new_tabs_available
+        if state.new_tabs_available
         else {}
     )
-    case_id = sha256(
-        f"{step.spec.step_id}\0{case.label}".encode("utf-8")
-    ).hexdigest()[:12]
-    run_id = f"{step.spec.step_id.lower()}-{case_id}"
+    run_id = "test-run"
     run_dir = temporary_root / "runs" / run_id
     browser = FakeBrowserActions(
         run_dir=run_dir,
@@ -1108,36 +827,30 @@ def build_counterexample_context(
         text_lists=text_lists,
         downloads=downloads,
         new_tab_urls=new_tabs,
+        download_dir=temporary_root / "downloads",
     )
     metadata = {
         "app_dir": str(temporary_root),
         "target_date": target_date,
         "expected_identity": SecretValue(
-            expected_identity,
-            label="STORE_001.expected_identity",
+            expected_identity, label="STORE_001.expected_identity"
         ),
-        "login_username": SecretValue(
-            "LOGIN_ALIAS_001",
-            label="STORE_001.username",
-        ),
-        "login_password": SecretValue(
-            "LOGIN_SECRET_001",
-            label="STORE_001.password",
-        ),
+        "login_username": SecretValue("LOGIN_ALIAS_001", label="STORE_001.username"),
+        "login_password": SecretValue("LOGIN_SECRET_001", label="STORE_001.password"),
         "read_only_export_account": True,
-        **dict(case.metadata),
+        **(dict(case.metadata) if case else {}),
     }
+    inputs = {"target_date": metadata.pop("target_date")}
     return ExecutionContext(
         app_id=APP_ID,
-        program_id=PROGRAM_ID,
-        program_version=PROGRAM_VERSION,
-        requirement_hash=REQUIREMENT_HASH,
         run_id=run_id,
         account_id="STORE_001",
         mode=RunMode.PREVIEW,
         run_dir=run_dir,
         services={"browser": browser, "elements": element_specs(entries)},
         metadata=metadata,
+        inputs=inputs,
+        download_dir=temporary_root / "downloads",
     )
 
 
@@ -1145,25 +858,6 @@ APPLICATION = ApplicationDefinition(
     app_dir=APP_DIR,
     build_program=build_program,
     load_runtime_options=load_runtime_options,
-    element_blocker_ids=ELEMENT_BLOCKER_IDS,
-    additional_blockers=additional_blockers,
     verify_element_stages=verify_element_stages,
-    build_counterexample_context=build_counterexample_context,
+    build_test_context=build_test_context,
 )
-
-
-__all__ = [
-    "ACCOUNT_IDENTITY",
-    "APPLICATION",
-    "APP_ID",
-    "ELEMENT_BLOCKER_IDS",
-    "PROGRAM_ID",
-    "PROGRAM_VERSION",
-    "REQUIREMENT_HASH",
-    "build_program",
-    "build_counterexample_context",
-    "expected_dialog_name",
-    "expected_report_filename",
-    "load_runtime_options",
-    "target_date_from_checkpoint",
-]

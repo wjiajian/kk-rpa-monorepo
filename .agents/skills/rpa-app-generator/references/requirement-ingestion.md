@@ -1,29 +1,15 @@
 # Requirement ingestion
 
-Use the Feishu document as the business-facing source; do not ask the requester to convert it to JSON or YAML.
+Read the Feishu document through the available document skill or connector. Keep the accepted source revision and a readable requirement.md; no canonical TOML block or computed requirement hash is needed.
 
-## Read and pin
+For an existing application, compare a changed source revision with its accepted baseline and apply the user's requested scope. Clarify only ambiguities that change the business behavior.
 
-1. Use the default Feishu user identity and verify authentication without exposing tokens.
-2. Fetch the latest revision first. Compare it with any approved implementation baseline.
-3. If the revision changed, compare it with the accepted baseline and present the affected requirements, Steps and elements before changing the application.
-4. Fetch the pinned revision with block identifiers so text and media remain traceable.
+Capture the ordered business actions, account and filter inputs, actual success conditions, output destination, scheduling information, and unresolved details. Record retries or repeated runs only when the business requirement calls for them.
 
-## Sanitize immediately
+Use stable aliases in tracked files. Credentials and real account-specific values belong in ignored local configuration. Keep existing sanitized source identifiers; do not expose real document tokens or account details.
 
-- Replace accounts, passwords, phone numbers, emails, people, stores and brands with stable aliases such as `STORE_001`, `ACCOUNT_PROVIDER_001` and `BRAND_001`.
-- Persist only a redacted document URL, a one-way source fingerprint and the revision. Do not persist the real document token.
-- Put credentials only in ignored local `.env` data, and account-specific business selections only in ignored `stores.local.toml`.
-- Never copy real values into source, tests, fixtures, events, checkpoints, reports or examples.
+Download requirement screenshots to ignored requirement/assets paths when needed. Map the image and its source to the relevant Step in requirement.md. Screenshots explain intent and approximate position; they do not prove a DOM locator or its matching count.
 
-## Screenshots
+Leave unknown locators unresolved and continue writing the complete flow. Unused destination fields in the source are not automatically blockers when the requirement explicitly excludes that destination.
 
-Download step screenshots to ignored `requirement/assets/` paths. Give each file a step-oriented name, record its source block identifier or one-way source fingerprint and SHA-256 in `requirement.md`, and map it to one or more stable step IDs.
-
-Screenshots establish business intent and approximate page position only. They are not evidence for CSS, XPath, coordinates or uniqueness. If the DOM has not been inspected under an explicit authorization, create unresolved candidate elements without locators.
-
-## Extract
-
-Capture ordered steps, inputs, outputs, success conditions, conditions, loops, retries, recovery, side effects, execution schedule and destination rules. Blank output-template fields are not automatically blockers when the prose explicitly says that destination is unused.
-
-Write one readable `requirement.md` containing exactly one canonical TOML block. Compute its requirement hash with `rpa_core.requirements.compute_requirement_hash`; do not create a second JSON requirement representation.
+For the two current export applications, success means the configured account and report conditions match and a nonempty file is successfully downloaded. Do not add workbook-content reconciliation or write-recovery requirements that the user has excluded.

@@ -1,12 +1,11 @@
 [project]
 name = "rpa-core"
-version = "0.7.0"
-description = "Core contracts, validation gates, runtime, checkpoints, and safe write policies for independent RPA applications."
+version = "0.8.0"
+description = "Shared browser actions, sequential runs and outcome checks for independent RPA applications."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "DrissionPage==4.1.1.4",
-    "pydantic>=2.11,<3",
 ]
 
 [dependency-groups]

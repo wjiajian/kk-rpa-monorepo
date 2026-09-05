@@ -1,48 +1,24 @@
 # kk-rpa-monorepo LLM Wiki
 
-这套 Wiki 为开发者和 AI 提供低歧义的项目上下文。它记录已确认的架构决策、浏览器自动化边界和运行安全约束，不复制整站 API 文档。
+当前架构以 [V3 框架设计](../docs/rpa-framework-design.md) 为准。此 Wiki 记录项目使用方式；外部 API 事实按锁定版本的官方文档核对。
 
-## 阅读顺序
+阅读入口：
 
-1. [系统上下文与边界](01-system-context.md)
-2. [DrissionPage 浏览器方案](02-drissionpage-browser-automation.md)
-3. [DrissionPage 4.1.1.4 具体文档](drissionpage/README.md)
-4. [BrowserActions 契约](03-browser-actions-contract.md)
-5. [元素库与失效检测](04-elements-and-pages.md)
-6. [运行隔离与安全边界](05-runtime-isolation-and-safety.md)
-7. [测试、反例与证据](06-testing-and-evidence.md)
-8. [官方资料索引](sources.md)
+1. [系统上下文](01-system-context.md)
+2. [DrissionPage 方案](02-drissionpage-browser-automation.md)
+3. [BrowserActions 契约](03-browser-actions-contract.md)
+4. [元素与页面阶段](04-elements-and-pages.md)
+5. [运行目录与执行边界](05-runtime-isolation-and-safety.md)
+6. [测试、反例与证据](06-testing-and-evidence.md)
+7. [DrissionPage 版本文档](drissionpage/README.md)与[官方资料索引](sources.md)
 
-决策记录：
+当前版本为 rpa-core 0.8.0，聚水潭 0.5.0，京麦 0.2.0。两个测试应用一起迁移，旧授权、快照、指令、需求哈希和检查点模块已删除。生产无人值守，run 从头执行，失败后可由 agent 指定步骤 resume；下载目录在新 run 前清空，resume 保留文件。
 
-- [ADR-025：浏览器自动化选用 DrissionPage](decisions/ADR-025-browser-automation-drissionpage.md)
-- [ADR-028：V2 结构简化](decisions/ADR-028-v2-structural-simplification.md)（取代 ADR-026、ADR-027）
-- [ADR-029：可证伪断言作为唯一强制约束](decisions/ADR-029-falsifiable-step-assertions.md)
+本次迁移通过离线测试，真实浏览器验证等待授权。
 
-## 信息优先级
+历史决策：
 
-出现冲突时按以下顺序处理：
+- [ADR-025：DrissionPage 选型](decisions/ADR-025-browser-automation-drissionpage.md)仍适用。
+- ADR-026、ADR-027、[ADR-028](decisions/ADR-028-v2-structural-simplification.md)、[ADR-029](decisions/ADR-029-falsifiable-step-assertions.md)保留背景；已被当前设计替代的内容不作为实现要求。
 
-1. 当前用户明确要求；
-2. 仓库根目录 `AGENTS.md`；
-3. `docs/rpa-framework-design.md`；
-4. 本 Wiki；
-5. 应用自己的 `requirement.md` 和 README；
-6. 代码示例。
-
-涉及 DrissionPage 的接口、参数或版本行为时，先查 [官方资料索引](sources.md)。Wiki 中的示例只表达本项目的采用方式，不能替代当前官方文档。
-
-## Wiki 更新规则
-
-- 架构决策变化时，新增或更新 `decisions/` 中的 ADR，并同步专题页。
-- 只记录已核验的 API；不确定的接口标记为"实现时待核对"。
-- 禁止写入账号、密码、手机号、邮箱、Cookie、Token、真实店铺名、内部地址和本机绝对路径。
-- 真实浏览器测试结果必须注明日期、版本和证据位置。
-
-## 当前状态
-
-- 浏览器底层：DrissionPage 4.1.1.4（官方文档核验日期 2026-09-03）
-- 架构版本：V2。三层结构 `BrowserActions` → `Element` → `Step`；反例强制是唯一的强制约束
-- 首个应用 `jushuitan.inventory.export_stock` 已按 V2 迁移
-- 聚水潭和京麦都已使用共享 `rpa_core.cli`；新应用只使用 `BrowserActions` / `Element` / `Step`。`authorization.py`、`catalog.py`、`instructions.py` 等旧合同仅作仓库兼容层，不得进入新应用运行路径
-- 已知的历史教训：V1 的 `success_conditions` 是永不执行的字符串，导致 S003（假执行器）和 S004（假验证器）恒真通过。详见 [ADR-029](decisions/ADR-029-falsifiable-step-assertions.md)
+当前用户要求优先于仓库约定；Wiki 与 [AGENTS.md](../AGENTS.md)、V3 设计不一致时，以后两者为准。真实测试结论需说明日期、版本和范围，不能用历史运行代替新版本验收。

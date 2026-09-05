@@ -1,6 +1,8 @@
 # ADR-028：V2 结构简化 —— 移除应用快照、指令目录与授权记录
 
-- 状态：已接受
+> 2026-09-05：当前实现遵循 [V3 框架设计](../../docs/rpa-framework-design.md)。下文保留原决策背景，不代表当前运行与测试契约。
+
+- 状态：已被 V3 替代（历史记录）
 - 日期：2026-09-03
 - 取代：[ADR-026](ADR-026-application-catalog-snapshots.md)、[ADR-027](ADR-027-unified-real-run-authorization.md)
 

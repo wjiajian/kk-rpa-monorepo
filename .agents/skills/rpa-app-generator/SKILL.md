@@ -1,31 +1,21 @@
 ---
 name: rpa-app-generator
-description: Generate or update one independent kk-rpa-monorepo RPA application from a Feishu requirement document using the shared V2 CLI, application-local elements, falsifiable Steps, offline tests, and explicit real-browser gates. Use only inside this repository.
+description: Generate or update one independent kk-rpa-monorepo RPA application from a Feishu requirement document using the shared CLI, application-local elements, sequential Steps, normal and failing scenarios, and offline validation. Also guide agent-directed continuation of a failed application. Use only inside this repository.
 ---
 
 # RPA App Generator
 
-Generate one auditable application for one requirement document using the repository's fixed `BrowserActions` / `Element` / `Step` structure.
+One requirement produces one application. Keep the fixed BrowserActions / Element / Step structure and follow the repository AGENTS.md and docs/rpa-framework-design.md.
 
-## Required context
+Before generation, inspect the existing application identities and working changes. Update the matching application for later requirement revisions and preserve unrelated work.
 
-1. Read the repository `AGENTS.md` and `docs/rpa-framework-design.md`.
-2. Inspect `git status --short`, the current branch and HEAD. Preserve all existing work.
-3. Scan `apps/*/app.toml` and the proposed target directory before creating anything.
-4. Treat a matching application as an existing-application change. Inspect its current requirement hash and preserve human changes.
+- To read a Feishu source and handle screenshots, use [requirement ingestion](references/requirement-ingestion.md).
+- To generate or update code, use [application generation](references/application-generation.md).
+- To validate and report results, use [validation](references/validation-gates.md).
+- To diagnose and continue a failed run, use [agent resume](references/agent-resume.md).
 
-## Workflow
+Write the complete business flow. Keep uncertain details in requirement.md and leave unverified locators absent in elements.toml.
 
-1. For Feishu retrieval, revision pinning, screenshot mapping and redaction, read [references/requirement-ingestion.md](references/requirement-ingestion.md).
-2. For the independent application structure and generation order, read [references/application-generation.md](references/application-generation.md).
-3. Before validation or a real-browser handoff, read [references/validation-gates.md](references/validation-gates.md).
+Use the current rpa_core interfaces. Do not generate requirement hashes, catalog snapshots, an Instruction registry, one-shot authorization records, old automatic checkpoint recovery or compatibility wrappers. Use the shared resume command for agent-selected continuation. Defer shared business abstractions until a third actual application demonstrates repetition.
 
-Generate the complete business flow even when details are missing. Represent uncertainty as a pending confirmation or unresolved element in `requirement.md`; keep its `elements.toml` locator absent. Never invent selectors, silently omit a step, or scatter TODO comments.
-
-Do not create an Instruction layer, catalog snapshot, platform package or top-level element source for a new application. Python functions are the instruction mechanism. Promote shared code only after a third application proves the same behavior is actually repeated.
-
-## Authorization boundary
-
-Initial generation ends after side-effect-free checks. Do not open a real browser, log in, inspect private pages, click, query, download business data, write externally, commit, push or deploy unless the developer separately authorizes the exact next stage.
-
-Stop immediately on an identity conflict, revision mismatch, sensitive-content finding, failed offline test, or need for a new public `rpa-core` interface.
+Production runs are unattended. Agent development actions against real browsers and external systems still require user authorization for their scope; existing authorization remains valid. Complete authorized implementation and offline fixes without introducing another approval step.

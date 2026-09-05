@@ -1,11 +1,3 @@
-schema_version = 1
 app_id = "jushuitan.inventory.export_stock"
-app_slug = "inventory_jushuitan_export_stock"
 name = "聚水潭库存导出"
-version = "0.4.0"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
-python = "3.12"
-requirement_revision = 107
-requirement_hash = "sha256:615a2108edca13f072eff8c8e08120f93efdd34885aae0e425d838980b6680bb"
-configuration_schema = "config/stores.example.toml"
-status = "ready_for_review"

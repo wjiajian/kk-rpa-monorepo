@@ -1,31 +1,19 @@
-# Validation gates
+# Validation
 
-Run only side-effect-free validation during initial generation.
+During implementation, run offline checks for the changed behavior:
 
-## Required checks
+- validate app.toml identity, requirement.md presence and elements.toml parsing through the shared CLI;
+- run rpa-app test, which executes each Step's normal scenario and counterexamples before application pytest;
+- check relevant business order, page readbacks, failed outcomes, a fresh run after failure, and agent-selected resume with saved business inputs;
+- run the affected core tests when core interfaces or behavior change;
+- verify lock/environment consistency and git diff --check.
 
-- load `app.toml`, `requirement.md` and `elements.toml` through public `rpa-core` loaders;
-- recompute the requirement hash and verify manifest, requirement and Program identity alignment;
-- run framework-enforced Step counterexamples, ordered-flow, failure and resume tests through `rpa-app test`;
-- run syntax/static, architecture-boundary, sensitive-content and ignored-path checks;
-- confirm `.venv`, `.env`, `stores.local.toml`, screenshots, Profiles and runs are untracked;
-- run `uv lock --check`, `uv sync --check --locked`, repository validation and `git diff --check`.
+Unexpected execute exceptions and errors inside verify fail the test harness. Expected action errors alone cannot prove a verifier; each Step must also reject an incorrect result after successful execution.
 
-`doctor` validates local tools and configuration without launching a browser. `test` executes framework counterexamples and offline tests. Normal `run` and `resume` identify open blocker IDs and fail before creating runtime state.
+doctor only checks local prerequisites and configuration. run, resume and verify-elements use a real browser. In Jingmai, element validation also creates an export task and downloads a report. Apply the user's existing authorization to these operations; a request to resume a named failed program authorizes continuing that program's known scope. Clarify scope only when the intended external operation is not clear.
 
-`verify-elements`, `run` and `resume` are real-browser commands and require the exact user authorization required by `AGENTS.md`; command-line `--yes` is only the program's local confirmation and does not grant the agent permission to launch a browser.
+Use resume <run_id> --from-step <step_id> for continuation. Do not invoke old --yes or --live options. Production unattended operation does not itself authorize an agent's development-time access.
 
-## Report language
+Fix failures caused by the current change, then repeat the affected checks. Report framework/offline application results separately from real element verification, real runs and business acceptance. Mark real validation awaiting authorization when it was not performed; do not claim historical runs validate new code.
 
-Keep these states separate:
-
-- framework tests passed;
-- application Fake tests passed;
-- public login page inspected;
-- authenticated element verification completed;
-- real Preview completed;
-- external write verified;
-- developer review passed;
-- business acceptance passed.
-
-Passing an earlier state never implies a later one. Stop and report exact blockers and the next authorization needed.
+Do not commit, push or deploy unless explicitly authorized.

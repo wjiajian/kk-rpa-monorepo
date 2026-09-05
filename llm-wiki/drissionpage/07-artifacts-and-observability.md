@@ -38,9 +38,9 @@ result = mission.wait(show=True, timeout=None, cancel_if_timeout=False)
 
 项目下载包装器必须：
 
-- 固定到当前 `run_id/downloads/`；
+- 使用运行配置的 `download_dir`，与每次运行的证据目录分开；
 - 设置有界超时；
-- 验证最终文件存在、文件名、大小、哈希或业务内容；
+- 确认正确报表、下载完成、文件存在且非空；两个现有应用不校验表格业务内容；
 - 把底层任务转换为 `DownloadRef`；
 - 不把本机绝对路径写入可提交报告。
 
@@ -94,7 +94,7 @@ tab.wait.upload_paths_inputted()
 
 跨域 iframe 中上传时，路径设置和等待必须在对应 `ChromiumFrame` 上执行。
 
-上传属于外部副作用动作。Preview 默认拦截真实上传并生成文件清单预览；Live 必须限定目标页面、步骤、文件和运行 ID。
+当前 BrowserActions 未暴露上传。实际上传按具体业务要求实现；若支持 Preview，由业务明确实现预览行为。正式执行按配置运行，开发期真实操作需在用户授权范围内。
 
 ## 网络监听
 

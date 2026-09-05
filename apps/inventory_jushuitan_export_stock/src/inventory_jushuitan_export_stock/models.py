@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path, PurePosixPath
 import re
-import tomllib
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Mapping
 
+import tomllib
 from rpa_core.browser import SecretValue
-
 
 _ACCOUNT_ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 _ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]+$")
@@ -33,6 +32,7 @@ class StoreConfig:
     username_env: str
     password_env: str
     identity_env: str | None = None
+    download_directory: str = "../../runs/downloads"
 
     def __post_init__(self) -> None:
         if not _ACCOUNT_ID_PATTERN.fullmatch(self.account_id):
@@ -42,8 +42,14 @@ class StoreConfig:
         if not self.login_url.startswith("https://"):
             raise ConfigurationError("login_url must use HTTPS")
         profile = PurePosixPath(self.profile_directory.replace("\\", "/"))
-        if profile.is_absolute() or ".." in profile.parts or profile.parts[:1] != ("profiles",):
-            raise ConfigurationError("profile_directory must be a relative profiles/<alias> path")
+        if (
+            profile.is_absolute()
+            or ".." in profile.parts
+            or profile.parts[:1] != ("profiles",)
+        ):
+            raise ConfigurationError(
+                "profile_directory must be a relative profiles/<alias> path"
+            )
         if not 1024 <= self.debug_port <= 65535:
             raise ConfigurationError("debug_port must be between 1024 and 65535")
         if not self.brand_value:
@@ -51,7 +57,9 @@ class StoreConfig:
         for field_name in ("username_env", "password_env", "identity_env"):
             value = getattr(self, field_name)
             if value is not None and not _ENV_NAME_PATTERN.fullmatch(value):
-                raise ConfigurationError(f"invalid environment variable name: {field_name}")
+                raise ConfigurationError(
+                    f"invalid environment variable name: {field_name}"
+                )
 
     @property
     def uses_placeholder_values(self) -> bool:
@@ -81,7 +89,9 @@ def load_store_config(path: str | Path, account_id: str) -> StoreConfig:
     except KeyError as error:
         raise ConfigurationError(f"store alias not found: {account_id}") from error
     except (OSError, UnicodeError, tomllib.TOMLDecodeError, TypeError) as error:
-        raise ConfigurationError(f"cannot load local store configuration: {type(error).__name__}") from error
+        raise ConfigurationError(
+            f"cannot load local store configuration: {type(error).__name__}"
+        ) from error
 
 
 def load_local_env(path: str | Path, environ: dict[str, str] | None = None) -> None:
@@ -91,7 +101,9 @@ def load_local_env(path: str | Path, environ: dict[str, str] | None = None) -> N
     source = Path(path)
     if not source.is_file():
         return
-    for line_number, raw_line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, raw_line in enumerate(
+        source.read_text(encoding="utf-8").splitlines(), 1
+    ):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -99,7 +111,11 @@ def load_local_env(path: str | Path, environ: dict[str, str] | None = None) -> N
         if not separator or not _ENV_NAME_PATTERN.fullmatch(key.strip()):
             raise ConfigurationError(f"invalid .env entry at line {line_number}")
         normalized = value.strip()
-        if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'\"', "'"}:
+        if (
+            len(normalized) >= 2
+            and normalized[0] == normalized[-1]
+            and normalized[0] in {'"', "'"}
+        ):
             normalized = normalized[1:-1]
         target.setdefault(key.strip(), normalized)
 
@@ -115,7 +131,9 @@ def load_login_credentials(
         identity_env = store.identity_env or store.username_env
         expected_identity = values[identity_env]
     except KeyError as error:
-        raise ConfigurationError(f"required credential variable is missing: {error.args[0]}") from error
+        raise ConfigurationError(
+            f"required credential variable is missing: {error.args[0]}"
+        ) from error
     if (
         username.startswith("<")
         or secret_value.startswith("<")

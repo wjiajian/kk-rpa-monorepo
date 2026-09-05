@@ -4,7 +4,6 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-
 from rpa_core.browser import (
     DownloadError,
     ElementActionError,
@@ -18,7 +17,6 @@ from rpa_core.browser import (
 )
 from rpa_core.contracts import RunMode
 from rpa_core.runtime import ExecutionContext
-
 
 USERNAME = ElementSpec("example.login.username", "账号框", "login")
 EXPORT = ElementSpec("example.inventory.export", "导出", "inventory")
@@ -93,13 +91,11 @@ def test_execution_context_exposes_browser_service(tmp_path) -> None:
     fake = FakeBrowserActions(tmp_path)
     context = ExecutionContext(
         app_id="example.browser.contract",
-        program_id="example.browser.contract.program",
-        program_version="0.1.0",
-        requirement_hash="sha256:" + ("0" * 64),
         run_id="browser-contract",
         account_id="ACCOUNT_001",
         mode=RunMode.PREVIEW,
         run_dir=tmp_path,
+        download_dir=tmp_path / "downloads",
         services={"browser": fake},
     )
 

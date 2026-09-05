@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from report_jingmai_export_product_detail.program import (
+from inventory_jushuitan_export_stock.program import (
     APPLICATION,
     build_program,
     build_test_context,
@@ -23,9 +23,9 @@ def context(tmp_path, case=None):
 def test_complete_flow_downloads_to_configured_directory(tmp_path):
     ctx = context(tmp_path)
     result = Runner().run(build_program(), ctx)
-    assert result.completed_steps == ("S001", "S002", "S003", "S004", "S005", "S006")
+    assert result.completed_steps == ("S000", "S001", "S002", "S003", "S004", "S005")
     assert result.status == "succeeded"
-    artifact = Path(result.outputs["S006"]["download_path"])
+    artifact = Path(result.outputs["S005"]["download_path"])
     assert artifact.parent == ctx.download_dir
     assert artifact.stat().st_size > 0
     report = json.loads((ctx.run_dir / "result.json").read_text())
@@ -60,16 +60,16 @@ def test_failed_download_can_be_restarted_from_the_beginning(tmp_path):
     )
     with pytest.raises(StepRunError) as caught:
         Runner().run(build_program(), failed)
-    assert caught.value.step_id == "S006"
+    assert caught.value.step_id == "S005"
     fresh = context(tmp_path / "second")
     result = Runner().run(build_program(), fresh)
-    assert result.completed_steps == ("S001", "S002", "S003", "S004", "S005", "S006")
+    assert result.completed_steps == ("S000", "S001", "S002", "S003", "S004", "S005")
     assert result.status == "succeeded"
 
 
 def test_empty_or_missing_download_is_rejected_after_the_action(tmp_path):
     ctx = context(tmp_path)
-    step = build_program().step("S006")
+    step = build_program().step("S005")
     result = step.execute(ctx)
     assert step.verify(ctx, result)
     target = Path(result["download_path"])
@@ -90,72 +90,60 @@ def test_stage_validation_reaches_all_declared_stages(tmp_path):
     assert result["unreached_stages"] == []
 
 
-from datetime import datetime
-
-from report_jingmai_export_product_detail.program import (
-    AUTHENTICATED_MARKER,
-    LOGIN_PASSWORD_INPUT,
-    LOGIN_SUBMIT_BUTTON,
-    LOGIN_URL,
-    LOGIN_USERNAME_INPUT,
-    target_date_for_run,
+from inventory_jushuitan_export_stock.steps import (
+    BRAND_SELECTED,
+    BRAND_SELECTOR,
+    EXPORT_MENU,
+    EXPORT_OPTION,
+    NAV_INVENTORY,
+    PRODUCT_STOCK_ENTRY,
+    RESET_BUTTON,
+    SEARCH_BUTTON,
 )
 
 
-def test_login_uses_credentials_and_verifies_the_resulting_session(tmp_path):
+def test_inventory_actions_keep_the_verified_business_order(tmp_path):
     ctx = context(tmp_path)
-    delegate = ctx.browser
-
-    class LoginTransition:
-        logged_in = False
-
-        def __getattr__(self, name):
-            return getattr(delegate, name)
-
-        def exists(self, element, **kwargs):
-            if element.id == AUTHENTICATED_MARKER and not self.logged_in:
-                return False
-            return delegate.exists(element, **kwargs)
-
-        def click(self, element, **kwargs):
-            delegate.click(element, **kwargs)
-            if element.id == LOGIN_SUBMIT_BUTTON:
-                self.logged_in = True
-
-    ctx.services["browser"] = LoginTransition()
-    step = build_program().step("S001")
-    result = step.execute(ctx)
-    assert result["login_performed"] and step.verify(ctx, result)
-    assert delegate.current_url == LOGIN_URL
-    inputs = [record for record in delegate.actions if record.action == "input"]
-    assert [record.element_id for record in inputs] == [
-        LOGIN_USERNAME_INPUT,
-        LOGIN_PASSWORD_INPUT,
+    Runner().run(build_program(), ctx)
+    actions = [
+        (record.action, record.element_id)
+        for record in ctx.browser.actions
+        if record.action in {"click", "select", "download"}
     ]
-    assert all(record.detail == "<redacted>" for record in inputs)
+    assert actions == [
+        ("click", NAV_INVENTORY),
+        ("click", PRODUCT_STOCK_ENTRY),
+        ("click", RESET_BUTTON),
+        ("select", BRAND_SELECTOR),
+        ("select", BRAND_SELECTOR),
+        ("click", SEARCH_BUTTON),
+        ("select", BRAND_SELECTOR),
+        ("select", BRAND_SELECTOR),
+        ("click", EXPORT_MENU),
+        ("download", EXPORT_OPTION),
+    ]
+    assert [record.action for record in ctx.browser.actions].count("open") == 1
 
 
-@pytest.mark.parametrize(
-    ("now", "expected"),
-    [
-        ("2026-09-01T09:00:00+08:00", "2026-08-31"),
-        ("2026-01-01T09:00:00+08:00", "2025-12-31"),
-        ("2026-09-04T17:00:00+00:00", "2026-09-04"),
-    ],
-)
-def test_yesterday_is_fixed_when_the_run_options_are_loaded(now, expected):
-    assert target_date_for_run(now=datetime.fromisoformat(now)) == expected
+def test_download_verification_rereads_the_selected_brand(tmp_path):
+    ctx = context(tmp_path)
+    step = build_program().step("S005")
+    result = step.execute(ctx)
+    ctx.browser._text_lists[BRAND_SELECTED] = ["OTHER_BRAND"]
+    assert step.verify(ctx, result) is False
 
 
-def test_agent_resumes_download_with_original_date_after_export_dialog_is_gone(
-    tmp_path,
-):
-    from report_jingmai_export_product_detail.program import (
-        DIALOG_REPORT_NAME,
-        DOWNLOAD_REPORT_BUTTON,
-        EXPORT_READY_DIALOG,
-        VIEW_EXPORTS_BUTTON,
-    )
+def test_store_config_supports_a_custom_download_directory(tmp_path):
+    from inventory_jushuitan_export_stock.models import load_store_config
+
+    sample = (APPLICATION.app_dir / "config" / "stores.example.toml").read_text()
+    path = tmp_path / "stores.toml"
+    path.write_text(sample.replace("../../runs/downloads", "custom-output"))
+    assert load_store_config(path, "STORE_001").download_directory == "custom-output"
+
+
+def test_agent_resumes_export_with_original_brand_after_local_config_changes(tmp_path):
+    from dataclasses import replace
 
     failed = context(
         tmp_path / "first",
@@ -164,24 +152,20 @@ def test_agent_resumes_download_with_original_date_after_export_dialog_is_gone(
     with pytest.raises(StepRunError):
         Runner().run(build_program(), failed)
     previous = json.loads((failed.run_dir / "result.json").read_text())
-    resumed = context(
-        tmp_path / "resume",
-        Counterexample(
-            "old dialog closed",
-            FakeState(
-                hidden=(DIALOG_REPORT_NAME, EXPORT_READY_DIALOG, VIEW_EXPORTS_BUTTON)
-            ),
-        ),
-    )
+    resumed = context(tmp_path / "resume")
     resumed.run_id = "resumed-run"
-    resumed.inputs["target_date"] = "2099-01-01"
+    resumed.inputs["brand_value"] = "OTHER_BRAND"
+    resumed.metadata["store_config"] = replace(
+        resumed.metadata["store_config"], brand_value="OTHER_BRAND"
+    )
     resumed.browser.download_dir = Path(previous["download_dir"])
-    result = Runner().run(build_program(), resumed, previous=previous, from_step="S006")
+    result = Runner().run(build_program(), resumed, previous=previous, from_step="S005")
     assert result.status == "succeeded"
-    assert result.outputs["S006"]["target_date"] == "2026-09-03"
-    assert result.completed_steps == ("S001", "S002", "S003", "S004", "S005", "S006")
+    assert result.outputs["S005"]["requested_brand"] == "BRAND_001"
+    assert result.completed_steps == ("S000", "S001", "S002", "S003", "S004", "S005")
     assert not any(
-        action.element_id == DOWNLOAD_REPORT_BUTTON
+        action.element_id
+        in (NAV_INVENTORY, PRODUCT_STOCK_ENTRY, RESET_BUTTON, SEARCH_BUTTON)
         for action in resumed.browser.actions
     )
-    assert Path(result.outputs["S006"]["download_path"]).parent == failed.download_dir
+    assert Path(result.outputs["S005"]["download_path"]).parent == failed.download_dir

@@ -7,25 +7,24 @@ port lease for the lifetime of a browser session.
 
 from __future__ import annotations
 
+import errno
+import json
+import os
+import re
+import socket
+import stat
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-import errno
-import json
-import os
 from pathlib import Path
-import re
-import socket
-import stat
 from typing import Any
-import urllib.error
-import urllib.request
 from uuid import uuid4
 
 from .drission_browser import DrissionBrowserActions
-from .runtime import RunAlreadyActiveError, RunDirectoryLock, RunLockError
-
+from .locks import RunAlreadyActiveError, RunDirectoryLock, RunLockError
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -128,16 +127,22 @@ class BrowserLaunchSpec:
             raise BrowserConfigurationError("profile_dir must not be a symbolic link")
         object.__setattr__(self, "profile_dir", profile_dir)
 
-        if not isinstance(self.requested_port, int) or isinstance(self.requested_port, bool):
+        if not isinstance(self.requested_port, int) or isinstance(
+            self.requested_port, bool
+        ):
             raise BrowserConfigurationError("requested_port must be an integer")
         if self.requested_port != 0 and not 1024 <= self.requested_port <= 65535:
-            raise BrowserConfigurationError("requested_port must be 0 or between 1024 and 65535")
+            raise BrowserConfigurationError(
+                "requested_port must be 0 or between 1024 and 65535"
+            )
 
         browser_path = None if self.browser_path is None else Path(self.browser_path)
         if browser_path is not None and (
             browser_path.is_symlink() or not browser_path.is_file()
         ):
-            raise BrowserConfigurationError("browser_path must be one existing regular file")
+            raise BrowserConfigurationError(
+                "browser_path must be one existing regular file"
+            )
         object.__setattr__(self, "browser_path", browser_path)
         try:
             lifecycle = BrowserLifecyclePolicy(self.lifecycle)
@@ -200,7 +205,9 @@ class PortLeasePool:
         if not _IDENTIFIER_PATTERN.fullmatch(profile_id):
             raise BrowserConfigurationError(f"invalid profile_id: {profile_id!r}")
         if requested_port != 0 and not 1024 <= requested_port <= 65535:
-            raise BrowserConfigurationError("requested_port must be 0 or between 1024 and 65535")
+            raise BrowserConfigurationError(
+                "requested_port must be 0 or between 1024 and 65535"
+            )
 
         if adopt and not requested_port:
             raise BrowserConfigurationError(
@@ -259,11 +266,18 @@ class PortLeasePool:
                 if not lease.path.exists() and not lease.path.is_symlink():
                     return
                 payload = _read_json_regular(lease.path, "port lease")
-                if payload.get("token") != lease.token or payload.get("port") != lease.port:
-                    raise BrowserPortLeaseError("refusing to release a replaced port lease")
+                if (
+                    payload.get("token") != lease.token
+                    or payload.get("port") != lease.port
+                ):
+                    raise BrowserPortLeaseError(
+                        "refusing to release a replaced port lease"
+                    )
                 lease.path.unlink()
         except RunLockError as error:
-            raise BrowserPortLeaseError("cannot lock the port pool for release") from error
+            raise BrowserPortLeaseError(
+                "cannot lock the port pool for release"
+            ) from error
 
 
 @dataclass(slots=True)
@@ -324,6 +338,7 @@ class BrowserManager:
         run_dir: Path | str,
         action_timeout: float = 10.0,
         download_timeout: float = 120.0,
+        download_dir: Path | None = None,
     ) -> BrowserSession:
         if spec.profile_id in self._sessions:
             raise BrowserProfileActiveError(
@@ -349,7 +364,9 @@ class BrowserManager:
                 f"profile is already active: {spec.profile_id}"
             ) from error
         except RunLockError as error:
-            raise BrowserManagerError(f"cannot lock profile: {spec.profile_id}") from error
+            raise BrowserManagerError(
+                f"cannot lock profile: {spec.profile_id}"
+            ) from error
 
         try:
             # Resolved under the profile lock so no concurrent run can adopt the
@@ -384,6 +401,7 @@ class BrowserManager:
                     run_path,
                     action_timeout=action_timeout,
                     download_timeout=download_timeout,
+                    download_dir=download_dir,
                 ),
                 profile_dir=spec.profile_dir,
                 run_id=run_id,
@@ -778,11 +796,15 @@ def _create_json_exclusive(path: Path, payload: dict[str, object]) -> None:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
             raise BrowserPortLeaseError("port lease target is not one regular file")
-        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode(
+            "utf-8"
+        )
         os.write(descriptor, encoded)
         os.fsync(descriptor)
     except FileExistsError as error:
-        raise BrowserPortLeaseError(f"port lease appeared concurrently: {path.name}") from error
+        raise BrowserPortLeaseError(
+            f"port lease appeared concurrently: {path.name}"
+        ) from error
     except OSError as error:
         raise BrowserPortLeaseError(f"cannot create port lease: {path.name}") from error
     finally:

@@ -1,4 +1,4 @@
-"""Application entry point delegated to the shared V2 CLI."""
+"""Application entry point delegated to the shared CLI."""
 
 from __future__ import annotations
 

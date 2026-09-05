@@ -1,149 +1,137 @@
-"""The falsifiability harness — the framework's only mandatory constraint."""
-
-from __future__ import annotations
-
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 from rpa_core.browser import ElementSpec, FakeBrowserActions, Locator
 from rpa_core.verification import (
     Counterexample,
     CounterexampleContractError,
     FakeState,
     assert_steps_are_falsifiable,
-    check_step_counterexamples,
 )
 
-
-TARGET = ElementSpec(
-    id="demo.page.rows",
-    name="结果行",
-    page="demo",
-    locator=Locator("css:table tbody tr"),
-)
+TARGET = ElementSpec("demo.page.rows", "Rows", "Demo", locator=Locator("css:tr"))
 SELECTED = ElementSpec(
-    id="demo.page.selected",
-    name="已选项",
-    page="demo",
-    locator=Locator("css:.chip"),
+    "demo.page.selected", "Selected", "Demo", locator=Locator("css:.chip")
 )
 
 
-def _context(tmp_path: Path, case: Counterexample):
+def context(tmp_path, case):
+    state = case.state if case else FakeState()
     browser = FakeBrowserActions(
-        run_dir=tmp_path,
-        visible_element_ids=set({TARGET.id, SELECTED.id}) - set(case.state.hidden),
-        text_values={SELECTED.id: "目标"},
-        counts=dict(case.state.counts),
-        text_lists={key: tuple(value) for key, value in case.state.texts.items()},
+        tmp_path,
+        visible_element_ids={TARGET.id, SELECTED.id} - set(state.hidden),
+        counts=dict(state.counts),
+        text_lists={SELECTED.id: ["expected"], **state.texts},
     )
-    return type("Ctx", (), {"browser": browser, "metadata": dict(case.metadata)})()
+    return SimpleNamespace(browser=browser)
 
 
-class _HonestStep:
-    """Reads state back from the page, so a fake state can falsify it."""
+class HonestStep:
+    spec = SimpleNamespace(step_id="S1")
 
-    spec = type("Spec", (), {"step_id": "S-honest"})()
-
-    def execute(self, context):
+    def execute(self, ctx):
         return {
-            "rows": context.browser.count(TARGET),
-            "selected": list(context.browser.texts(SELECTED)),
+            "selected": ctx.browser.texts(SELECTED),
+            "rows": ctx.browser.count(TARGET),
         }
 
-    def verify(self, context, result):
-        return result["rows"] > 0 and result["selected"] == ["目标"]
+    def verify(self, ctx, result):
+        return result["rows"] > 0 and result["selected"] == ["expected"]
 
     def counterexamples(self):
-        yield Counterexample("没有结果行", FakeState(counts={TARGET.id: 0}))
-        yield Counterexample("选中项为空", FakeState(texts={SELECTED.id: ()}))
-
-
-class _FakeExecutorStep:
-    """Echoes its own inputs; a result-level counterexample would not catch it."""
-
-    spec = type("Spec", (), {"step_id": "S-fake-executor"})()
-
-    def execute(self, context):
-        context.browser.count(TARGET)
-        return {"selected": True}
-
-    def verify(self, context, result):
-        return bool(result["selected"])
-
-    def counterexamples(self):
-        yield Counterexample("选中项为空", FakeState(texts={SELECTED.id: ()}))
-
-
-def test_honest_step_passes(tmp_path):
-    results = check_step_counterexamples(
-        _HonestStep(), lambda case: _context(tmp_path, case)
-    )
-    assert [item.ok for item in results] == [True, True]
-
-
-def test_fake_executor_is_caught(tmp_path):
-    with pytest.raises(CounterexampleContractError, match="did not fail"):
-        assert_steps_are_falsifiable(
-            [_FakeExecutorStep()], lambda step, case: _context(tmp_path, case)
+        yield Counterexample("no rows", FakeState(counts={TARGET.id: 0}))
+        yield Counterexample(
+            "wrong selection", FakeState(texts={SELECTED.id: ("other",)})
         )
 
 
-def test_execute_raising_counts_as_rejection(tmp_path):
-    class RaisingStep(_HonestStep):
-        spec = type("Spec", (), {"step_id": "S-raise"})()
+def check(step, tmp_path):
+    assert_steps_are_falsifiable([step], lambda _, case: context(tmp_path, case))
+
+
+def test_healthy_baseline_and_bad_results(tmp_path):
+    check(HonestStep(), tmp_path)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_constant_verifiers_are_rejected(tmp_path, value):
+    step = HonestStep()
+    step.verify = lambda ctx, result: value
+    with pytest.raises(CounterexampleContractError):
+        check(step, tmp_path)
+
+
+def test_echoing_inputs_without_reading_the_selection_is_rejected(tmp_path):
+    step = HonestStep()
+    step.execute = lambda ctx: {
+        "rows": ctx.browser.count(TARGET),
+        "selected": ["expected"],
+    }
+    with pytest.raises(CounterexampleContractError, match="did not fail"):
+        check(step, tmp_path)
+
+
+def test_accidental_error_does_not_count_as_a_counterexample(tmp_path):
+    class Broken(HonestStep):
+        def execute(self, ctx):
+            if not ctx.browser.count(TARGET):
+                raise NameError("bug")
+            return super().execute(ctx)
+
+    with pytest.raises(
+        CounterexampleContractError, match="unexpected execute error NameError"
+    ):
+        check(Broken(), tmp_path)
+
+
+def test_verifier_exception_is_a_test_failure(tmp_path):
+    class Broken(HonestStep):
+        def verify(self, ctx, result):
+            if not result["rows"]:
+                raise KeyError("bug")
+            return super().verify(ctx, result)
+
+    with pytest.raises(CounterexampleContractError, match="verifier raised KeyError"):
+        check(Broken(), tmp_path)
+
+
+def test_expected_execution_errors_cannot_replace_outcome_tests(tmp_path):
+    class OnlyErrors(HonestStep):
+        def execute(self, ctx):
+            if not ctx.browser.count(TARGET):
+                raise ValueError("missing rows")
+            return super().execute(ctx)
 
         def counterexamples(self):
-            yield Counterexample("目标元素消失", FakeState(hidden=(SELECTED.id,)))
+            yield Counterexample(
+                "no rows", FakeState(counts={TARGET.id: 0}), expected_error=ValueError
+            )
 
-        def execute(self, context):
-            context.browser.click(SELECTED)
-            return {"rows": 1, "selected": ["目标"]}
-
-    results = check_step_counterexamples(
-        RaisingStep(), lambda case: _context(tmp_path, case)
-    )
-    assert results[0].ok
-    assert "raised" in results[0].reason
+    with pytest.raises(CounterexampleContractError, match="needs an outcome"):
+        check(OnlyErrors(), tmp_path)
 
 
-def test_step_without_counterexamples_is_rejected(tmp_path):
-    class Bare(_HonestStep):
-        spec = type("Spec", (), {"step_id": "S-bare"})()
-
-        def counterexamples(self):
-            return ()
-
+def test_missing_and_duplicate_cases_are_rejected(tmp_path):
+    step = HonestStep()
+    step.counterexamples = lambda: ()
     with pytest.raises(CounterexampleContractError, match="no counterexample"):
-        check_step_counterexamples(Bare(), lambda case: _context(tmp_path, case))
+        check(step, tmp_path)
+    case = Counterexample("same", FakeState(counts={TARGET.id: 0}))
+    step.counterexamples = lambda: (case, case)
+    with pytest.raises(CounterexampleContractError, match="repeats"):
+        check(step, tmp_path)
 
 
-def test_duplicate_counterexample_labels_are_rejected(tmp_path):
-    class Duplicated(_HonestStep):
-        spec = type("Spec", (), {"step_id": "S-dup"})()
+def test_post_execution_change_reaches_the_verifier(tmp_path):
+    def remove_rows(ctx, result):
+        ctx.browser._counts[TARGET.id] = 0
 
-        def counterexamples(self):
-            yield Counterexample("重复", FakeState(counts={TARGET.id: 0}))
-            yield Counterexample("重复", FakeState(texts={SELECTED.id: ()}))
-
-    with pytest.raises(CounterexampleContractError, match="repeats counterexample"):
-        check_step_counterexamples(Duplicated(), lambda case: _context(tmp_path, case))
-
-
-def test_counterexample_must_change_something():
-    with pytest.raises(ValueError, match="changes nothing"):
-        Counterexample("什么都不改")
-
-    # A metadata-only counterexample is legitimate: some failures are input-driven.
-    assert Counterexample("输入非法", metadata={"brand": ""}).metadata == {"brand": ""}
-
-    assert not Counterexample(
-        "新标签页未出现",
-        FakeState(new_tabs_available=False),
-    ).state.new_tabs_available
-
-
-def test_empty_label_is_rejected():
-    with pytest.raises(ValueError, match="label must not be empty"):
-        Counterexample("   ", FakeState(counts={TARGET.id: 0}))
+    step = HonestStep()
+    step.verify = lambda ctx, result: ctx.browser.count(TARGET) > 0
+    step.counterexamples = lambda: (
+        Counterexample("result disappeared", after_execute=remove_rows),
+    )
+    check(step, tmp_path)
+    step.verify = lambda ctx, result: True
+    with pytest.raises(CounterexampleContractError, match="did not fail"):
+        check(step, tmp_path)

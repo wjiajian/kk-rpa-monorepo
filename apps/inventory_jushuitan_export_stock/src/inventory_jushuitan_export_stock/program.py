@@ -1,25 +1,19 @@
-"""Prepare plus S001-S005 inventory export program."""
+"""S000-S005 inventory export program."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from hashlib import sha256
 import os
-from pathlib import Path
 import unicodedata
-from typing import Any
+from collections.abc import Mapping
+from pathlib import Path
 
-from rpa_core.browser import (
-    ElementSpec,
-    FakeBrowserActions,
-    FakeDownload,
-    SecretValue,
-)
+from rpa_core.browser import ElementSpec, FakeBrowserActions, FakeDownload, SecretValue
 from rpa_core.cli import ApplicationDefinition, RuntimeOptions
 from rpa_core.contracts import RunMode
+from rpa_core.downloads import resolve_download_directory
 from rpa_core.elements import ElementEntry, check_element_expectations, element_specs
-from rpa_core.runtime import BaseProgram, ExecutionContext, ProgramSpec, Step
-from rpa_core.verification import Counterexample
+from rpa_core.runtime import BaseProgram, ExecutionContext, ProgramSpec, Step, StepSpec
+from rpa_core.verification import Counterexample, FakeState
 
 from .elements import element_entries
 from .models import (
@@ -30,15 +24,10 @@ from .models import (
     load_login_credentials,
     load_store_config,
 )
-from .steps import BRAND_SELECTED, EXPORT_OPTION, RESULT_ROW, build_steps
-from .validators import APP_DIR, load_validated_contracts
+from .steps import BRAND_SELECTED, EXPORT_MENU, EXPORT_OPTION, RESULT_ROW, build_steps
 
-
+APP_DIR = Path(__file__).resolve().parents[2]
 APP_ID = "jushuitan.inventory.export_stock"
-PROGRAM_ID = "jushuitan-inventory-export-stock"
-PROGRAM_VERSION = "0.4.0"
-REQUIREMENT_HASH = "sha256:615a2108edca13f072eff8c8e08120f93efdd34885aae0e425d838980b6680bb"
-
 LOGIN_ACCOUNT = "jushuitan.erp.login.account_input"
 LOGIN_PASSWORD_INPUT = "jushuitan.erp.login.password_input"
 LOGIN_AGREEMENT = "jushuitan.erp.login.agreement_checkbox"
@@ -101,7 +90,6 @@ def _credentials(context: ExecutionContext) -> LoginCredentials:
 
 def _ensure_target_session(context: ExecutionContext) -> Mapping[str, object]:
     """Open the stable login URL and prove the resulting account identity."""
-
     store = _store(context)
     credentials = _credentials(context)
     browser = context.browser
@@ -121,11 +109,9 @@ def _ensure_target_session(context: ExecutionContext) -> Mapping[str, object]:
             if browser.exists(notice, timeout=8.0):
                 browser.click(notice)
             authenticated = browser.exists(marker, timeout=15.0)
-
         expected_identity = credentials.expected_identity or credentials.username
         identity_verified = authenticated and _identity_matches(
-            browser.text(_element(context, IDENTITY_SURFACE)),
-            expected_identity,
+            browser.text(_element(context, IDENTITY_SURFACE)), expected_identity
         )
         result = {
             "authenticated": authenticated,
@@ -145,39 +131,44 @@ def _ensure_target_session(context: ExecutionContext) -> Mapping[str, object]:
         raise
 
 
-class InventoryExportProgram(BaseProgram):
-    def prepare_is_satisfied(self, context: ExecutionContext) -> bool:
-        """Keep an adopted browser on its current page only for the target account."""
-
-        try:
-            credentials = _credentials(context)
-            marker = _element(context, SESSION_MARKER)
-            surface = _element(context, IDENTITY_SURFACE)
-        except (TypeError, RuntimeError):
-            return False
-        if not context.browser.exists(marker, timeout=0.0):
-            return False
-        expected_identity = credentials.expected_identity or credentials.username
-        return _identity_matches(context.browser.text(surface), expected_identity)
-
-    def prepare(self, context: ExecutionContext) -> None:
-        context.metadata["prepare_result"] = dict(_ensure_target_session(context))
-
-    def verify(self, context: ExecutionContext) -> bool:
-        result = context.outputs.get("S005")
-        return self.step("S005").verify(context, result)
+def _wrong_identity_after_login(context, result):
+    context.browser._text_values[IDENTITY_SURFACE] = "OTHER_ACCOUNT"
 
 
-def build_program(requirement_hash: str = REQUIREMENT_HASH) -> InventoryExportProgram:
-    return InventoryExportProgram(
-        ProgramSpec(
-            app_id=APP_ID,
-            program_id=PROGRAM_ID,
-            version=PROGRAM_VERSION,
-            requirement_hash=requirement_hash,
-            name="聚水潭库存导出",
+class EnsureSessionStep(Step):
+    def execute(self, context):
+        return _ensure_target_session(context)
+
+    def verify(self, context, result):
+        expected = (
+            _credentials(context).expected_identity or _credentials(context).username
+        )
+        return (
+            result.get("authenticated") is True
+            and context.browser.exists(_element(context, SESSION_MARKER))
+            and _identity_matches(
+                context.browser.text(_element(context, IDENTITY_SURFACE)), expected
+            )
+        )
+
+    def counterexamples(self):
+        yield Counterexample(
+            "账号身份回读不符", after_execute=_wrong_identity_after_login
+        )
+        yield Counterexample(
+            "登录后仍没有会话",
+            FakeState(hidden=(SESSION_MARKER,)),
+            expected_error=ApplicationStateError,
+        )
+
+
+def build_program() -> BaseProgram:
+    return BaseProgram(
+        ProgramSpec(app_id=APP_ID, name="聚水潭库存导出"),
+        (
+            EnsureSessionStep(StepSpec("S000", "登录并确认目标账号", 75.0)),
+            *build_steps(),
         ),
-        build_steps(),
     )
 
 
@@ -190,17 +181,12 @@ def bind_program_inputs(
 ) -> None:
     context.metadata["store_config"] = store
     context.metadata["login_credentials"] = credentials
-    context.metadata["export_filename"] = export_filename
+    context.inputs.update(
+        brand_value=store.brand_value, export_filename=export_filename
+    )
 
 
-def load_runtime_options(
-    account: str,
-    checkpoint: Mapping[str, Any] | None,
-) -> RuntimeOptions:
-    del checkpoint
-    manifest, _ = load_validated_contracts(APP_DIR)
-    if manifest.requirement_hash != REQUIREMENT_HASH:
-        raise ConfigurationError("program requirement hash does not match app manifest")
+def load_runtime_options(account: str) -> RuntimeOptions:
     store = load_store_config(APP_DIR / "config" / "stores.local.toml", account)
     if store.uses_placeholder_values:
         raise ConfigurationError("local store placeholders must be replaced")
@@ -211,47 +197,29 @@ def load_runtime_options(
     try:
         profile_dir.relative_to((APP_DIR / "profiles").resolve(strict=False))
     except ValueError as error:
-        raise ConfigurationError("profile directory must stay under profiles") from error
+        raise ConfigurationError(
+            "profile directory must stay under profiles"
+        ) from error
     return RuntimeOptions(
         account_id=store.account_id,
         profile_dir=profile_dir,
+        download_dir=resolve_download_directory(APP_DIR, store.download_directory),
         debug_port=store.debug_port,
+        inputs={
+            "brand_value": store.brand_value,
+            "export_filename": "inventory-export.xlsx",
+        },
         metadata={
             "store_config": store,
             "login_credentials": credentials,
-            "export_filename": "inventory-export.xlsx",
         },
     )
 
 
-def additional_blockers() -> tuple[str, ...]:
-    blockers: list[str] = []
-    try:
-        _, spec = load_validated_contracts(APP_DIR)
-        blockers.extend(spec.blocking_item_ids)
-    except Exception:
-        return ("PC-APPLICATION-CONTRACT",)
-    try:
-        store = load_store_config(
-            APP_DIR / "config" / "stores.local.toml",
-            "STORE_001",
-        )
-        if store.uses_placeholder_values:
-            blockers.append("PC-LOCAL-STORE-CONFIG")
-        environment = dict(os.environ)
-        load_local_env(APP_DIR / ".env", environment)
-        load_login_credentials(store, environment)
-    except ConfigurationError:
-        blockers.append("PC-LOCAL-RUNTIME-CONFIG")
-    return tuple(dict.fromkeys(blockers))
-
-
 def verify_element_stages(
-    context: ExecutionContext,
-    entries: Mapping[str, ElementEntry],
+    context: ExecutionContext, entries: Mapping[str, ElementEntry]
 ) -> Mapping[str, object]:
     """Navigate the read-only stages and evaluate every declared expectation."""
-
     program = build_program()
     checks = []
     reached: list[str] = []
@@ -268,11 +236,13 @@ def verify_element_stages(
         skipped.append("login_page")
     else:
         sweep("login_page")
-    program.prepare(context)
+    session = program.step("S000")
+    result = session.execute(context)
+    if not session.verify(context, result):
+        raise ApplicationStateError("account verification failed")
     sweep("session")
-
     for step in program.steps:
-        if step.spec.step_id == "S005":
+        if step.spec.step_id in ("S000", "S005"):
             continue
         context.current_step_id = step.spec.step_id
         try:
@@ -294,13 +264,12 @@ def verify_element_stages(
                 "message": str(error)[:200],
             }
             break
-
     declared_stages = {entry.check_at for entry in entries.values()}
     unreached = sorted(declared_stages - set(reached) - set(skipped))
     failures = [item for item in checks if not item.ok]
     evidence = context.browser.screenshot(name="verify-elements.png")
     return {
-        "ok": not failures and not unreached and navigation_failure is None,
+        "ok": not failures and (not unreached) and (navigation_failure is None),
         "reached_stages": reached,
         "skipped_stages": skipped,
         "unreached_stages": unreached,
@@ -323,58 +292,59 @@ def verify_element_stages(
     }
 
 
-def build_counterexample_context(
-    step: Step,
-    case: Counterexample,
-    temporary_root: Path,
+def build_test_context(
+    step: Step, case: Counterexample | None, temporary_root: Path
 ) -> ExecutionContext:
     """Build the deterministic fake page used by the framework test command."""
-
-    state = case.state
+    state = case.state if case is not None else FakeState()
     entries = element_entries()
     hidden = set(state.hidden)
-    visible = set(entries) - hidden
-    step_id = str(getattr(step.spec, "step_id", "step"))
-    case_id = sha256(case.label.encode("utf-8")).hexdigest()[:12]
-    run_dir = temporary_root / f"{step_id}-{case_id}"
+    visible = set(entries) - hidden - {EXPORT_OPTION}
+    run_dir = temporary_root / "runs" / "test-run"
     downloads = (
-        {EXPORT_OPTION: FakeDownload("inventory-export.xlsx", b"fake inventory workbook\n")}
+        {
+            EXPORT_OPTION: FakeDownload(
+                "inventory-export.xlsx", b"fake inventory workbook\n"
+            )
+        }
         if state.downloads_available and EXPORT_OPTION not in hidden
         else {}
     )
-    counts = {
-        key: value for key, value in state.counts.items() if key not in hidden
-    }
+    counts = {key: value for (key, value) in state.counts.items() if key not in hidden}
     if RESULT_ROW not in hidden:
         counts.setdefault(RESULT_ROW, 1)
     text_lists = {
-        key: tuple(value) for key, value in state.texts.items() if key not in hidden
+        key: tuple(value) for (key, value) in state.texts.items() if key not in hidden
     }
     if BRAND_SELECTED not in hidden:
         text_lists.setdefault(BRAND_SELECTED, ("BRAND_001",))
     text_values = (
-        {IDENTITY_SURFACE: "fixture-user"}
-        if IDENTITY_SURFACE not in hidden
-        else {}
+        {IDENTITY_SURFACE: "fixture-user"} if IDENTITY_SURFACE not in hidden else {}
     )
-    browser = FakeBrowserActions(
+
+    class InventoryTestBrowser(FakeBrowserActions):
+        def click(self, element):
+            super().click(element)
+            if element.id == EXPORT_MENU and EXPORT_OPTION not in hidden:
+                self._visible = self._visible | {EXPORT_OPTION}
+
+    browser = InventoryTestBrowser(
         run_dir=run_dir,
         visible_element_ids=visible,
         downloads=downloads,
         text_values=text_values,
         counts=counts,
         text_lists=text_lists,
+        download_dir=temporary_root / "downloads",
     )
     context = ExecutionContext(
         app_id=APP_ID,
-        program_id=PROGRAM_ID,
-        program_version=PROGRAM_VERSION,
-        requirement_hash=REQUIREMENT_HASH,
-        run_id="counterexample",
+        run_id="test-run",
         account_id="STORE_001",
         mode=RunMode.PREVIEW,
         run_dir=run_dir,
         services={"browser": browser, "elements": element_specs(entries)},
+        inputs={"brand_value": "BRAND_001", "export_filename": "inventory-export.xlsx"},
         metadata={
             "app_dir": str(temporary_root),
             "store_config": StoreConfig(
@@ -393,9 +363,9 @@ def build_counterexample_context(
                 SecretValue("fixture-secret", label="fixture-secret"),
                 SecretValue("fixture-user", label="fixture-identity"),
             ),
-            "export_filename": "inventory-export.xlsx",
-            **dict(case.metadata),
+            **(dict(case.metadata) if case else {}),
         },
+        download_dir=temporary_root / "downloads",
     )
     return context
 
@@ -404,25 +374,6 @@ APPLICATION = ApplicationDefinition(
     app_dir=APP_DIR,
     build_program=build_program,
     load_runtime_options=load_runtime_options,
-    element_blocker_ids={},
-    additional_blockers=additional_blockers,
     verify_element_stages=verify_element_stages,
-    build_counterexample_context=build_counterexample_context,
+    build_test_context=build_test_context,
 )
-
-
-__all__ = [
-    "APPLICATION",
-    "APP_ID",
-    "ApplicationStateError",
-    "InventoryExportProgram",
-    "PROGRAM_ID",
-    "PROGRAM_VERSION",
-    "REQUIREMENT_HASH",
-    "additional_blockers",
-    "bind_program_inputs",
-    "build_counterexample_context",
-    "build_program",
-    "load_runtime_options",
-    "verify_element_stages",
-]
