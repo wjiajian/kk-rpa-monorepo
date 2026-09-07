@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from rpa_executor.client import Client
+from rpa_executor.client import Client, load_config
 from rpa_executor import worker as worker_module
 
 
@@ -66,3 +66,22 @@ def test_worker_chinese_startup_error_survives_windows_pipe_encoding(client):
     message = json.loads(completed.stdout.decode("ascii"))
     assert message["type"] == "startup_error"
     assert "应用加载失败" in message["data"]["error"]
+
+
+def test_deployment_paths_resolve_from_config_independent_of_shell_directory(client, tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    config = load_config(client.path)
+    assert config["deployments"]["sample"]["cwd"] == str(client.path.parent)
+    assert config["deployments"]["sample"]["python"] == str(client.path.parent / "missing-rpa-python-executable")
+    assert "ca_file" not in config
+
+
+def test_absolute_paths_and_explicit_ca_are_preserved(tmp_path):
+    path = tmp_path / "config.toml"
+    executable = str(tmp_path / "python.exe").replace("\\", "/")
+    path.write_text(f'ca_file = "certs/ca.pem"\n[deployments.app]\npython = "{executable}"\ncwd = "."\n', encoding="utf-8")
+    config = load_config(path)
+    assert Path(config["deployments"]["app"]["python"]) == tmp_path / "python.exe"
+    assert Path(config["ca_file"]) == tmp_path / "certs" / "ca.pem"

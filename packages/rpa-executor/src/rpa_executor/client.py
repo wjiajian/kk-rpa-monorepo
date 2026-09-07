@@ -15,10 +15,23 @@ from websockets.asyncio.client import connect
 from .journal import Journal
 
 
+def load_config(path):
+    path = Path(path).resolve()
+    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    for deployment in config.get("deployments", {}).values():
+        for key in ("python", "cwd"):
+            value = Path(deployment[key]).expanduser()
+            deployment[key] = str(value if value.is_absolute() else (path.parent / value).resolve())
+    if config.get("ca_file"):
+        ca = Path(config["ca_file"]).expanduser()
+        config["ca_file"] = str(ca if ca.is_absolute() else (path.parent / ca).resolve())
+    return config
+
+
 class Client:
     def __init__(self, config_path):
         self.path = Path(config_path).resolve()
-        self.config = tomllib.loads(self.path.read_text(encoding="utf-8"))
+        self.config = load_config(self.path)
         if urlsplit(self.config["server_url"]).scheme != "wss":
             raise ValueError("robot connections require wss and a trusted certificate")
         self.lock_file = open(self.path.with_suffix(".lock"), "a+b")
@@ -145,7 +158,8 @@ class Client:
 
     async def run(self):
         tls = ssl.create_default_context(cafile=self.config.get("ca_file"))
-        headers = {"Authorization": "Bearer " + os.environ[self.config["credential_env"]]}
+        headers = {"Authorization": "Bearer " + os.environ[self.config["credential_env"]],
+                   "ngrok-skip-browser-warning": "1"}
         while True:
             try:
                 async with connect(self.config["server_url"], ssl=tls, additional_headers=headers,
