@@ -12,7 +12,7 @@ winget install --id astral-sh.uv -e
 
 若 PowerShell 提示禁止运行脚本，使用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packages\rpa-executor\start.ps1`。该参数仅作用于这次进程，见 [PowerShell 执行策略](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies)。
 
-脚本同步执行端与两个应用的独立 Python 3.12 环境，首次只询问控制台 HTTPS 地址和机器人连接凭据。控制台先创建机器人取得连接凭据；业务账号、密码、预期登录身份和账号别名均在控制台发起运行时填写。
+脚本同步执行端与两个应用的独立 Python 3.12 环境，首次只询问控制台 HTTPS 地址和机器人连接凭据。控制台先创建机器人取得连接凭据；业务账号、密码和预期登录身份在控制台发起运行时填写。执行端按控制台 Run ID 隔离浏览器 Profile，同次接管与续跑沿用该 Profile，无需填写账号别名。
 
 路径与 WSS 地址自动填写到忽略的 `config.local.toml`。相对路径以配置文件目录为基准。ngrok 使用公开签发证书，不需要 CA 文件；私有 CA 仍可在 TOML 中配置 `ca_file`。
 
@@ -29,6 +29,8 @@ winget install --id astral-sh.uv -e
 uv run --project packages/rpa-executor pytest packages/rpa-executor/tests
 ```
 
-业务账号、密码、预期身份、账号别名、日期、品牌、文件名和下载目录在控制台创建 Run 时填写。升级时先结束活跃 Run，服务端与执行端同步更新后再启动。活跃 Run 先在控制台请求停止并等到结束确认，再关闭执行端窗口；强行退出可能保留“状态待确认”。不要删除 `executor.sqlite` 或浏览器现场来强行解除占用。
+业务账号、密码、预期身份、日期、品牌、文件名和下载目录在控制台创建 Run 时填写。升级时先结束活跃 Run，服务端与执行端同步更新后再启动。活跃 Run 先在控制台请求停止并等到结束确认，再关闭执行端窗口；强行退出可能保留“状态待确认”。不要删除 `executor.sqlite` 或浏览器现场来强行解除占用。
+
+每个正常步骤校验通过后和失败收尾前，执行端采集脱敏截图并立即作为独立证据事件回传。接管观察的截图随操作结果回传，即使 DOM 读取失败也保留截图。截图不可用时回传具体原因；同次 Run 最多分配 3 轮 Agent 接管，累计接管时限仍为 900 秒。
 
 Mac 测试与 Linux 服务端配置见 [测试部署说明](../../../kk-rpa-dashboard/docs/test-deployment.md)。

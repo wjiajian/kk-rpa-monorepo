@@ -99,12 +99,16 @@ def application(tmp_path):
 def manager(monkeypatch):
     sessions = []
 
+    class EvidenceBrowser(FakeBrowserActions):
+        def screenshot_redacted(self, *, name, sensitive_values=()):
+            return self.screenshot(name=name)
+
     class FakeManager:
         def __init__(self, root):
             pass
 
         def start(self, spec, **kwargs):
-            actions = FakeBrowserActions(
+            actions = EvidenceBrowser(
                 kwargs["run_dir"],
                 download_dir=kwargs["download_dir"],
                 visible_element_ids={TARGET.id},
@@ -146,7 +150,37 @@ def test_console_public_invocation_runs_original_verify_and_events(application, 
     assert result["record"]["status"] == "succeeded"
     assert [e["event_type"] for e in events][:2] == ["execution.started", "runtime.resolved"]
     assert any(e["event_type"] == "step.succeeded" for e in events)
+    evidence = [e for e in events if e["event_type"] == "execution.evidence"]
+    assert len(evidence) == 1 and evidence[0]["step_id"] == "S1"
+    assert Path(evidence[0]["path"]).is_file()
+    assert [e["event_type"] for e in events].index("execution.evidence") < [e["event_type"] for e in events].index("run.succeeded")
     assert manager[-1].failed is False
+
+
+@pytest.mark.parametrize("screenshot_fails", [False, True])
+def test_console_failure_reports_screenshot_or_reason_without_changing_step_result(application, manager, screenshot_fails):
+    class FailingStep(ExportStep):
+        def execute(self, ctx):
+            def screenshot(*, name, sensitive_values):
+                assert sensitive_values == ("fixture-password",)
+                if screenshot_fails:
+                    raise OSError("screenshot unavailable")
+                return ctx.browser.screenshot(name=name)
+            ctx.browser.screenshot_redacted = screenshot
+            raise RuntimeError("step failed")
+    definition = replace(application, build_program=lambda: BaseProgram(ProgramSpec("demo", "Demo"), [FailingStep()]))
+    events = []
+    result = cli.execute_application(definition, request=RunRequest(credentials={"password": "fixture-password"}), event_callback=events.append)
+    assert result["record"]["status"] == "failed"
+    assert result["record"]["failed_step"] == "S1"
+    evidence = [e for e in events if e["event_type"].startswith("execution.evidence")]
+    assert len(evidence) == 1
+    if screenshot_fails:
+        assert evidence[0]["reason"] == "OSError"
+    else:
+        assert Path(evidence[0]["path"]).name == "failure.png"
+        assert Path(evidence[0]["path"]).is_file()
+    assert manager[-1].retained
 
 
 def test_console_stop_before_browser_preserves_stop_record(application, manager):

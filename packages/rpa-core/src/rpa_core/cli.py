@@ -434,6 +434,26 @@ def _execute(
     failed = True
     phase = "prepare"
     prefix = ()
+
+    def capture_evidence(name: str, step_id: str | None = None) -> None:
+        if not event_callback or session is None or not session.active:
+            return
+        try:
+            artifact = session.actions.screenshot_redacted(
+                name=name, sensitive_values=tuple(request.credentials.values())
+            )
+            event_callback({"event_type": "execution.evidence", "run_id": run_id,
+                            "step_id": step_id, "path": str(artifact.path)})
+        except Exception as error:
+            event_callback({"event_type": "execution.evidence_missing", "run_id": run_id,
+                            "step_id": step_id, "reason": type(error).__name__})
+
+    def progress(event: Mapping[str, Any]) -> None:
+        if event_callback:
+            event_callback(event)
+            if event["event_type"] == "step.succeeded":
+                capture_evidence(f"{event['step_id']}.png", event["step_id"])
+
     try:
         try:
             run_dir.mkdir(parents=True, exist_ok=False)
@@ -457,7 +477,7 @@ def _execute(
                 mode=mode, specs=specs, previous=previous, completed_steps=prefix,
             )
             context.stop_requested = stop_requested
-            context.event_callback = event_callback
+            context.event_callback = progress if event_callback else None
             if event_callback:
                 event_callback({"event_type": "runtime.resolved", "run_id": run_id,
                                 "inputs": dict(context.inputs), "download_dir": str(context.download_dir)})
@@ -497,11 +517,7 @@ def _execute(
                     phase = "cleanup"
                 if session is not None and session.active:
                     if failed and event_callback:
-                        try:
-                            artifact = session.actions.screenshot_redacted(name="failure.png", sensitive_values=tuple(request.credentials.values()))
-                            event_callback({"event_type": "execution.evidence", "run_id": run_id, "path": str(artifact.path)})
-                        except Exception as evidence_error:
-                            event_callback({"event_type": "execution.evidence_missing", "run_id": run_id, "reason": type(evidence_error).__name__})
+                        capture_evidence("failure.png", context.current_step_id if context else None)
                     manager.finish(session, failed=failed)
             finally:
                 if manager is not None:

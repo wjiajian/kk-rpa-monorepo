@@ -67,20 +67,25 @@ class Worker:
             self.cm = self.recovery = None
         elif self.snapshot and self.local_id:
             manager = BrowserManager(self.app.app_dir / "runtime" / "browser-manager")
-            manager.close_retained_browser(f"{self.app.app_dir.name}.{self.snapshot['account_id']}", expected_run_id=self.local_id)
+            manager.close_retained_browser(f"{self.app.app_dir.name}.{self.profile_id}", expected_run_id=self.local_id)
         self.ended = True
         self.event("ended", {"reason": "cooperative_cleanup"})
         self.credentials.clear()
 
     def source(self):
         record = read_recovery_record(self.app, self.local_id)
-        if (record["account_id"] != self.snapshot["account_id"] or
+        if (record["account_id"] != self.profile_id or
                 record["inputs"] != self.snapshot["inputs"] or
                 record["download_dir"] != self.snapshot["download_dir"]):
             raise ValueError("source record differs from original runtime parameters")
         if record.get("phase", "steps") != "steps" or not record.get("failed_step"):
             raise ValueError("preparation failure is not recoverable")
         return record
+
+    @property
+    def profile_id(self):
+        # The console run owns its browser profile; no user-supplied alias is needed.
+        return "RUN_" + self.run_id.replace("-", "").upper()
 
     def execute(self, command):
         action, params = command["action"], command["params"]
@@ -125,11 +130,16 @@ class Worker:
                     "elements": (self.app.app_dir / "elements.toml").read_text(encoding="utf-8"),
                     "credential_fields": list(self.credentials), "remaining_seconds": max(0, self.deadline - monotonic())}
         if action == "observe":
-            element = self.element(params["target"]) if params.get("target") else None
-            if params.get("frame_target"):
-                frame = self.element(params["frame_target"]).require_locator()
-                element = ElementSpec("frame_body", "当前框架", "recovery", locator=Locator("tag:body"), frame_locator=frame)
-            dom = ctx.browser.observe_dom(element, limit=params.get("limit", 200))
+            screenshot = self.screenshot()
+            try:
+                element = self.element(params["target"]) if params.get("target") else None
+                if params.get("frame_target"):
+                    frame = self.element(params["frame_target"]).require_locator()
+                    element = ElementSpec("frame_body", "当前框架", "recovery", locator=Locator("tag:body"), frame_locator=frame)
+                dom = ctx.browser.observe_dom(element, limit=params.get("limit", 200))
+            except Exception as error:
+                self.needs_observation = True
+                return {**screenshot, "observation_error": type(error).__name__}
             for node in dom["nodes"]:
                 target_id = "observed_" + uuid4().hex[:12]
                 self.temporary[target_id] = ElementSpec(target_id, node["tag"], "recovery",
@@ -141,7 +151,6 @@ class Worker:
             self.needs_observation = False
             # Detect-only: the fixed tool cannot bypass an interactive challenge.
             challenge = any(word in dom["text"] for word in ("滑块验证", "短信验证码", "图形验证码", "安全验证"))
-            screenshot = self.screenshot()
             if challenge:
                 self.stopped.set()
                 return {**dom, **screenshot, "requires_administrator": "检测到人工验证，已停止恢复，请管理员处理后重跑"}
@@ -208,7 +217,6 @@ class Worker:
 
     def program(self, recovery=None):
         source_id = self.local_id if recovery else None
-        evidence = {}
         def progress(event):
             kind = event["event_type"]
             if kind == "execution.started":
@@ -218,15 +226,22 @@ class Worker:
                 self.snapshot = {**self.snapshot, "inputs": event["inputs"], "download_dir": event["download_dir"]}
                 self.event("resolved", {"inputs": event["inputs"], "download_dir": event["download_dir"]})
             elif kind == "execution.evidence":
-                path = Path(event["path"])
-                if path.stat().st_size <= 8 * 1024 * 1024:
-                    evidence["image"] = {"mimeType": "image/png", "data": base64.b64encode(path.read_bytes()).decode()}
+                try:
+                    path = Path(event["path"])
+                    if path.stat().st_size > 8 * 1024 * 1024:
+                        raise ValueError("截图超过 8 MiB")
+                    self.event("evidence", {"step_id": event.get("step_id"), "name": path.name,
+                        "image": {"mimeType": "image/png", "data": base64.b64encode(path.read_bytes()).decode()}})
+                except (OSError, ValueError) as error:
+                    self.event("evidence_missing", {"reason": str(error) if isinstance(error, ValueError) else type(error).__name__})
+            elif kind == "execution.evidence_missing":
+                self.event("evidence_missing", {"reason": event["reason"], "step_id": event.get("step_id")})
             else:
                 if event.get("step_id"):
                     event = {**event, "step_name": self.app.build_program().step(event["step_id"]).spec.name}
                 self.event("progress", event)
         outcome = execute_application(self.app,
-            request=RunRequest(self.snapshot["account_id"], self.snapshot["inputs"], self.credentials, self.snapshot.get("download_dir")),
+            request=RunRequest(self.profile_id, self.snapshot["inputs"], self.credentials, self.snapshot.get("download_dir")),
             source_run_id=source_id, from_step=recovery["from_step"] if recovery else None,
             step_result=recovery.get("step_result") if recovery else None,
             locator_overrides=recovery.get("locator_overrides") if recovery else None,
@@ -241,7 +256,7 @@ class Worker:
             "verify_source": "original_runner"})
         if status in {"succeeded", "stopped"}:
             self.stopped.set()
-        return {"local_run_id": self.local_id, "status": status, **evidence}
+        return {"local_run_id": self.local_id, "status": status}
 
 
 def main():
