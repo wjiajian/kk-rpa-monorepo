@@ -5,6 +5,7 @@ from DrissionPage._elements.chromium_element import ChromiumElement
 from DrissionPage._pages.chromium_frame import ChromiumFrame
 
 from rpa_core.drission_browser import DrissionBrowserActions
+from rpa_core.browser import ElementSpec, Locator
 
 
 def node(xpath, *, tag="button", text="下载", displayed=True):
@@ -61,3 +62,13 @@ def test_dom_read_errors_are_not_reported_as_success(tmp_path):
     broken.property = fail
     with pytest.raises(RuntimeError, match="fixture DOM failure"):
         observe(tmp_path, [broken])
+
+
+def test_scoped_observation_includes_the_selected_node_for_locator_repairs(tmp_path):
+    target = node("/html/body/input[1]", tag="input")
+    target.eles = lambda *a, **k: []
+    tab = SimpleNamespace(url="https://business.test", ele=lambda *a, **k: target)
+    spec = ElementSpec("search", "搜索框", "报表页", locator=Locator("css:input"))
+    result = DrissionBrowserActions(tab, tmp_path).observe_dom(spec)
+    assert result["nodes"][0]["locator"] == "xpath:/html/body/input[1]"
+    assert result["nodes"][0]["text"] == ""

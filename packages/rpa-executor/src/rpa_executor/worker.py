@@ -11,6 +11,7 @@ import importlib.metadata
 import json
 from pathlib import Path
 from queue import Queue, Empty
+import re
 import sys
 from threading import Event, Lock, Thread
 from time import monotonic, sleep
@@ -23,6 +24,31 @@ from rpa_core.browser import ElementSpec, Locator, SecretValue
 from rpa_core.browser_manager import BrowserManager
 from rpa_core.cli import RunRequest, execute_application, open_recovery_session, read_recovery_record
 from rpa_core.elements import override_element_locators
+
+
+def recovery_context(source, requirement, elements, *, step=None, full=False):
+    """Read the requested contract from the application's requirement baseline."""
+    step = step or source["failed_step"]
+    headings = list(re.finditer(r"(?m)^###\s+(S\d+)\b[^\n]*", requirement))
+    selected = next((heading for heading in headings if heading[1] == step), None)
+    if full or selected is None:
+        return {"source": source, "requirement": requirement, "elements": elements, "scope": "full"}
+    end = re.search(r"(?m)^#{1,3}\s", requirement[selected.end():])
+    stop = selected.end() + end.start() if end else len(requirement)
+    # Preserve all output fields, success conditions and recovery instructions.
+    excerpt = requirement[:headings[0].start()] + requirement[selected.start():stop]
+    selected_elements = {key: value for key, value in elements.items()
+                         if value.get("check_at", "").split("-", 1)[0] == step}
+    error = source.get("error") or {}
+    root = (error.get("diagnostics") or {}).get("root_cause") or {}
+    brief_source = {**source, "error": {key: value for key, value in {
+        "code": error.get("code"), "type": root.get("type", error.get("type")),
+        "message": root.get("message", error.get("message")), "location": root.get("location"),
+    }.items() if value is not None}}
+    return {"source": brief_source, "requirement": excerpt,
+            "elements": selected_elements or elements, "scope": "step", "step_id": step,
+            "available_steps": [heading[0].removeprefix("### ").strip() for heading in headings],
+            "more_context": "context(step=步骤ID) 可读其他步骤；context(full=true) 可读完整需求、元素和诊断。"}
 
 
 class Worker:
@@ -126,9 +152,11 @@ class Worker:
             raise ValueError("no active recovery context")
         ctx = self.recovery.context
         if action == "context":
-            return {"source": self.source(),
-                    "requirement": (self.app.app_dir / "requirement.md").read_text(encoding="utf-8"),
-                    "elements": (self.app.app_dir / "elements.toml").read_text(encoding="utf-8"),
+            result = recovery_context(self.source(),
+                    (self.app.app_dir / "requirement.md").read_text(encoding="utf-8"),
+                    tomllib.loads((self.app.app_dir / "elements.toml").read_text(encoding="utf-8"))["elements"],
+                    step=params.get("step"), full=params.get("full", False))
+            return {**result,
                     "credential_fields": list(self.credentials), "remaining_seconds": max(0, self.deadline - monotonic())}
         if action == "observe":
             screenshot = self.screenshot()

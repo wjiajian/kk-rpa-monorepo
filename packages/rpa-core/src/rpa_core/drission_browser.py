@@ -359,6 +359,8 @@ class DrissionBrowserActions:
             raise ValueError("DOM observation limit must be between 1 and 500")
         root = self._find(element).target if element else self.tab
         nodes = root.eles("css:button,a,input,select,option,[role],iframe,label,[id],[class]", timeout=self.action_timeout)
+        if element is not None and getattr(root, "tag", None) not in {"iframe", "frame"}:
+            nodes = [root, *nodes]
         items = []
         skipped = 0
         for node in nodes:
