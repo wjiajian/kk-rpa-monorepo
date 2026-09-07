@@ -139,6 +139,36 @@ def manager(monkeypatch):
     return sessions
 
 
+def test_console_public_invocation_runs_original_verify_and_events(application, manager):
+    events = []
+    result = cli.execute_application(application, request=RunRequest(), event_callback=events.append)
+    assert result["ok"] is True
+    assert result["record"]["status"] == "succeeded"
+    assert [e["event_type"] for e in events][:2] == ["execution.started", "runtime.resolved"]
+    assert any(e["event_type"] == "step.succeeded" for e in events)
+    assert manager[-1].failed is False
+
+
+def test_console_stop_before_browser_preserves_stop_record(application, manager):
+    result = cli.execute_application(application, request=RunRequest(), stop_requested=lambda: True)
+    assert result["record"]["status"] == "stopped"
+    assert result["record"]["completed_steps"] == []
+    assert manager == []
+
+
+def test_console_supplied_result_cannot_bypass_original_verify(application, manager):
+    # A real execute failure supplies the source; reject an invented download.
+    original = application.build_services
+    broken = replace(application, build_services=lambda ctx: {**original(ctx), "feishu": {"modes": None}})
+    failed = cli.execute_application(broken, request=RunRequest())
+    assert failed["record"]["status"] == "failed"
+    resumed = cli.execute_application(application, request=RunRequest(), source_run_id=failed["run_id"], from_step="S1",
+        step_result={"status": "completed", "download_path": "/missing/report.xlsx"})
+    assert resumed["record"]["status"] == "failed"
+    assert resumed["record"]["completed_steps"] == []
+    assert resumed["record"]["error"]["code"] == "step_verification_failed"
+
+
 def test_unattended_runs_preserve_existing_downloads_and_keep_separate_evidence(
     application, manager, capsys
 ):

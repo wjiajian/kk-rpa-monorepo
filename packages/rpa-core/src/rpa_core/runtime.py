@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,10 @@ from .verification import Counterexample
 
 class RuntimeContractError(ValueError):
     error_code = "runtime_contract_invalid"
+
+
+class RunStoppedError(RuntimeError):
+    error_code = "run_stopped"
 
 
 class StepTimeoutError(TimeoutError):
@@ -96,6 +100,8 @@ class ExecutionContext:
     metadata: MutableMapping[str, Any] = field(default_factory=dict)
     inputs: MutableMapping[str, Any] = field(default_factory=dict)
     outputs: MutableMapping[str, Any] = field(default_factory=dict)
+    stop_requested: Callable[[], bool] = field(default=lambda: False, repr=False)
+    event_callback: Callable[[Mapping[str, Any]], None] | None = field(default=None, repr=False)
     current_step_id: str | None = field(default=None, init=False)
     step_deadline_monotonic: float | None = field(default=None, init=False)
 
@@ -234,13 +240,15 @@ class Runner:
             report["agent_result_step"] = from_step
 
         def emit(event: str, **details: Any) -> None:
-            logger.emit(
+            recorded = logger.emit(
                 event,
                 app_id=context.app_id,
                 run_id=context.run_id,
                 step_id=context.current_step_id,
                 **details,
             )
+            if context.event_callback is not None:
+                context.event_callback(recorded)
 
         def save_report() -> None:
             report.update(completed_steps=list(completed), outputs=context.outputs)
@@ -263,6 +271,8 @@ class Runner:
             if patched_elements is not None:
                 context.services["elements"] = patched_elements
             for step in program.steps[len(completed) :]:
+                if context.stop_requested():
+                    raise RunStoppedError("execution stopped at a step boundary")
                 context.current_step_id = step.spec.step_id
                 report["current_step"] = step.spec.step_id
                 started = time.monotonic()
@@ -297,7 +307,7 @@ class Runner:
         except Exception as error:
             code = getattr(error, "error_code", "step_execution_failed")
             report.update(
-                status="failed",
+                status="stopped" if isinstance(error, RunStoppedError) else "failed",
                 failed_step=context.current_step_id,
                 error={
                     "code": code,

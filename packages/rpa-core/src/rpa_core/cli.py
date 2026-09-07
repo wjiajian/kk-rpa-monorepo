@@ -88,6 +88,7 @@ class RecoverySession:
     context: ExecutionContext = field(repr=False)
     source_record: Mapping[str, Any] = field(repr=False)
     browser_adopted: bool
+    close_browser: Callable[[], None] = field(repr=False)
 
 
 @contextmanager
@@ -135,7 +136,7 @@ def open_recovery_session(
             session = _start_browser(manager, application, options, context)
             context.services["browser"] = session.actions
             emit("recovery.opened", browser_adopted=session.adopted)
-            yield RecoverySession(context, deepcopy(previous), session.adopted)
+            yield RecoverySession(context, deepcopy(previous), session.adopted, lambda: manager.close_cooperatively(session))
         finally:
             if manager is not None:
                 try:
@@ -419,6 +420,9 @@ def _execute(
     from_step: str | None = None,
     step_result: Mapping[str, Any] | None = None,
     locator_overrides: Mapping[str, Any] | None = None,
+    stop_requested: Callable[[], bool] = lambda: False,
+    event_callback: Callable[[Mapping[str, Any]], None] | None = None,
+    result_callback: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> int:
     run_id = _new_run_id()
     run_dir = application.app_dir / "runs" / run_id
@@ -433,6 +437,8 @@ def _execute(
     try:
         try:
             run_dir.mkdir(parents=True, exist_ok=False)
+            if event_callback:
+                event_callback({"event_type": "execution.started", "run_id": run_id})
             program = application.build_program()
             if previous is not None:
                 prefix = validate_resume(program, previous, from_step)
@@ -450,6 +456,14 @@ def _execute(
                 program, request, options, run_id=run_id, run_dir=run_dir,
                 mode=mode, specs=specs, previous=previous, completed_steps=prefix,
             )
+            context.stop_requested = stop_requested
+            context.event_callback = event_callback
+            if event_callback:
+                event_callback({"event_type": "runtime.resolved", "run_id": run_id,
+                                "inputs": dict(context.inputs), "download_dir": str(context.download_dir)})
+            if stop_requested():
+                from .runtime import RunStoppedError
+                raise RunStoppedError("execution stopped before browser launch")
             prepare_download_directory(
                 context.download_dir, app_dir=application.app_dir, run_dir=run_dir
             )
@@ -482,6 +496,12 @@ def _execute(
                 if not failed:
                     phase = "cleanup"
                 if session is not None and session.active:
+                    if failed and event_callback:
+                        try:
+                            artifact = session.actions.screenshot_redacted(name="failure.png", sensitive_values=tuple(request.credentials.values()))
+                            event_callback({"event_type": "execution.evidence", "run_id": run_id, "path": str(artifact.path)})
+                        except Exception as evidence_error:
+                            event_callback({"event_type": "execution.evidence_missing", "run_id": run_id, "reason": type(evidence_error).__name__})
                     manager.finish(session, failed=failed)
             finally:
                 if manager is not None:
@@ -502,7 +522,7 @@ def _execute(
                 "outputs": {key: dict(previous["outputs"][key]) for key in prefix},
             }
             report.update(
-                status="failed", failed_step=getattr(error, "step_id", None),
+                status="stopped" if code == "run_stopped" else "failed", failed_step=getattr(error, "step_id", None),
                 phase=phase,
                 error={"code": code, "type": type(error).__name__, "diagnostics": diagnostics},
             )
@@ -521,15 +541,47 @@ def _execute(
                 )
         except (OSError, ValueError, TypeError) as recording_error:
             record_error = type(recording_error).__name__
-        _print({
+        (result_callback or _print)({
             "ok": False, "run_id": run_id, "error": code,
             "exception_type": type(error).__name__,
             "step_id": getattr(error, "step_id", None), "diagnostics": diagnostics,
             "record_error": record_error,
         })
         return 2
-    _print(payload)
+    (result_callback or _print)(payload)
     return 2 if failed else 0
+
+
+def read_recovery_record(application: ApplicationDefinition, run_id: str) -> Mapping[str, Any]:
+    """Validate the source record without opening a browser."""
+    return deepcopy(_read_failed_run(application, run_id))
+
+
+def execute_application(
+    application: ApplicationDefinition, *, request: RunRequest,
+    source_run_id: str | None = None, from_step: str | None = None,
+    step_result: Mapping[str, Any] | None = None,
+    locator_overrides: Mapping[str, Any] | None = None,
+    stop_requested: Callable[[], bool] = lambda: False,
+    event_callback: Callable[[Mapping[str, Any]], None] | None = None,
+) -> Mapping[str, Any]:
+    """Console invocation using the same preparation, Runner and verify as the CLI.
+
+    This does not change the standalone CLI's failure/browser retention policy.
+    The caller owns final cleanup and must not treat return as browser release.
+    """
+    previous = _read_failed_run(application, source_run_id) if source_run_id else None
+    if previous:
+        request = _recovery_request(previous, request.credentials)
+    result = {}
+    _execute(application, request=request, mode=RunMode(previous["mode"]) if previous else RunMode.LIVE,
+             previous=previous, from_step=from_step, step_result=step_result,
+             locator_overrides=locator_overrides, stop_requested=stop_requested,
+             event_callback=event_callback, result_callback=result.update)
+    report_path = application.app_dir / "runs" / result["run_id"] / "result.json"
+    if report_path.exists():
+        result["record"] = json.loads(report_path.read_text(encoding="utf-8"))
+    return result
 
 
 def _browser_status(configured_path: Path | None) -> tuple[bool, str]:

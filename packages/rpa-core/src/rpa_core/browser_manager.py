@@ -14,6 +14,7 @@ import sys
 import re
 import socket
 import stat
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -515,6 +516,51 @@ class BrowserManager:
             "browser_pid": pid,
             "profile_id": profile_id,
         }
+
+    def close_retained_browser(self, profile_id: str, *, expected_run_id: str | None = None) -> None:
+        """Console cleanup after actions finish. Never launch a replacement browser.
+
+        Preserve the handoff record if exit cannot be confirmed, so a console
+        restart cannot incorrectly infer that this browser has been released.
+        """
+        if not _IDENTIFIER_PATTERN.fullmatch(profile_id):
+            raise BrowserConfigurationError("invalid profile ID")
+        record = self._read_handoff(profile_id)
+        if record is None:
+            return
+        if expected_run_id is not None and record["run_id"] != expected_run_id:
+            raise BrowserLifecycleError("retained browser belongs to another local run")
+        pid, port = int(record["browser_pid"]), int(record["port"])
+        if not self._pid_is_alive(pid):
+            self._discard_handoff(profile_id)
+            return
+        if not self._devtools_responds(port):
+            raise BrowserLifecycleError("retained browser is alive but cannot be contacted")
+        options = self._options_factory()
+        options.set_local_port(port)
+        options.existing_only()
+        browser = self._chromium_factory(options)
+        browser.quit(timeout=_QUIT_TIMEOUT_SECONDS, force=False)
+        deadline = time.monotonic() + _QUIT_TIMEOUT_SECONDS
+        while self._pid_is_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if self._pid_is_alive(pid):
+            raise BrowserLifecycleError("retained browser exit has not been confirmed")
+        self._discard_handoff(profile_id)
+
+    def close_cooperatively(self, session: BrowserSession) -> None:
+        """Normal Browser.close after the active action; retain ownership on doubt."""
+        self._require_owned_active(session)
+        session._browser.quit(timeout=_QUIT_TIMEOUT_SECONDS, force=False)
+        deadline = time.monotonic() + _QUIT_TIMEOUT_SECONDS
+        while session.browser_pid and self._pid_is_alive(session.browser_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if session.browser_pid and self._pid_is_alive(session.browser_pid):
+            # Do not force-kill in shutdown, and keep a record for later reconciliation.
+            self.detach(session)
+            raise BrowserLifecycleError("browser exit has not been confirmed")
+        self._release_resources(session)
+        self._discard_handoff(session.profile_id)
 
     def close(self, session: BrowserSession) -> None:
         self._require_owned_active(session)

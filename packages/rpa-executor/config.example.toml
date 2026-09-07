@@ -1,0 +1,30 @@
+server_url = "wss://console.example.invalid/api/robots/connect"
+credential_env = "RPA_ROBOT_CREDENTIAL"
+ca_file = "C:/rpa/certs/console-ca.pem"
+journal = "executor.sqlite"
+
+[deployments.inventory]
+app_id = "jushuitan.inventory.export_stock"
+version = "0.5.0"
+package = "inventory-jushuitan-export-stock"
+module = "inventory_jushuitan_export_stock.program"
+python = "C:/rpa/apps/inventory_jushuitan_export_stock/.venv/Scripts/python.exe"
+cwd = "C:/rpa/apps/inventory_jushuitan_export_stock"
+allowed_hosts = ["www.erp321.com", "erp321.com"]
+[deployments.inventory.accounts.STORE_001.credentials_env]
+username = "INVENTORY_USERNAME"
+password = "INVENTORY_PASSWORD"
+expected_identity = "INVENTORY_EXPECTED_IDENTITY"
+
+[deployments.report]
+app_id = "jingmai.reports.export_product_detail"
+version = "0.2.0"
+package = "report-jingmai-export-product-detail"
+module = "report_jingmai_export_product_detail.program"
+python = "C:/rpa/apps/report_jingmai_export_product_detail/.venv/Scripts/python.exe"
+cwd = "C:/rpa/apps/report_jingmai_export_product_detail"
+allowed_hosts = ["shop.jd.com", "passport.jd.com"]
+[deployments.report.accounts.STORE_001.credentials_env]
+username = "REPORT_USERNAME"
+password = "REPORT_PASSWORD"
+expected_identity = "REPORT_EXPECTED_IDENTITY"

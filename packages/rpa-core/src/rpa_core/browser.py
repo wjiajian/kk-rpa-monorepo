@@ -215,6 +215,8 @@ class BrowserActions(Protocol):
         self, *, name: str | None = None, full_page: bool = False
     ) -> ArtifactRef: ...
 
+    def observe_dom(self, element: ElementSpec | None = None, *, limit: int = 200) -> dict: ...
+
 
 @dataclass(frozen=True, slots=True)
 class FakeDownload:

@@ -1,0 +1,4 @@
+config.local.toml
+*.sqlite*
+*.lock
+!uv.lock

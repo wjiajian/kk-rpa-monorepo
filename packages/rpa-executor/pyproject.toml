@@ -1,0 +1,15 @@
+[project]
+name = "rpa-executor"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["websockets>=15,<18"]
+[project.scripts]
+rpa-executor = "rpa_executor.client:main"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[dependency-groups]
+dev = ["pytest>=9,<10", "rpa-core"]
+
+[tool.uv.sources]
+rpa-core = { path = "../rpa-core", editable = true }

@@ -4,6 +4,8 @@
 
 设计见 [核心设计](docs/rpa-framework-design.md)，后续任务与验收标准见 [Agent 开发与接管实施文档](docs/rpa-agent-implementation.md)，生成规则见 [AGENTS.md](AGENTS.md)。
 
+后续网页控制台的前后端 monorepo 架构、任务与运行模型，以及本仓库应用的直接导入方式，见 [控制台架构与应用导入方案](../kk-rpa-dashboard/docs/rpa-console-architecture.md)。该文档为待实施方案。
+
 Agent 根据需求生成普通 Python 应用。应用内元素库维护正式流程使用的页面目标，少量 BrowserActions API 处理浏览器交互与稳定性问题，业务 Step 定义输入输出和成功条件。条件、循环和数据处理直接使用 Python；接管中临时发现的辅助目标可以当次使用并留证，成为正常流程依赖后再整理进应用元素库。
 
 在对应应用目录执行：
