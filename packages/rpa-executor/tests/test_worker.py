@@ -134,6 +134,21 @@ def test_dom_failure_keeps_screenshot_for_dashboard_and_requires_fresh_observati
     result = w.execute(command("observe"))
     assert base64.b64decode(result["image"]["data"]) == target.read_bytes()
     assert result["observation_error"] == "RuntimeError"
+    assert result["observation_stage"] == "dom"
+    assert result["observation_location"].startswith("test_worker.py:")
+    assert result["observation_location"].endswith("(fail)")
+    assert "DOM unavailable" not in str(result)
+    assert "开发者" in result["observation_hint"]
+    assert w.needs_observation
+
+
+def test_unknown_observation_target_guides_agent_back_to_whole_page():
+    w, _ = worker()
+    w.screenshot = lambda: {}
+    result = w.execute(command("observe", frame_target="unknown-frame"))
+    assert result["observation_error"] == "KeyError"
+    assert result["observation_stage"] == "target"
+    assert "先观察整页" in result["observation_hint"]
     assert w.needs_observation
 
 

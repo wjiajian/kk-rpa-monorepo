@@ -14,6 +14,7 @@ from queue import Queue, Empty
 import sys
 from threading import Event, Lock, Thread
 from time import monotonic, sleep
+from traceback import extract_tb
 import tomllib
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -131,15 +132,23 @@ class Worker:
                     "credential_fields": list(self.credentials), "remaining_seconds": max(0, self.deadline - monotonic())}
         if action == "observe":
             screenshot = self.screenshot()
+            stage = "target"
             try:
                 element = self.element(params["target"]) if params.get("target") else None
                 if params.get("frame_target"):
                     frame = self.element(params["frame_target"]).require_locator()
                     element = ElementSpec("frame_body", "当前框架", "recovery", locator=Locator("tag:body"), frame_locator=frame)
+                stage = "dom"
                 dom = ctx.browser.observe_dom(element, limit=params.get("limit", 200))
             except Exception as error:
                 self.needs_observation = True
-                return {**screenshot, "observation_error": type(error).__name__}
+                location = extract_tb(error.__traceback__)[-1]
+                hint = ("观察目标不存在，请先观察整页，再使用返回的 target 指定元素或 iframe。"
+                        if stage == "target" and isinstance(error, KeyError)
+                        else "页面读取失败，请重新观察；若同样错误持续出现，应结束接管并交由开发者处理。")
+                return {**screenshot, "observation_error": type(error).__name__,
+                        "observation_stage": stage, "observation_hint": hint,
+                        "observation_location": f"{Path(location.filename).name}:{location.lineno} ({location.name})"}
             for node in dom["nodes"]:
                 target_id = "observed_" + uuid4().hex[:12]
                 self.temporary[target_id] = ElementSpec(target_id, node["tag"], "recovery",

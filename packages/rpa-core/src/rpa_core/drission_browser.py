@@ -360,18 +360,29 @@ class DrissionBrowserActions:
         root = self._find(element).target if element else self.tab
         nodes = root.eles("css:button,a,input,select,option,[role],iframe,label,[id],[class]", timeout=self.action_timeout)
         items = []
+        skipped = 0
         for node in nodes:
             if not node.states.is_displayed:
                 continue
+            xpath = node.xpath
+            if not isinstance(xpath, str) or not xpath:
+                # A detached node can lose its path between lookup and reading.
+                # It cannot be offered as an actionable target.
+                skipped += 1
+                continue
             attributes = {key: node.attr(key) for key in ("id", "class", "name", "type", "role", "aria-label", "title")}
-            items.append({"tag": node.tag, "text": str(node.text)[:500] if node.tag != "input" else "",
-                          "attributes": attributes, "locator": "xpath:" + node.xpath,
+            tag = node.tag
+            # ChromiumFrame exposes the frame element, not an element.text API.
+            # Its document is observed separately using frame_target.
+            text = "" if tag in {"input", "textarea", "iframe", "frame"} else str(node.property("innerText") or "")[:500]
+            items.append({"tag": tag, "text": text,
+                          "attributes": attributes, "locator": "xpath:" + xpath,
                           "frame_locator": element.frame_locator.value if element and element.frame_locator else None})
             if len(items) == limit:
                 break
-        body = root.ele("tag:body", timeout=0.2) if element is None else root
-        return {"url": self.current_url, "text": str(body.text)[:16000] if body else "",
-                "nodes": items, "truncated": len(items) == limit}
+        body = root.ele("tag:body", timeout=0.2) if element is None or getattr(root, "tag", None) in {"iframe", "frame"} else root
+        return {"url": self.current_url, "text": str(body.property("innerText") or "")[:16000] if body else "",
+                "nodes": items, "truncated": len(items) == limit, "skipped_nodes": skipped}
 
     def screenshot_redacted(self, *, name: str, sensitive_values: tuple[str, ...] = ()) -> ArtifactRef:
         """Hide editable fields in all accessible frames before capturing evidence."""

@@ -49,10 +49,14 @@ class FakeBrowser:
         process_id: int | None = 4242,
     ) -> None:
         self.options = options
-        self.latest_tab = tab if tab is not None else object()
+        self.maximize_calls = 0
+        self.latest_tab = tab if tab is not None else SimpleNamespace(set=SimpleNamespace(window=SimpleNamespace(max=self.maximize)))
         self.process_id = process_id
         self.quit_calls = 0
         self.quit_kwargs: list[dict[str, object]] = []
+
+    def maximize(self):
+        self.maximize_calls += 1
 
     def quit(self, timeout: float = 5, force: bool = False, del_data: bool = False) -> None:
         self.quit_calls += 1
@@ -128,6 +132,7 @@ def test_manager_binds_profile_port_and_run_artifacts(tmp_path: Path) -> None:
     assert session.port == 29600
     assert session.actions.run_dir == run_dir
     assert browsers[0].options.local_port == 29600
+    assert browsers[0].maximize_calls == 1
     assert browsers[0].options.user_data_path == str(tmp_path / "profiles" / "PROFILE_001")
     lease = json.loads(
         (tmp_path / "runtime" / "port-leases" / "29600.json").read_text(encoding="utf-8")
@@ -140,6 +145,22 @@ def test_manager_binds_profile_port_and_run_artifacts(tmp_path: Path) -> None:
     assert browsers[0].quit_calls == 1
     assert session.active is False
     assert not (tmp_path / "runtime" / "port-leases" / "29600.json").exists()
+
+
+def test_maximize_failure_closes_browser_and_releases_resources(tmp_path, monkeypatch):
+    browsers = []
+    manager = make_manager(tmp_path, browsers)
+    def fail(self):
+        raise RuntimeError("fixture maximize failure")
+    with monkeypatch.context() as patch:
+        patch.setattr(FakeBrowser, "maximize", fail)
+        with pytest.raises(BrowserStartError) as caught:
+            manager.start(make_spec(tmp_path), run_id="failed", run_dir=tmp_path / "runs" / "failed")
+    assert caught.value.real_browser_launched
+    assert browsers[0].quit_calls == 1
+    session = manager.start(make_spec(tmp_path), run_id="next", run_dir=tmp_path / "runs" / "next")
+    assert session.port == 29600
+    manager.finish(session)
 
 
 def test_keep_open_retains_profile_and_port_until_shutdown(tmp_path: Path) -> None:
@@ -431,6 +452,7 @@ def test_start_adopts_the_recorded_browser_on_a_bound_port(tmp_path: Path) -> No
     )
 
     assert session.adopted is True
+    assert browsers[0].maximize_calls == 1
     assert session.port == 29643
     assert browsers[0].options.local_port == 29643
     # Ownership moved to this manager, so the record must not linger.

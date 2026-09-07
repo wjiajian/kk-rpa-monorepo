@@ -146,7 +146,7 @@ agent 临时完成失败步骤后，可以提交该步骤 execute 原本应返�
 
 RuntimeOptions.inputs / ctx.inputs 只保存可序列化业务参数：京麦保存目标日期和导出文件名，聚水潭保存品牌和导出文件名。续跑使用原值，日期跨天或本地品牌配置变化不会改变原任务；凭据从本次调用或本地配置加载，不持久化。
 
-浏览器失败后保留并记录接管信息，成功关闭；已有 BrowserManager 负责后续连接。若窗口或登录态已失效，agent 恢复页面或选择更早的步骤。框架不自动诊断、修复代码或决定恢复位置。
+BrowserManager 创建或连接浏览器后先最大化当前窗口，再交给业务步骤或接管会话使用；最大化失败按准备失败收尾。浏览器失败后保留并记录接管信息，成功关闭；已有 BrowserManager 负责后续连接。若窗口或登录态已失效，agent 恢复页面或选择更早的步骤。框架不自动诊断、修复代码或决定恢复位置。
 
 `rpa_core.cli.open_recovery_session(application, run_id, *, credentials=None)` 复用失败记录读取、应用运行配置和 BrowserManager，为接管准备 `recovery.context`。`recovery.source_record` 提供源失败记录，`recovery.browser_adopted` 报告是否连接了保留的浏览器。ctx 使用原账号、模式、inputs、下载目录及已完成输出；凭据和服务按当前应用配置加载。源记录缺少必要参数或已完成输出时明确拒绝，不从新默认值补猜。
 

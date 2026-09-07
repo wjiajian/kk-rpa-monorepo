@@ -393,6 +393,7 @@ class BrowserManager:
             tab = browser.latest_tab
             if not tab:
                 raise BrowserStartError("Chromium did not expose a usable latest tab")
+            tab.set.window.max()
             session = BrowserSession(
                 account_id=spec.account_id,
                 profile_id=spec.profile_id,
