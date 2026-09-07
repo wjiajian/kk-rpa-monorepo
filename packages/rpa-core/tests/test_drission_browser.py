@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from DrissionPage._elements.chromium_element import run_js as drission_run_js
 from DrissionPage.common import Keys
 from DrissionPage.errors import ContextLostError
 from rpa_core.browser import (
@@ -869,6 +870,55 @@ def test_adapter_screenshot_stays_inside_run_directory(tmp_path: Path) -> None:
 
     assert result.path == tmp_path / "evidence" / "login-page.png"
     assert result.size_bytes == len(b"fake png bytes")
+
+
+@pytest.mark.parametrize("sensitive_values", [
+    (), ("fixture-password",), ("测试店铺", "fixture'\"\\\n-password", "'); throw new Error('fixture'); //"),
+])
+@pytest.mark.parametrize("capture_fails", [False, True])
+def test_redacted_screenshot_uses_supported_drission_arguments_and_cleans_frames(
+    tmp_path: Path, sensitive_values: tuple[str, ...], capture_fails: bool,
+) -> None:
+    class ScriptTab(FakeTab):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._root_id = "fixture-document"
+            self.states = SimpleNamespace(has_alert=False)
+            self.scripts = []
+
+        def get_frames(self):
+            return list(self.frames.values())
+
+        def run_js(self, script, *args):
+            # Exercise the pinned library's actual argument conversion, not a mock.
+            return drission_run_js(self, script, False, 1, args)
+
+        def _run_cdp(self, method, **params):
+            assert method == "Runtime.callFunctionOn"
+            self.scripts.append(params)
+            return {"result": {"type": "undefined"}}
+
+        def get_screenshot(self, **kwargs):
+            assert all(len(scope.scripts) == 1 for scope in [self, *self.get_frames()])
+            if capture_fails:
+                raise OSError("fixture capture failed")
+            return super().get_screenshot(**kwargs)
+
+    frame = ScriptTab()
+    tab = ScriptTab(frames={"iframe": frame})
+    browser = DrissionBrowserActions(tab, tmp_path)
+    if capture_fails:
+        with pytest.raises(ElementActionError, match="browser screenshot failed"):
+            browser.screenshot_redacted(name="redacted.png", sensitive_values=sensitive_values)
+    else:
+        result = browser.screenshot_redacted(name="redacted.png", sensitive_values=sensitive_values)
+        assert result.path == tmp_path / "evidence" / "redacted.png"
+        assert result.size_bytes > 0
+    for scope in (tab, frame):
+        mask, cleanup = scope.scripts
+        assert mask["arguments"] == [{"value": value} for value in sensitive_values]
+        assert all(value not in mask["functionDeclaration"] for value in sensitive_values)
+        assert cleanup["arguments"] == []
 
 
 # ---------------------------------------------------------------------------

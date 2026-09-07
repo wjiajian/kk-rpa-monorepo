@@ -379,7 +379,7 @@ class DrissionBrowserActions:
         masked = []
         try:
             for scope in scopes:
-                scope.run_js("""const values=arguments[0];
+                scope.run_js("""const values=Array.from(arguments);
                     const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
                     while(walk.nextNode()) {
                         const node=walk.currentNode;
@@ -389,7 +389,7 @@ class DrissionBrowserActions:
                     const s=document.createElement('style');
                     s.id='rpa-evidence-redaction';
                     s.textContent='input,textarea,[contenteditable=true],[data-rpa-secret-mask]{visibility:hidden!important}';
-                    document.documentElement.appendChild(s);""", list(sensitive_values))
+                    document.documentElement.appendChild(s);""", *sensitive_values)
                 masked.append(scope)
             return self.screenshot(name=name)
         finally:
