@@ -13,10 +13,6 @@ module = "inventory_jushuitan_export_stock.program"
 python = "../../apps/inventory_jushuitan_export_stock/.venv/Scripts/python.exe"
 cwd = "../../apps/inventory_jushuitan_export_stock"
 allowed_hosts = ["www.erp321.com", "erp321.com"]
-[deployments.inventory.accounts.STORE_001.credentials_env]
-username = "INVENTORY_USERNAME"
-password = "INVENTORY_PASSWORD"
-expected_identity = "INVENTORY_EXPECTED_IDENTITY"
 
 [deployments.report]
 app_id = "jingmai.reports.export_product_detail"
@@ -26,7 +22,3 @@ module = "report_jingmai_export_product_detail.program"
 python = "../../apps/report_jingmai_export_product_detail/.venv/Scripts/python.exe"
 cwd = "../../apps/report_jingmai_export_product_detail"
 allowed_hosts = ["shop.jd.com", "passport.shop.jd.com", "passport.jd.com", "jdsz.jd.com"]
-[deployments.report.accounts.STORE_001.credentials_env]
-username = "REPORT_USERNAME"
-password = "REPORT_PASSWORD"
-expected_identity = "REPORT_EXPECTED_IDENTITY"

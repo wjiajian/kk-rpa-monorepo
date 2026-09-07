@@ -6,7 +6,7 @@
 
 后续网页控制台的前后端 monorepo 架构、任务与运行模型，以及本仓库应用的直接导入方式，见 [控制台架构与应用导入方案](../kk-rpa-dashboard/docs/rpa-console-architecture.md)。该文档为待实施方案。
 
-Windows 对接控制台：在本仓库根目录运行 `.\packages\rpa-executor\start.ps1`。首次填写 ngrok HTTPS 地址和机器人/业务凭据，脚本安装独立环境并保存本机加密配置；后续运行同一条命令即可。详见 [执行端说明](packages/rpa-executor/README.md)。
+Windows 对接控制台：在本仓库根目录运行 `.\packages\rpa-executor\start.ps1`。首次只填写控制台 HTTPS 地址和机器人连接凭据，脚本安装独立环境并保存连接配置；业务账号密码在控制台发起运行时填写；后续运行同一条命令即可。详见 [执行端说明](packages/rpa-executor/README.md)。
 
 Agent 根据需求生成普通 Python 应用。应用内元素库维护正式流程使用的页面目标，少量 BrowserActions API 处理浏览器交互与稳定性问题，业务 Step 定义输入输出和成功条件。条件、循环和数据处理直接使用 Python；接管中临时发现的辅助目标可以当次使用并留证，成为正常流程依赖后再整理进应用元素库。
 

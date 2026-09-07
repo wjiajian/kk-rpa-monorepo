@@ -25,3 +25,21 @@ def test_restart_keeps_pending_requests_and_monotonic_events(tmp_path):
     assert (first["seq"], second["seq"]) == (1, 2)
     assert journal.events("run", after=1) == [second]
     assert journal.interrupted() == [command]
+
+
+def test_run_credentials_are_not_persisted_but_conflicts_are_detected(tmp_path):
+    path = tmp_path / "journal.db"
+    journal = Journal(path, credential_key="test-robot-key")
+    credentials = {"username": "private-login-123", "password": "private-password-456", "expected_identity": "private-identity-789"}
+    command = {"request_id": "start", "console_run_id": "run", "execution_attempt_id": "attempt", "action": "start",
+               "params": {"snapshot": {"account_id": "alias"}, "credentials": credentials}}
+    assert journal.accept(command)
+    dump = "\n".join(journal.db.iterdump())
+    assert all(value not in dump for value in credentials.values())
+    assert "credentials" not in journal.interrupted()[0]["params"]
+    journal.db.close()
+    restarted = Journal(path, credential_key="test-robot-key")
+    assert not restarted.accept(command)
+    changed = {**command, "params": {**command["params"], "credentials": {**credentials, "password": "different"}}}
+    with pytest.raises(ValueError, match="different parameters"):
+        restarted.accept(changed)

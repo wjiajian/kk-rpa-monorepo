@@ -9,7 +9,6 @@ from dataclasses import asdict
 import importlib
 import importlib.metadata
 import json
-import os
 from pathlib import Path
 from queue import Queue, Empty
 import sys
@@ -71,6 +70,7 @@ class Worker:
             manager.close_retained_browser(f"{self.app.app_dir.name}.{self.snapshot['account_id']}", expected_run_id=self.local_id)
         self.ended = True
         self.event("ended", {"reason": "cooperative_cleanup"})
+        self.credentials.clear()
 
     def source(self):
         record = read_recovery_record(self.app, self.local_id)
@@ -96,8 +96,12 @@ class Worker:
             self.snapshot = params["snapshot"]
             if (self.snapshot["app_id"] != self.config["app_id"] or self.snapshot["version"] != self.config["version"]):
                 raise ValueError("requested release differs from deployment")
-            account = self.config["accounts"][self.snapshot["account_id"]]
-            self.credentials = {field: os.environ[env] for field, env in account["credentials_env"].items()}
+            credentials = params.get("credentials", {})
+            required = {"username", "password", "expected_identity"}
+            if (not isinstance(credentials, dict) or set(credentials) != required
+                    or any(not isinstance(value, str) or not value for value in credentials.values())):
+                raise ValueError("请在控制台发起运行时填写账号、密码和预期登录身份")
+            self.credentials = dict(credentials)
             return self.program()
         self.check(command)
         if action == "open_recovery":

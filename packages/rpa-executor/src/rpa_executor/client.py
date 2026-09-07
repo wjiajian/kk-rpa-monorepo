@@ -44,7 +44,8 @@ class Client:
         else:
             import fcntl
             fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        self.journal = Journal(self.path.parent / self.config.get("journal", "executor.sqlite"))
+        self.journal = Journal(self.path.parent / self.config.get("journal", "executor.sqlite"),
+                               credential_key=os.environ.get(self.config.get("credential_env", ""), ""))
         self.worker = self.reader = self.socket = None
         self.outbound = asyncio.Queue()
         self.state = self.journal.state()

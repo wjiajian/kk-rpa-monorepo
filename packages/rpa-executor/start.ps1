@@ -27,7 +27,7 @@ foreach ($project in @(
 }
 
 if (-not $ServerUrl -and (-not (Test-Path $configPath) -or $Configure)) {
-    $ServerUrl = Read-Host 'Console HTTPS URL from the Mac'
+    $ServerUrl = Read-Host 'Console HTTPS URL'
 }
 if ($ServerUrl) {
     $address = [Uri]$ServerUrl.Trim()
@@ -45,31 +45,21 @@ if ($ServerUrl) {
 
 if (-not (Test-Path $credentialsPath) -or $Configure) {
     $saved = @{}
-    foreach ($field in @(
-        @('RPA_ROBOT_CREDENTIAL', 'Robot connection credential', $true),
-        @('INVENTORY_USERNAME', 'Inventory login username', $false),
-        @('INVENTORY_PASSWORD', 'Inventory login password', $true),
-        @('INVENTORY_EXPECTED_IDENTITY', 'Inventory visible account identity', $false),
-        @('REPORT_USERNAME', 'Report login username', $false),
-        @('REPORT_PASSWORD', 'Report login password', $true),
-        @('REPORT_EXPECTED_IDENTITY', 'Report visible account identity', $false)
-    )) {
-        do {
-            if ($field[2]) {
-                $secret = Read-Host $field[1] -AsSecureString
-            } else {
-                $plain = Read-Host $field[1]
-                $secret = if ($plain) { ConvertTo-SecureString $plain -AsPlainText -Force } else { [Security.SecureString]::new() }
-                $plain = $null
-            }
-        } while ($secret.Length -eq 0)
-        $saved[$field[0]] = $secret
-    }
+    do {
+        $secret = Read-Host 'Robot connection credential' -AsSecureString
+    } while ($secret.Length -eq 0)
+    $saved['RPA_ROBOT_CREDENTIAL'] = $secret
     # Windows DPAPI binds these SecureStrings to this user on this computer.
     $saved | Export-Clixml -LiteralPath $credentialsPath
 }
 
 $saved = Import-Clixml -LiteralPath $credentialsPath
+if ($saved['RPA_ROBOT_CREDENTIAL'] -isnot [Security.SecureString]) {
+    throw 'Invalid connection credential file. Run again with -Configure.'
+}
+# Remove business credentials saved by older launchers; tasks supply them now.
+$saved = @{ RPA_ROBOT_CREDENTIAL = $saved['RPA_ROBOT_CREDENTIAL'] }
+$saved | Export-Clixml -LiteralPath $credentialsPath
 $previous = @{}
 try {
     foreach ($name in $saved.Keys) {
@@ -81,7 +71,7 @@ try {
         [Environment]::SetEnvironmentVariable($name, $value, 'Process')
         $value = $null
     }
-    Write-Host 'Starting executor. Account alias for both applications: STORE_001'
+    Write-Host 'Starting executor. Enter business accounts and passwords in the console when creating a run.'
     & uv run --project $PSScriptRoot rpa-executor --config $configPath
     if ($LASTEXITCODE -ne 0) { throw 'Executor exited with an error. Existing run state is retained.' }
 } finally {
