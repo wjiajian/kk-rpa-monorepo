@@ -33,6 +33,29 @@ def command(action="act", **params):
     return {"console_run_id": "run", "execution_attempt_id": "attempt", "action": action, "params": params}
 
 
+def test_wait_without_target_is_bounded_and_checks_cancellation(monkeypatch):
+    w, _ = worker()
+    clock = [0.0]
+    monkeypatch.setattr(worker_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(worker_module, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    assert w.execute(command(operation="wait", seconds=0.3)) == {"waited_seconds": 0.3}
+    assert clock[0] == pytest.approx(0.3)
+    def stop(seconds):
+        clock[0] += seconds
+        w.stopped.set()
+    monkeypatch.setattr(worker_module, "sleep", stop)
+    with pytest.raises(ValueError):
+        w.execute(command(operation="wait", seconds=3))
+    assert clock[0] < 1
+
+
+def test_click_without_target_is_rejected_before_browser_action():
+    w, actions = worker()
+    with pytest.raises(ValueError, match="target"):
+        w.execute(command(operation="click"))
+    assert actions == []
+
+
 def test_stale_run_disconnection_deadline_and_stop_prevent_actions():
     for boundary in ("stale", "disconnect", "deadline", "stop"):
         w, actions = worker()

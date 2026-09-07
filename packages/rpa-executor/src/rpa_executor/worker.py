@@ -190,6 +190,8 @@ class Worker:
         if action != "act":
             raise ValueError("unsupported runtime tool")
         operation = params["operation"]
+        if operation not in {"navigate", "wait"} and target is None:
+            raise ValueError("该操作需要 target，请使用正式元素 ID 或 observe 返回的 target")
         if operation == "navigate":
             url = urlsplit(params["value"])
             if url.scheme not in {"https", "http"} or url.hostname not in self.config["allowed_hosts"]:
@@ -202,7 +204,15 @@ class Worker:
         elif operation == "read":
             return {"text": ctx.browser.text(target), "count": ctx.browser.count(target)}
         elif operation == "wait":
-            return {"exists": ctx.browser.exists(target, timeout=min(15, max(0.1, float(params.get("seconds", 1)))))}
+            seconds = min(15, max(0.1, float(params.get("seconds", 1))))
+            if target is not None:
+                return {"exists": ctx.browser.exists(target, timeout=seconds)}
+            until = monotonic() + seconds
+            while monotonic() < until:
+                self.check(command)
+                sleep(min(0.1, max(0, until - monotonic())))
+            self.check(command)
+            return {"waited_seconds": seconds}
         elif operation == "download":
             filename = self.snapshot["inputs"].get("export_filename")
             if params.get("filename") is not None and params["filename"] != filename:
