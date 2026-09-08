@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$ServerUrl,
-    [switch]$Configure
+    [switch]$Configure,
+    [switch]$Unattended,
+    [switch]$SkipSetup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,15 +18,19 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $configPath = Join-Path $PSScriptRoot 'config.local.toml'
 $credentialsPath = Join-Path $PSScriptRoot 'credentials.local.clixml'
 
+if ($Unattended -and ($Configure -or $ServerUrl -or -not (Test-Path $configPath) -or -not (Test-Path $credentialsPath))) {
+    throw 'Unattended startup requires saved configuration. Run start.ps1 interactively first.'
+}
+
 # Keep each application in its own environment, with the shared local rpa-core.
-foreach ($project in @(
+if (-not $SkipSetup) { foreach ($project in @(
     $PSScriptRoot,
     (Join-Path $repoRoot 'apps/inventory_jushuitan_export_stock'),
     (Join-Path $repoRoot 'apps/report_jingmai_export_product_detail')
 )) {
     & uv sync --project $project --locked --python 3.12
     if ($LASTEXITCODE -ne 0) { throw "Dependency setup failed: $project" }
-}
+} }
 
 if (-not $ServerUrl -and (-not (Test-Path $configPath) -or $Configure)) {
     $ServerUrl = Read-Host 'Console HTTPS URL'
@@ -72,7 +78,15 @@ try {
         $value = $null
     }
     Write-Host 'Starting executor. Enter business accounts and passwords in the console when creating a run.'
-    & uv run --project $PSScriptRoot rpa-executor --config $configPath
+    # Windows PowerShell can turn redirected native stderr into ErrorRecords.
+    # Reconnect diagnostics must remain logs, not terminate the launcher.
+    $nativeErrorPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & uv run --no-sync --project $PSScriptRoot rpa-executor --config $configPath
+    } finally {
+        $ErrorActionPreference = $nativeErrorPreference
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Executor exited with an error. Existing run state is retained.' }
 } finally {
     foreach ($name in $previous.Keys) {

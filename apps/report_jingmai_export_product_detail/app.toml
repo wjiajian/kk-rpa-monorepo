@@ -1,3 +1,8 @@
 app_id = "jingmai.reports.export_product_detail"
 name = "京麦商品明细报表导出"
 entrypoint = "report_jingmai_export_product_detail.cli:main"
+
+[console]
+input_schema = "input.schema.json"
+application = "report_jingmai_export_product_detail.program:APPLICATION"
+allowed_hosts = ["shop.jd.com", "passport.shop.jd.com", "passport.jd.com", "jdsz.jd.com"]

@@ -16,6 +16,7 @@ class Journal:
         CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, body TEXT, status TEXT);
         CREATE TABLE IF NOT EXISTS events(run_id TEXT, seq INTEGER, body TEXT, PRIMARY KEY(run_id,seq));
         CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, body TEXT);
+        CREATE TABLE IF NOT EXISTS deployment_jobs(id TEXT PRIMARY KEY, body TEXT, report TEXT);
         """)
 
     def state(self):
@@ -66,3 +67,26 @@ class Journal:
     def interrupted(self):
         return [json.loads(row[0]) for row in self.db.execute(
             "SELECT body FROM requests WHERE status IN ('accepted','running')")]
+
+    def accept_deployment(self, command):
+        encoded = json.dumps(command, sort_keys=True, separators=(",", ":"))
+        row = self.db.execute("SELECT body FROM deployment_jobs WHERE id=?", (command["job_id"],)).fetchone()
+        if row:
+            if row[0] != encoded:
+                raise ValueError("deployment job changed")
+            return False
+        with self.db:
+            self.db.execute("INSERT INTO deployment_jobs VALUES(?,?,?)", (command["job_id"], encoded, "{}"))
+        return True
+
+    def deployment_report(self, job_id, status, stage, error=""):
+        row = self.db.execute("SELECT report FROM deployment_jobs WHERE id=?", (job_id,)).fetchone()
+        previous = json.loads(row[0])
+        report = {"type": "deployment_report", "job_id": job_id, "seq": previous.get("seq", 0) + 1,
+                  "status": status, "stage": stage, "error": error}
+        with self.db:
+            self.db.execute("UPDATE deployment_jobs SET report=? WHERE id=?", (json.dumps(report), job_id))
+        return report
+
+    def deployment_records(self):
+        return [(json.loads(body), json.loads(report)) for body, report in self.db.execute("SELECT body,report FROM deployment_jobs")]

@@ -631,3 +631,20 @@ def test_recovery_preparation_failure_is_diagnosed_without_changing_source(
     events = (path.parent / "recovery-events.jsonl").read_text()
     assert "private-startup-password" not in events
     assert json.loads(events)["event_type"] == "recovery.failed"
+
+
+@pytest.mark.parametrize('browser_ok, dependencies_ok, expected', [(True, True, 0), (False, True, 2), (True, False, 2)])
+def test_deployment_doctor_needs_no_business_config_but_checks_environment(application, monkeypatch, capsys, browser_ok, dependencies_ok, expected):
+    def missing_configuration(request):
+        raise ValueError('business credentials are not installed')
+    app = replace(application, load_runtime_options=missing_configuration)
+    monkeypatch.setattr(cli, '_browser_status', lambda _: (browser_ok, 'fixture'))
+    monkeypatch.setattr(cli, '_dependency_status', lambda _: (dependencies_ok, 'fixture'))
+    assert cli.main(app, ['doctor', '--deployment']) == expected
+    result = json.loads(capsys.readouterr().out)
+    assert result['scope'] == 'deployment'
+    assert result['configuration_error'] is None
+    assert result['account'] is None
+    assert result['real_browser_launched'] is False
+    assert cli.main(app, ['doctor']) == 2
+    assert json.loads(capsys.readouterr().out)['configuration_error'] == 'ValueError'

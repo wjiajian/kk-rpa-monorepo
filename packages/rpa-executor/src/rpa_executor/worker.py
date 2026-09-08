@@ -311,7 +311,8 @@ def main():
     parser.add_argument("--config", required=True)
     parser.add_argument("--deployment", required=True)
     args = parser.parse_args()
-    config = tomllib.loads(Path(args.config).read_text(encoding="utf-8"))["deployments"][args.deployment]
+    configuration = Path(args.config)
+    config = (json.loads if configuration.suffix == ".json" else tomllib.loads)(configuration.read_text(encoding="utf-8"))["deployments"][args.deployment]
     output, lock = sys.stdout, Lock()
     worker = None
     # Application diagnostics cannot corrupt the JSON transport.

@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "聚水潭库存导出",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "brand_value"
+  ],
+  "properties": {
+    "brand_value": {
+      "type": "string",
+      "title": "品牌",
+      "pattern": "\\S",
+      "description": "填写本次导出的目标品牌"
+    },
+    "export_filename": {
+      "type": "string",
+      "title": "导出文件名",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$(?![\\s\\S])",
+      "description": "可选，仅英文、数字、点、下划线和连字符；留空使用程序生成的文件名"
+    }
+  }
+}

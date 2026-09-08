@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "京麦商品明细导出",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "target_date"
+  ],
+  "properties": {
+    "target_date": {
+      "type": "string",
+      "title": "报表日期",
+      "format": "date",
+      "description": "填写需要导出的单日报表日期"
+    },
+    "export_filename": {
+      "type": "string",
+      "title": "导出文件名",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$(?![\\s\\S])",
+      "description": "可选，仅英文、数字、点、下划线和连字符；留空使用程序生成的文件名"
+    }
+  }
+}

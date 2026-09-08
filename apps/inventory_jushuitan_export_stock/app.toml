@@ -1,3 +1,8 @@
 app_id = "jushuitan.inventory.export_stock"
 name = "聚水潭库存导出"
 entrypoint = "inventory_jushuitan_export_stock.cli:main"
+
+[console]
+input_schema = "input.schema.json"
+application = "inventory_jushuitan_export_stock.program:APPLICATION"
+allowed_hosts = ["www.erp321.com", "erp321.com"]

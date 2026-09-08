@@ -4,7 +4,9 @@
 
 设计见 [核心设计](docs/rpa-framework-design.md)，后续任务与验收标准见 [Agent 开发与接管实施文档](docs/rpa-agent-implementation.md)，生成规则见 [AGENTS.md](AGENTS.md)。
 
-后续网页控制台的前后端 monorepo 架构、任务与运行模型，以及本仓库应用的直接导入方式，见 [控制台架构与应用导入方案](../kk-rpa-dashboard/docs/rpa-console-architecture.md)。该文档为待实施方案。
+后续网页控制台的前后端 monorepo 架构、任务与运行模型，以及本仓库应用的直接导入方式，见 [控制台架构与应用导入方案](../kk-rpa-dashboard/docs/rpa-console-architecture.md)。该文档保留原设计背景；后续进展与验收以完整平台实施方案为准。基线技术说明见 [Monorepo 技术说明](../kk-rpa-dashboard/docs/sharing/monorepo.md)。
+
+下一阶段统一实施文档见 [完整平台实施方案](../kk-rpa-dashboard/docs/platform-implementation.md)，涵盖应用参数声明、计划调度、Git 版本发布、机器人安装和正式部署；两仓库共用该文档的接口与验收约定。
 
 Windows 对接控制台：在本仓库根目录运行 `.\packages\rpa-executor\start.ps1`。首次只填写控制台 HTTPS 地址和机器人连接凭据，脚本安装独立环境并保存连接配置；业务账号密码在控制台发起运行时填写；后续运行同一条命令即可。详见 [执行端说明](packages/rpa-executor/README.md)。
 
@@ -42,7 +44,7 @@ agent 已临时完成失败步骤时，提交该步输出，由框架校验通�
 开发元素验证用 rpa-app verify-elements，离线测试用 rpa-app test。
 agent 打开真实浏览器或写入业务系统仍需用户授权。
 
-2026-09-05 已授权并完成两个应用在 macOS 上的真实导出，以及聚水潭 S003 接管结果校验、临时定位器续跑和同名下载保留验证。Windows 实机验证已授权，等待可连接的 Windows 环境。详细记录见各应用需求基线。
+2026-09-05 已授权并完成两个应用在 macOS 上的真实导出，以及聚水潭 S003 接管结果校验、临时定位器续跑和同名下载保留验证。Windows 实机验证已有授权，后续已有 Dashboard 现场运行和问题调试；最新版本完整验收尚未完成。两个程序现已取消预期可见身份匹配，仅检查登录会话，最新修改不能沿用历史 macOS 验收结论。详细历史记录见各应用需求基线。
 
 - [聚水潭应用](apps/inventory_jushuitan_export_stock/README.md)
 - [京麦应用](apps/report_jingmai_export_product_detail/README.md)

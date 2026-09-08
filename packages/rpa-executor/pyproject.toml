@@ -2,7 +2,7 @@
 name = "rpa-executor"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["websockets>=15,<18"]
+dependencies = ["websockets>=15,<18", "jsonschema>=4.25,<5"]
 [project.scripts]
 rpa-executor = "rpa_executor.client:main"
 [build-system]

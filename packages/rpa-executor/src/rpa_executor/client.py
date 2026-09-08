@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 from websockets.asyncio.client import connect
 
 from .journal import Journal
+from .deployments import deployment_metadata
+from .installer import Installer, atomic_json
 
 
 def load_config(path):
@@ -46,6 +48,15 @@ class Client:
             fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.journal = Journal(self.path.parent / self.config.get("journal", "executor.sqlite"),
                                credential_key=os.environ.get(self.config.get("credential_env", ""), ""))
+        self.installer = Installer(self.path.parent / "runtime" / "releases", self.config["server_url"],
+            os.environ.get(self.config.get("credential_env", ""), ""), self.config.get("ca_file"))
+        self.install_task = None
+        for job, report in self.journal.deployment_records():
+            if report.get("status") not in {"installed", "uninstalled", "failed"}:
+                if job["action"] == "install" and job["release_id"] in self.installer.registry:
+                    self.journal.deployment_report(job["job_id"], "installed", "complete")
+                else:
+                    self.journal.deployment_report(job["job_id"], "uncertain", "restart", "执行端重启，安装收尾待确认")
         self.worker = self.reader = self.socket = None
         self.outbound = asyncio.Queue()
         self.state = self.journal.state()
@@ -78,6 +89,8 @@ class Client:
 
     async def command(self, command):
         if command["action"] == "start":
+            if self.install_task and not self.install_task.done() or any(r.get("status") == "uncertain" for _, r in self.journal.deployment_records()):
+                raise ValueError("deployment cleanup is not confirmed")
             if self.state.get("active_run") not in {None, command["console_run_id"]}:
                 raise ValueError("robot already owns another run")
         elif self.state.get("active_run") != command["console_run_id"]:
@@ -92,16 +105,22 @@ class Client:
             self.state = {"active_run": command["console_run_id"],
                           "execution_attempt_id": command["execution_attempt_id"], "phase": "starting"}
             self.journal.save_state(self.state)
-            deployed = next(((key, d) for key, d in self.config["deployments"].items()
-                             if d["app_id"] == snapshot["app_id"] and d["version"] == snapshot["version"]), None)
+            available = {**self.config["deployments"], **self.installer.registry}
+            deployed = next(((key, d) for key, d in available.items()
+                             if d["app_id"] == snapshot["app_id"] and d["version"] == snapshot["version"]
+                             and d.get("release_id") == snapshot.get("release_id")), None)
             if deployed is None:
                 await self.preparation_failed(command, "本机未部署指定应用版本")
                 return
             key, deployment = deployed
+            worker_config = self.path
+            if deployment.get("release_id"):
+                atomic_json(self.installer.worker_config, {"deployments": {key: deployment}})
+                worker_config = self.installer.worker_config
             try:
                 self.worker = await asyncio.create_subprocess_exec(
                     deployment["python"], "-u", str(Path(__file__).with_name("worker.py")),
-                    "--config", str(self.path), "--deployment", key,
+                    "--config", str(worker_config), "--deployment", key,
                     cwd=deployment["cwd"], stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                     # Never relay arbitrary application stdout to dashboard/model.
                     stderr=asyncio.subprocess.DEVNULL, limit=16 * 1024 * 1024)
@@ -157,6 +176,35 @@ class Client:
                 "execution_attempt_id": self.state["execution_attempt_id"], "data": {"error": "执行进程退出，结束未确认"}})
             await self.outbound.put(event)
 
+    async def deploy(self, command):
+        existing = next((r for c, r in self.journal.deployment_records() if c["job_id"] == command["job_id"]), None)
+        if existing is not None:
+            self.journal.accept_deployment(command)
+            if existing:
+                await self.outbound.put(existing)
+            return
+        if self.state.get("active_run") or self.install_task and not self.install_task.done():
+            raise ValueError("robot is busy")
+        if any(r.get("status") == "uncertain" for _, r in self.journal.deployment_records()):
+            raise ValueError("previous installation outcome is uncertain")
+        self.journal.accept_deployment(command)
+        async def report(status, stage, error=""):
+            await self.outbound.put(self.journal.deployment_report(command["job_id"], status, stage, error))
+        self.install_task = asyncio.create_task(self.installer.execute(command, report))
+
+    def resolve_deployment(self, job_id, processes_stopped=False):
+        if not processes_stopped:
+            raise ValueError("需先确认该安装作业的全部进程已停止")
+        if self.state.get("active_run") or self.install_task and not self.install_task.done():
+            raise ValueError("存在未结束运行或安装，不能执行本地收尾")
+        record = next(((job, report) for job, report in self.journal.deployment_records()
+                       if job["job_id"] == job_id), None)
+        if not record or record[1].get("status") != "uncertain":
+            raise ValueError("只能处理本机状态为 uncertain 的部署作业")
+        status = self.installer.resolve_interrupted(record[0])
+        return self.journal.deployment_report(job_id, status, "operator_cleanup",
+            "管理员确认进程停止，残留源码环境已隔离；重连后确认收尾")
+
     async def run(self):
         tls = ssl.create_default_context(cafile=self.config.get("ca_file"))
         headers = {"Authorization": "Bearer " + os.environ[self.config["credential_env"]],
@@ -167,8 +215,9 @@ class Client:
                                    max_size=16 * 1024 * 1024, ping_interval=15, ping_timeout=15) as socket:
                     self.socket = socket
                     hello = {"type": "hello", **self.state, "journal_complete": True,
-                             "requests": self.journal.requests(), "deployments": [
-                                 {"app_id": d["app_id"], "version": d["version"]} for d in self.config["deployments"].values()]}
+                             "requests": self.journal.requests(), "capabilities": ["deploy-v1"],
+                             "deployment_reports": [r for _, r in self.journal.deployment_records() if r], "deployments": [
+                                 deployment_metadata(d) for d in [*self.config["deployments"].values(), *self.installer.registry.values()]]}
                     await socket.send(json.dumps(hello))
                     sync = json.loads(await socket.recv())
                     if sync["type"] != "sync":
@@ -191,6 +240,8 @@ class Client:
                             message = json.loads(raw)
                             if message["type"] == "command":
                                 await self.command(message)
+                            elif message["type"] == "deployment":
+                                await self.deploy(message)
                             elif message["type"] == "ack":
                                 self.acknowledge(message["console_run_id"], message["seq"])
                     finally:
@@ -210,5 +261,20 @@ class Client:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--resolve-deployment", metavar="JOB_ID", help="离线收尾本机不确定的安装或卸载")
+    parser.add_argument("--confirm-processes-stopped", action="store_true", help="确认该部署作业的全部进程已经停止")
     args = parser.parse_args()
-    asyncio.run(Client(args.config).run())
+    if args.confirm_processes_stopped and not args.resolve_deployment:
+        parser.error("--confirm-processes-stopped 需与 --resolve-deployment 一起使用")
+    if args.resolve_deployment and not args.confirm_processes_stopped:
+        parser.error("收尾前需确认安装进程已停止，并提供 --confirm-processes-stopped")
+    client = Client(args.config)
+    try:
+        if args.resolve_deployment:
+            client.resolve_deployment(args.resolve_deployment, args.confirm_processes_stopped)
+            print("本地收尾已记录。请重新启动执行端，等待控制台确认；隔离目录保留用于检查。")
+        else:
+            asyncio.run(client.run())
+    finally:
+        client.journal.db.close()
+        client.lock_file.close()

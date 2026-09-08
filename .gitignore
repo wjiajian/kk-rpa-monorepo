@@ -42,3 +42,6 @@ locks/
 *.tmp
 *.temp
 *.bak
+
+# Executor-managed immutable release environments and installation state
+packages/rpa-executor/runtime/

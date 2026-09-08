@@ -183,6 +183,9 @@ def main(application: ApplicationDefinition, argv: Sequence[str] | None = None) 
         command.add_argument("--inputs", help="business inputs as a JSON object or @file")
         command.add_argument("--credentials", help="credentials as a JSON object or @file")
         command.add_argument("--download-dir", help="override the download directory")
+        if name == "doctor":
+            command.add_argument("--deployment", action="store_true",
+                                 help="check installation without business configuration or credentials")
         if name == "run":
             command.add_argument(
                 "--preview",
@@ -221,7 +224,7 @@ def main(application: ApplicationDefinition, argv: Sequence[str] | None = None) 
         request = RunRequest(args.account, _json_object(args.inputs), credentials, args.download_dir)
         if args.command == "doctor":
             validate_application(application)
-            return _doctor(application, request)
+            return _doctor(application, request, deployment=args.deployment)
         return _execute(
             application,
             request=request,
@@ -273,21 +276,22 @@ def _test(application: ApplicationDefinition) -> int:
     ).returncode
 
 
-def _doctor(application: ApplicationDefinition, request: RunRequest) -> int:
+def _doctor(application: ApplicationDefinition, request: RunRequest, *, deployment: bool = False) -> int:
     blockers = collect_blockers(application)
     configuration_error = None
     options = None
-    try:
-        options = application.load_runtime_options(request)
-    except Exception as error:
-        configuration_error = type(error).__name__
+    if not deployment:
+        try:
+            options = application.load_runtime_options(request)
+        except Exception as error:
+            configuration_error = type(error).__name__
     browser_ok, browser_detail = _browser_status(
         options.browser_path if options else None
     )
     dependencies_ok, dependency_detail = _dependency_status(application.app_dir)
     ok = (
         sys.version_info[:2] == (3, 12)
-        and options is not None
+        and (deployment or options is not None)
         and browser_ok
         and dependencies_ok
         and not blockers
@@ -295,7 +299,8 @@ def _doctor(application: ApplicationDefinition, request: RunRequest) -> int:
     _print(
         {
             "ok": ok,
-            "account": request.account_id,
+            "scope": "deployment" if deployment else "run_configuration",
+            "account": None if deployment else request.account_id,
             "configuration_error": configuration_error,
             "browser_available": browser_ok,
             "browser_detail": browser_detail,

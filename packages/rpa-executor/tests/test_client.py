@@ -85,3 +85,43 @@ def test_absolute_paths_and_explicit_ca_are_preserved(tmp_path):
     config = load_config(path)
     assert Path(config["deployments"]["app"]["python"]) == tmp_path / "python.exe"
     assert Path(config["ca_file"]) == tmp_path / "certs" / "ca.pem"
+
+
+def test_local_install_resolution_requires_confirmation_and_preserves_evidence(client):
+    from uuid import uuid4
+    job_id, release_id = str(uuid4()), str(uuid4())
+    job = {'job_id': job_id, 'release_id': release_id, 'action': 'install'}
+    client.journal.accept_deployment(job)
+    client.journal.deployment_report(job_id, 'uncertain', 'restart')
+    directory = client.installer.root / release_id
+    directory.mkdir()
+    (directory / 'partial.txt').write_text('diagnostic fixture')
+    with pytest.raises(ValueError, match='全部进程'):
+        client.resolve_deployment(job_id)
+    client.state = {'active_run': 'unfinished-run'}
+    with pytest.raises(ValueError, match='未结束'):
+        client.resolve_deployment(job_id, True)
+    client.state = {}
+    report = client.resolve_deployment(job_id, True)
+    assert report['status'] == 'failed' and report['seq'] == 2
+    assert not directory.exists()
+    assert (client.installer.root / 'interrupted' / job_id / 'partial.txt').read_text() == 'diagnostic fixture'
+    with pytest.raises(ValueError, match='uncertain'):
+        client.resolve_deployment(job_id, True)
+    assert client.journal.deployment_records()[0][1] == report
+
+
+def test_local_uninstall_resolution_removes_only_target_registration(client):
+    from uuid import uuid4
+    from rpa_executor.installer import atomic_json
+    job_id, release_id, old_id = str(uuid4()), str(uuid4()), str(uuid4())
+    client.installer.registry = {release_id: {'version': 'new'}, old_id: {'version': 'old'}}
+    atomic_json(client.installer.registry_path, client.installer.registry)
+    job = {'job_id': job_id, 'release_id': release_id, 'action': 'uninstall'}
+    client.journal.accept_deployment(job)
+    client.journal.deployment_report(job_id, 'uncertain', 'uninstall')
+    # Removal already happened before the crash; finish only registry and journal.
+    report = client.resolve_deployment(job_id, True)
+    assert report['status'] == 'uninstalled'
+    assert client.installer.registry == {old_id: {'version': 'old'}}
+    assert json.loads(client.installer.registry_path.read_text()) == client.installer.registry
