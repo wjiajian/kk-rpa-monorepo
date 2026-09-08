@@ -6,7 +6,7 @@
 
 ## 业务步骤
 
-1. S000：打开稳定登录入口，必要时用本地凭据登录。回读登录态和期望账号身份，失败留截图并结束。
+1. S000：打开稳定登录入口，必要时用本地凭据登录。确认登录态，失败留截图并结束，不匹配预期账号身份。
 2. S001：点击库存入口，确认库存模块已打开。
 3. S002：进入商品库存，确认活动页签与业务页面。
 4. S003：重置历史筛选，将品牌选中集合归一为配置品牌，回读选中集合；通过经验证的关闭目标收起浮层。
@@ -19,13 +19,13 @@
 
 ### S000 登录并确认目标账号
 
-- 目标与输入：读取 metadata 中的 store_config.login_url、login_credentials（username、password、expected_identity）；expected_identity 缺省时用 username。打开登录入口，必要时登录。
+- 目标与输入：读取 metadata 中的 store_config.login_url、login_credentials（username、password）。打开登录入口，必要时登录。
 - 前置状态：目标账号的 Profile 可连接；可能已有登录态，也可能显示登录页。
-- 输出：authenticated、identity_verified、login_performed、human_verification_required 均为 bool，分别表示会话可用、动作时身份符合、是否执行登录、是否仍需人工验证。
-- 成功条件：输出 authenticated 严格为 true，当前会话标识存在，当前身份文本经 NFKC、大小写及空白归一后包含期望身份。其他三个输出字段是动作记录，不代替页面回读。身份载体目前为整页文本，保留已知弱断言。
-- 失败与恢复：登录动作失败检查登录表单、凭据和截图；身份不符检查当前账号。会话丢失时恢复登录页或从 S000 重跑；验证码、短信等只留证并报错。
+- 输出：authenticated、login_performed、human_verification_required 均为 bool，分别表示会话可用、是否执行登录、是否仍需人工验证；identity_check_skipped=true 表示不执行身份匹配。
+- 成功条件：输出 authenticated 严格为 true，当前会话标识存在。不读取或匹配页面账号名称。
+- 失败与恢复：登录动作失败检查登录表单、凭据和截图；不比对预期身份。会话丢失时恢复登录页或从 S000 重跑；验证码、短信等只留证并报错。
 
-接管输出示例：`{"authenticated": true, "identity_verified": true, "login_performed": false, "human_verification_required": false}`。
+接管输出示例：`{"authenticated": true, "identity_check_skipped": true, "login_performed": false, "human_verification_required": false}`。
 
 ### S001 打开库存模块
 
@@ -87,7 +87,7 @@
 
 ## 元素与待确认项
 
-全部定位器来自应用的 elements.toml，沿用此前真实捕获的定位器。账号身份当前仍从整页文本做子串匹配，元素检查会报告弱断言；精确身份载体尚待真实页面确认，不编造替代定位器。
+全部定位器来自应用的 elements.toml，沿用此前真实捕获的定位器。当前不再进行账号身份文本匹配。
 
 尚未捕获专用的人机验证标识。若登录后仍无会话则截图并报错，不绕过验证。
 

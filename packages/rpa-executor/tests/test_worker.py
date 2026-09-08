@@ -98,7 +98,7 @@ def test_start_uses_console_credentials_without_local_account_configuration():
     w.run_id = None
     w.config = {"app_id": "app", "version": "1"}
     w.program = lambda: dict(w.credentials)
-    credentials = {"username": "console-user", "password": "console-password", "expected_identity": "console-identity"}
+    credentials = {"username": "console-user", "password": "console-password"}
     result = w.execute(command("start", snapshot={"app_id": "app", "version": "1"}, credentials=credentials))
     assert result == credentials
     assert result is not credentials

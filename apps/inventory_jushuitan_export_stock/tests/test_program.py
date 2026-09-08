@@ -180,14 +180,14 @@ def test_main_parameters_work_without_local_config_and_reach_the_steps(tmp_path,
     destination = tmp_path / "downloads"
     request = RunRequest(
         inputs={"brand_value": "BRAND_TEST", "export_filename": "requested.xlsx"},
-        credentials={"username": "test-user", "password": "test-secret", "expected_identity": "Test Shop"},
+        credentials={"username": "test-user", "password": "test-secret"},
         download_dir=str(destination),
     )
     options = program.load_runtime_options(request)
     assert options.inputs == request.inputs and options.download_dir == destination
     credentials = options.metadata["login_credentials"]
     assert credentials.username.reveal() == "test-user"
-    assert credentials.expected_identity.reveal() == "Test Shop"
+    assert credentials.expected_identity is None
     assert not program.APP_DIR.exists()
     monkeypatch.setattr(program, "APP_DIR", source_dir)
     ctx = context(tmp_path / "fixture")
@@ -369,3 +369,16 @@ def test_public_recovery_handles_guide_and_temporary_verifier_then_continues(
     assert source.read_bytes() == source_bytes
     assert not (app_dir / "changed-downloads").exists()
     assert (app_dir / "elements.toml").read_bytes() == (APPLICATION.app_dir / "elements.toml").read_bytes()
+
+
+def test_login_ignores_displayed_identity_but_requires_session(tmp_path):
+    from inventory_jushuitan_export_stock import program
+    step = build_program().steps[0]
+    ctx = context(tmp_path, Counterexample("different visible identity", FakeState(texts={program.IDENTITY_SURFACE: ("OTHER_ACCOUNT",)})))
+    result = step.execute(ctx)
+    assert result["authenticated"] is True
+    assert result["identity_check_skipped"] is True
+    assert "identity_verified" not in result
+    assert step.verify(ctx, result)
+    result["authenticated"] = False
+    assert not step.verify(ctx, result)

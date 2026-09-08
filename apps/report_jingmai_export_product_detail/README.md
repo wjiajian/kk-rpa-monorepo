@@ -12,7 +12,7 @@ uv run rpa-app doctor
 uv run rpa-app test
 ```
 
-将 `config/stores.example.toml` 复制为忽略的 `config/stores.local.toml`，填写期望账号身份和已确认的导出账号配置。在应用根目录的忽略文件 `.env` 中填写：
+将 `config/stores.example.toml` 复制为忽略的 `config/stores.local.toml`，填写已确认的导出账号配置。在应用根目录的忽略文件 `.env` 中填写：
 
 ```dotenv
 username=<京麦账号>
@@ -55,7 +55,7 @@ uv run rpa-app resume <run_id> --from-step S006
 `credentials.local.json`：
 
 ```json
-{"username":"<login username>","password":"<login password>","expected_identity":"<visible account identity>"}
+{"username":"<login username>","password":"<login password>"}
 ```
 
 ```bash
@@ -65,3 +65,5 @@ uv run rpa-app run --account STORE_001 --inputs "@inputs.local.json" --credentia
 显式参数优先于本地默认；参数齐全时无需 stores.local.toml 或 .env。可加 `--download-dir "D:/RPA/downloads"` 指定保存目录，export_filename 只填写 ASCII 文件名，目录可含中文。凭据不保存在运行记录中；无本地凭据时，resume 需再次传 --credentials。
 
 agent 临时完成失败步骤后，用 `--step-result "@step-result.local.json"` 提交该步 execute 应返回的输出；框架独立执行 verify，通过后再继续。校验也用到失效元素时，可用 `--locator-overrides "@locators.local.json"` 仅替换本次定位器。完整格式见 [核心设计](../../docs/rpa-framework-design.md)。
+
+当前测试流程仅确认登录会话已建立，不匹配页面上的预期账号名称。验证码、短信验证或未建立会话仍会失败并留证。

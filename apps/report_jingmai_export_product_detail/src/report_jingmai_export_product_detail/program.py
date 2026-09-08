@@ -104,7 +104,7 @@ class EnsureSessionStep(Step):
     def __init__(self) -> None:
         super().__init__(
             StepSpec(
-                step_id="S001", name="登录并确认目标京麦账号会话", timeout_seconds=75.0
+                step_id="S001", name="登录并确认京麦会话", timeout_seconds=75.0
             )
         )
 
@@ -116,7 +116,7 @@ class EnsureSessionStep(Step):
             isinstance(result, Mapping)
             and result.get("target_date") == _target_date(context)
             and context.browser.exists(_element(context, AUTHENTICATED_MARKER))
-            and (_identities(context) == [_expected_identity(context)])
+            and result.get("authenticated") is True
         )
 
     def counterexamples(self) -> Iterable[Counterexample]:
@@ -133,7 +133,7 @@ class EnsureSessionStep(Step):
             expected_error=ManualLoginVerificationRequired,
         )
         yield Counterexample(
-            "登录的是其他账号", FakeState(texts={ACCOUNT_IDENTITY: ("OTHER_ACCOUNT",)})
+            "登录结果未确认会话", after_execute=lambda context, result: result.update(authenticated=False)
         )
 
 
@@ -410,7 +410,6 @@ def verify_element_stages(
         reached.append(stage)
 
     _target_date(context)
-    _expected_identity(context)
     declared_stages = {entry.check_at for entry in entries.values()}
     for step in program.steps:
         context.current_step_id = step.spec.step_id
@@ -502,9 +501,6 @@ def load_runtime_options(request: RunRequest) -> RuntimeOptions:
         raise LocalConfigurationError("export_filename must be an ASCII basename")
     store = _load_store(account)
     profile_dir = _safe_app_path(str(store.get("profile_directory", f"profiles/{account}")))
-    expected_identity = request.credentials.get("expected_identity", str(store.get("expected_identity", ""))).strip()
-    if not expected_identity or expected_identity.startswith("<"):
-        raise LocalConfigurationError("expected_identity must be configured locally")
     (login_username, login_password) = _load_login_credentials(request.credentials)
     debug_port = store.get("debug_port", 0)
     if isinstance(debug_port, bool) or not isinstance(debug_port, int):
@@ -527,9 +523,6 @@ def load_runtime_options(request: RunRequest) -> RuntimeOptions:
         browser_path=browser_path,
         inputs={"target_date": target, "export_filename": filename},
         metadata={
-            "expected_identity": SecretValue(
-                expected_identity, label=f"{account}.expected_identity"
-            ),
             "login_username": SecretValue(login_username, label=f"{account}.username"),
             "login_password": SecretValue(login_password, label=f"{account}.password"),
         },
@@ -661,12 +654,11 @@ def _ensure_target_session(
             raise ManualLoginVerificationRequired(
                 f"login did not reach the authenticated page; resolve any CAPTCHA, slider, or SMS check before starting a new run (evidence: {evidence.path.name})"
             )
-    identities = _identities(context, timeout=20.0) if authenticated else []
     return {
         "target_date": _target_date(context),
         "login_performed": login_performed,
         "authenticated": authenticated,
-        "identity_verified": identities == [_expected_identity(context)],
+        "identity_check_skipped": True,
     }
 
 
@@ -760,13 +752,6 @@ def _target_date(context: ExecutionContext) -> str:
     if not isinstance(value, str) or not _is_iso_date(value):
         raise ApplicationStateError("inputs.target_date must be an ISO date")
     return value
-
-
-def _expected_identity(context: ExecutionContext) -> str:
-    value = context.metadata.get("expected_identity")
-    if not isinstance(value, SecretValue):
-        raise ApplicationStateError("expected account identity is not bound securely")
-    return " ".join(value.reveal().split()).casefold()
 
 
 def _is_iso_date(value: str) -> bool:

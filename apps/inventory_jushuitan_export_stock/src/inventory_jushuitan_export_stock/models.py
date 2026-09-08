@@ -140,7 +140,7 @@ def load_login_credentials(
         username = values[store.username_env]
         secret_value = values[store.password_env]
         identity_env = store.identity_env or store.username_env
-        expected_identity = values[identity_env]
+        expected_identity = values.get(identity_env) if store.identity_env else None
     except KeyError as error:
         raise ConfigurationError(
             f"required credential variable is missing: {error.args[0]}"
@@ -148,13 +148,12 @@ def load_login_credentials(
     if (
         username.startswith("<")
         or secret_value.startswith("<")
-        or expected_identity.startswith("<")
     ):
         raise ConfigurationError("credential placeholders must be replaced locally")
     return LoginCredentials(
         SecretValue(username, label=store.username_env),
         SecretValue(secret_value, label=store.password_env),
-        SecretValue(expected_identity, label=identity_env),
+        SecretValue(expected_identity, label=identity_env) if expected_identity else None,
     )
 
 

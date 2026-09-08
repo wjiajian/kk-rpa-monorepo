@@ -6,7 +6,7 @@
 
 ## 业务步骤
 
-1. S001：打开京麦首页，必要时从京麦专用入口用本次传入或本地凭据登录。回读登录态和配置账号身份；身份不符或登录受阻时留证并结束。
+1. S001：打开京麦首页，必要时从京麦专用入口用本次传入或本地凭据登录。确认登录态；登录受阻时留证并结束，不匹配预期账号身份。
 2. S002：打开商智推荐报表，进入“经营状况-商品明细报表”，回读目标页面标识。
 3. S003：将起止日期都设为 target_date；未传入时以 Asia/Shanghai 时区计算本次启动日的昨日并固定；支持跨月选择。回读组合日期范围和结果行日期，并确认有结果行。
 4. S004：点击“下载报表”，创建一次服务端导出任务；回读完成弹窗和完整报表名称。
@@ -27,13 +27,13 @@
 
 ### S001 登录并确认目标京麦账号
 
-- 目标与输入：读取 `ctx.inputs.target_date`，以及 metadata 的 login_username、login_password、expected_identity；打开首页，必要时从专用登录入口登录。
+- 目标与输入：读取 `ctx.inputs.target_date`，以及 metadata 的 login_username、login_password；打开首页，必要时从专用登录入口登录。
 - 前置状态：原账号 Profile 可连接；允许已有会话或尚未登录。
-- 输出：target_date（str）为固定目标日期；login_performed、authenticated、identity_verified（bool）分别记录是否登录、会话可用、动作时身份符合。
-- 成功条件：输出日期等于原日期，当前已登录标识存在；页面身份列表经空白和大小写归一后必须恰好是唯一的期望身份。三个布尔字段不代替当前身份检查。
-- 失败与恢复：表单不可用检查登录入口；结果不符检查账号身份；登录后仍无会话时截图并报告人工验证。页面或会话丢失时恢复登录页或从 S001 重跑，不能绕过验证码或短信。
+- 输出：target_date（str）为固定目标日期；login_performed、authenticated（bool）记录是否登录、会话可用；identity_check_skipped=true 表示不执行身份匹配。
+- 成功条件：输出日期等于原日期、authenticated=true，且当前已登录标识存在。不读取或匹配页面账号名称。
+- 失败与恢复：表单不可用检查登录入口；结果不符检查登录会话；登录后仍无会话时截图并报告人工验证。页面或会话丢失时恢复登录页或从 S001 重跑，不能绕过验证码或短信。
 
-接管输出示例：`{"target_date": "2026-09-04", "login_performed": false, "authenticated": true, "identity_verified": true}`。
+接管输出示例：`{"target_date": "2026-09-04", "login_performed": false, "authenticated": true, "identity_check_skipped": true}`。
 
 ### S002 打开商品明细报表
 

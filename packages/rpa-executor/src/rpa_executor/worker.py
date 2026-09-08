@@ -129,10 +129,10 @@ class Worker:
             if (self.snapshot["app_id"] != self.config["app_id"] or self.snapshot["version"] != self.config["version"]):
                 raise ValueError("requested release differs from deployment")
             credentials = params.get("credentials", {})
-            required = {"username", "password", "expected_identity"}
-            if (not isinstance(credentials, dict) or set(credentials) != required
+            required = {"username", "password"}
+            if (not isinstance(credentials, dict) or not required.issubset(credentials) or set(credentials) - (required | {"expected_identity"})
                     or any(not isinstance(value, str) or not value for value in credentials.values())):
-                raise ValueError("请在控制台发起运行时填写账号、密码和预期登录身份")
+                raise ValueError("请在控制台发起运行时填写账号和密码")
             self.credentials = dict(credentials)
             return self.program()
         self.check(command)

@@ -195,13 +195,13 @@ def test_main_parameters_override_date_filename_credentials_and_downloads_withou
     monkeypatch.setattr(program, "APP_DIR", tmp_path / "application")
     request = RunRequest(
         inputs={"target_date": "2026-08-01", "export_filename": "requested.xlsx"},
-        credentials={"username": "test-user", "password": "test-secret", "expected_identity": "Test Shop"},
+        credentials={"username": "test-user", "password": "test-secret"},
         download_dir=str(tmp_path / "downloads"),
     )
     options = program.load_runtime_options(request)
     assert options.inputs == request.inputs and str(options.download_dir) == request.download_dir
     assert options.metadata["login_username"].reveal() == "test-user"
-    assert options.metadata["expected_identity"].reveal() == "Test Shop"
+    assert "expected_identity" not in options.metadata
     assert not program.APP_DIR.exists()
     monkeypatch.setattr(program, "APP_DIR", source_dir)
     ctx = context(tmp_path / "fixture")
@@ -312,3 +312,16 @@ def test_public_recovery_prepares_downloads_with_original_date_and_preserves_fil
     assert "LOGIN_SECRET_001" not in (failed.run_dir / "recovery-events.jsonl").read_text()
     assert not (app_dir / "changed-downloads").exists()
     assert source.read_bytes() == original
+
+
+def test_login_ignores_displayed_identity_but_requires_session(tmp_path):
+    from report_jingmai_export_product_detail import program
+    step = build_program().steps[0]
+    ctx = context(tmp_path, Counterexample("different visible identity", FakeState(texts={program.ACCOUNT_IDENTITY: ("OTHER_ACCOUNT",)})))
+    result = step.execute(ctx)
+    assert result["authenticated"] is True
+    assert result["identity_check_skipped"] is True
+    assert "identity_verified" not in result
+    assert step.verify(ctx, result)
+    result["authenticated"] = False
+    assert not step.verify(ctx, result)

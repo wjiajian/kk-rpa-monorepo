@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import unicodedata
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -55,20 +54,6 @@ def _element(context: ExecutionContext, element_id: str) -> ElementSpec:
     return element
 
 
-def _normalized_secret(value: object) -> str:
-    revealed = value.reveal() if isinstance(value, SecretValue) else value
-    if not isinstance(revealed, str) or not revealed.strip():
-        raise ValueError("expected account identity must be one non-empty string")
-    return " ".join(unicodedata.normalize("NFKC", revealed).casefold().split())
-
-
-def _identity_matches(page_text: str, expected_identity: object) -> bool:
-    normalized_page = " ".join(
-        unicodedata.normalize("NFKC", page_text).casefold().split()
-    )
-    return _normalized_secret(expected_identity) in normalized_page
-
-
 def _capture(context: ExecutionContext, name: str) -> None:
     try:
         context.browser.screenshot(name=name)
@@ -91,7 +76,7 @@ def _credentials(context: ExecutionContext) -> LoginCredentials:
 
 
 def _ensure_target_session(context: ExecutionContext) -> Mapping[str, object]:
-    """Open the stable login URL and prove the resulting account identity."""
+    """Open the stable login URL and confirm an authenticated session."""
     store = _store(context)
     credentials = _credentials(context)
     browser = context.browser
@@ -111,30 +96,23 @@ def _ensure_target_session(context: ExecutionContext) -> Mapping[str, object]:
             if browser.exists(notice, timeout=8.0):
                 browser.click(notice)
             authenticated = browser.exists(marker, timeout=15.0)
-        expected_identity = credentials.expected_identity or credentials.username
-        identity_verified = authenticated and _identity_matches(
-            browser.text(_element(context, IDENTITY_SURFACE)), expected_identity
-        )
         result = {
             "authenticated": authenticated,
-            "identity_verified": identity_verified,
+            "identity_check_skipped": True,
             "login_performed": login_performed,
             "human_verification_required": not authenticated,
         }
         if not authenticated:
             _capture(context, "account-session-unavailable.png")
             raise ApplicationStateError("target account session is unavailable")
-        if not identity_verified:
-            _capture(context, "account-identity-mismatch.png")
-            raise ApplicationStateError("current account identity does not match")
         return result
     except Exception:
         _capture(context, "account-session-error.png")
         raise
 
 
-def _wrong_identity_after_login(context, result):
-    context.browser._text_values[IDENTITY_SURFACE] = "OTHER_ACCOUNT"
+def _missing_session_result(context, result):
+    result["authenticated"] = False
 
 
 class EnsureSessionStep(Step):
@@ -142,20 +120,14 @@ class EnsureSessionStep(Step):
         return _ensure_target_session(context)
 
     def verify(self, context, result):
-        expected = (
-            _credentials(context).expected_identity or _credentials(context).username
-        )
         return (
             result.get("authenticated") is True
             and context.browser.exists(_element(context, SESSION_MARKER))
-            and _identity_matches(
-                context.browser.text(_element(context, IDENTITY_SURFACE)), expected
-            )
         )
 
     def counterexamples(self):
         yield Counterexample(
-            "账号身份回读不符", after_execute=_wrong_identity_after_login
+            "登录结果未确认会话", after_execute=_missing_session_result
         )
         yield Counterexample(
             "登录后仍没有会话",
