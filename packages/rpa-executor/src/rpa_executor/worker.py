@@ -5,7 +5,6 @@ The module and Python executable come from local deployment configuration.
 """
 import argparse
 import base64
-from dataclasses import asdict, replace
 import importlib
 import importlib.metadata
 import json
@@ -15,15 +14,13 @@ import re
 import sys
 from threading import Event, Lock, Thread
 from time import monotonic, sleep
-from traceback import extract_tb
 import tomllib
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from rpa_core.browser import ElementSpec, Locator, SecretValue
+from rpa_core.browser import SecretValue
 from rpa_core.browser_manager import BrowserManager
 from rpa_core.cli import RunRequest, execute_application, open_recovery_session, read_recovery_record
-from rpa_core.elements import override_element_locators
 
 
 def recovery_context(source, requirement, elements, *, step=None, full=False):
@@ -66,7 +63,6 @@ class Worker:
         self.credentials = {}
         self.recovery = self.cm = None
         self.deadline = None
-        self.temporary = {}
         self.observed = set()
         self.needs_observation = True
         self.ended = False
@@ -89,6 +85,8 @@ class Worker:
         if self.cleanup_uncertain:
             raise ValueError("原框架浏览器收尾失败，进程结束尚未确认")
         if self.recovery:
+            if hasattr(self.recovery.context.browser, "release_recovery"):
+                self.recovery.context.browser.release_recovery()
             self.recovery.close_browser()
             self.cm.__exit__(None, None, None)
             self.cm = self.recovery = None
@@ -143,10 +141,13 @@ class Worker:
             self.cm = open_recovery_session(self.app, self.local_id, credentials=self.credentials)
             self.recovery = self.cm.__enter__()
             self.deadline = monotonic() + min(900, params["remaining_seconds"])
-            self.temporary.clear()
             self.observed.clear()
             self.needs_observation = True
-            self.event("recovery_started")
+            browser = self.recovery.context.browser
+            capabilities = browser.recovery_capabilities() if hasattr(browser, "recovery_capabilities") else {"protocol": 1, "features": []}
+            self.event("recovery_started", {"capabilities": capabilities,
+                "core_version": importlib.metadata.version("rpa-core"),
+                "core_module": type(browser).__module__})
             return {"browser_adopted": self.recovery.browser_adopted}
         if not self.recovery:
             raise ValueError("no active recovery context")
@@ -158,115 +159,78 @@ class Worker:
                     step=params.get("step"), full=params.get("full", False))
             return {**result,
                     "credential_fields": list(self.credentials), "remaining_seconds": max(0, self.deadline - monotonic())}
-        if action == "observe":
-            screenshot = self.screenshot()
-            stage = "target"
+        if action in {"query", "observe"}:
+            started = monotonic()
+            browser = ctx.browser
+            if not hasattr(browser, "recovery_query"):
+                raise ValueError("recovery_protocol_unsupported: update the loaded Windows rpa-core")
             try:
-                element = self.element(params["target"]) if params.get("target") else None
-                if params.get("frame_target"):
-                    frame = self.element(params["frame_target"]).require_locator()
-                    if element is not None:
-                        if element.frame_locator and element.frame_locator != frame:
-                            raise ValueError("target belongs to a different frame")
-                        element = replace(element, frame_locator=frame)
-                    else:
-                        element = ElementSpec("frame_body", "当前框架", "recovery", locator=Locator("tag:body"), frame_locator=frame)
-                stage = "dom"
-                dom = ctx.browser.observe_dom(element, limit=params.get("limit", 200))
+                result = (browser.recovery_query if action == "query" else browser.recovery_observe)(params, ctx.service("elements"))
             except Exception as error:
                 self.needs_observation = True
-                location = extract_tb(error.__traceback__)[-1]
-                hint = ("target / frame_target 只接受正式元素 ID 或观察返回的 target，不能传 CSS、XPath 或 DOM id。请先观察整页，从 frames 获取 iframe target，再仅传 frame_target 观察框架。"
-                        if stage == "target" and isinstance(error, KeyError)
-                        else "页面读取失败，请重新观察；若同样错误持续出现，应结束接管并交由开发者处理。")
-                return {**screenshot, "observation_error": type(error).__name__,
-                        "observation_stage": stage, "observation_hint": hint,
-                        "observation_location": f"{Path(location.filename).name}:{location.lineno} ({location.name})"}
-            registered = {}
-            for node in [*dom["nodes"], *dom.get("frames", [])]:
-                key = (node["locator"], node.get("frame_locator"))
-                if key in registered:
-                    node["target"] = registered[key]
-                    continue
-                target_id = "observed_" + uuid4().hex[:12]
-                self.temporary[target_id] = ElementSpec(target_id, node["tag"], "recovery",
-                    locator=Locator(node["locator"]), frame_locator=Locator(node["frame_locator"]) if node.get("frame_locator") else None)
-                node["target"] = target_id
-                registered[key] = target_id
-                self.observed.add(node["locator"])
-                if node.get("frame_locator"):
-                    self.observed.add(node["frame_locator"])
+                return {**self.screenshot(), "observation_error": type(error).__name__, "observation_stage": "query" if action == "query" else "read",
+                    "observation_hint": "目标或作用域读取失败；用 query 重新获取候选，持续失败则 give_up。",
+                    "collection_order": ["failed_dom_state", "screenshot"]}
+            result["collection_order"] = ["dom_state"]
+            if action == "observe" and params.get("screenshot", not self.observed):
+                captured = monotonic()
+                result.update(self.screenshot(params.get("target")))
+                result["collection_order"].append("screenshot")
+                result.setdefault("timings_ms", {})["screenshot"] = (monotonic() - captured) * 1000
+            if action == "observe":
+                self.observed.add("live_observation")
             self.needs_observation = False
-            # Detect-only: the fixed tool cannot bypass an interactive challenge.
-            challenge = any(word in dom["text"] for word in ("滑块验证", "短信验证码", "图形验证码", "安全验证"))
-            if challenge:
+            text = json.dumps(result, ensure_ascii=False)
+            if any(word in text for word in ("滑块验证", "短信验证码", "图形验证码", "安全验证")):
                 self.stopped.set()
-                return {**dom, **screenshot, "requires_administrator": "检测到人工验证，已停止恢复，请管理员处理后重跑"}
-            return {**dom, **screenshot}
+                result["requires_administrator"] = "检测到人工验证，已停止恢复，请管理员处理后重跑"
+            result.setdefault("timings_ms", {})["worker_total"] = (monotonic() - started) * 1000
+            return result
         if self.needs_observation:
             raise ValueError("observe the current page before any further action")
         if action == "resume":
             self.source()
             overrides = params.get("locator_overrides", {})
-            for fields in overrides.values():
-                for value in fields.values():
-                    if value is not None and value not in self.observed:
-                        raise ValueError("locator override lacks actual DOM evidence")
-            override_element_locators(ctx.service("elements"), overrides)
+            ctx.browser.validate_recovery_overrides(ctx.service("elements"), overrides)
             from rpa_core.runtime import validate_resume
             validate_resume(self.app.build_program(), self.source(), params["from_step"])
+            ctx.browser.release_recovery()
             self.cm.__exit__(None, None, None)
             self.cm = self.recovery = None
             self.deadline = None
             self.attempt = command["next_attempt_id"]
             return self.program(params)
-        target = self.element(params["target"]) if params.get("target") else None
         if action == "credential":
-            if params["field"] not in self.credentials or not target:
+            if params["field"] not in self.credentials or not params.get("target"):
                 raise ValueError("credential field is not part of this run")
-            ctx.browser.input(target, SecretValue(self.credentials[params["field"]], label=params["field"]))
-            return {"entered": True}
+            result = ctx.browser.recovery_act({"operation": "input", "target": params["target"],
+                "value": SecretValue(self.credentials[params["field"]], label=params["field"]),
+                "read": ["displayed", "enabled"]}, ctx.service("elements"), lambda: self.check(command))
+            return {**result, "entered": result.get("phase") == "complete"}
         if action != "act":
             raise ValueError("unsupported runtime tool")
         operation = params["operation"]
-        if operation not in {"navigate", "wait"} and target is None:
-            raise ValueError("该操作需要 target，请使用正式元素 ID 或 observe 返回的 target")
         if operation == "navigate":
             url = urlsplit(params["value"])
             if url.scheme not in {"https", "http"} or url.hostname not in self.config["allowed_hosts"]:
                 raise ValueError("navigation outside the configured business hosts")
             ctx.browser.open(params["value"])
-        elif operation in {"click", "new_tab"}:
-            (ctx.browser.click if operation == "click" else ctx.browser.click_and_switch_to_new_tab)(target)
-        elif operation in {"input", "select"}:
-            getattr(ctx.browser, operation)(target, params["value"])
-        elif operation == "read":
-            return {"text": ctx.browser.text(target), "count": ctx.browser.count(target)}
-        elif operation == "wait":
-            seconds = min(15, max(0.1, float(params.get("seconds", 1))))
-            if target is not None:
-                return {"exists": ctx.browser.exists(target, timeout=seconds)}
-            until = monotonic() + seconds
-            while monotonic() < until:
-                self.check(command)
-                sleep(min(0.1, max(0, until - monotonic())))
-            self.check(command)
-            return {"waited_seconds": seconds}
-        elif operation == "download":
+            ctx.browser.release_recovery()
+            self.needs_observation = True
+            return {"issued": True, "phase": "complete", "url": ctx.browser.current_url}
+        if operation == "download":
             filename = self.snapshot["inputs"].get("export_filename")
             if params.get("filename") is not None and params["filename"] != filename:
                 raise ValueError("download filename must preserve the original business input")
-            return {"download": ctx.browser.download(target, filename=filename).to_dict()}
-        else:
-            raise ValueError("unsupported browser action")
-        return {"performed": operation}
+            params = {**params, "filename": filename}
+        result = ctx.browser.recovery_act(params, ctx.service("elements"), lambda: self.check(command))
+        if result.get("error"):
+            self.needs_observation = True
+        return result
 
-    def element(self, target):
-        return self.temporary[target] if target in self.temporary else self.recovery.context.service("elements")[target]
-
-    def screenshot(self):
+    def screenshot(self, target_ref=None):
         try:
-            artifact = self.recovery.context.browser.screenshot_redacted(name="recovery-" + uuid4().hex + ".png", sensitive_values=tuple(self.credentials.values()))
+            artifact = self.recovery.context.browser.screenshot_redacted(name="recovery-" + uuid4().hex + ".png", sensitive_values=tuple(self.credentials.values()), target_ref=target_ref, elements=self.recovery.context.service("elements"))
             if artifact.size_bytes > 8 * 1024 * 1024:
                 return {"screenshot_missing": "截图超过 8 MiB"}
             return {"image": {"mimeType": "image/png", "data": base64.b64encode(artifact.path.read_bytes()).decode()}}

@@ -60,6 +60,16 @@ class Locator:
 
 
 @dataclass(frozen=True, slots=True)
+class ScopeLocator:
+    kind: str
+    locator: Locator
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"frame", "shadow"}:
+            raise ValueError("scope kind must be frame or shadow")
+
+
+@dataclass(frozen=True, slots=True)
 class ElementSpec:
     """Stable element identity with an optional, verified locator.
 
@@ -79,8 +89,11 @@ class ElementSpec:
     selected_option_locator: Locator | None = None
     popup_locator: Locator | None = None
     dismiss_locator: Locator | None = None
+    scope_path: tuple[ScopeLocator, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.frame_locator is not None and self.scope_path:
+            raise ValueError("frame and scope_path are mutually exclusive")
         if not _ELEMENT_ID_PATTERN.fullmatch(self.id):
             raise ValueError(f"invalid element id: {self.id!r}")
         if not self.name.strip() or not self.page.strip():

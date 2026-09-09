@@ -97,6 +97,7 @@ class FakeElementWait:
 
 
 class FakeElementStates:
+    is_covered = False
     def __init__(self, element: "FakeElement") -> None:
         self.element = element
 
@@ -138,7 +139,7 @@ class FakeClicker:
     def __init__(self, element: "FakeElement") -> None:
         self.element = element
 
-    def __call__(self, *, by_js: bool) -> None:
+    def __call__(self, *, by_js: bool, **kwargs) -> None:
         self.element.clicked_with = by_js
         self.element.click_count += 1
         if self.element.on_click is not None:
@@ -191,6 +192,7 @@ class FakeElement:
         self.wait = FakeElementWait(self)
         self.states = FakeElementStates(self)
         self.click = FakeClicker(self)
+        self.scroll = SimpleNamespace(to_see=lambda: None)
         self.select = FakeSelect(self)
         self.wait_calls: list[dict[str, object]] = []
         self.clear_calls: list[bool] = []

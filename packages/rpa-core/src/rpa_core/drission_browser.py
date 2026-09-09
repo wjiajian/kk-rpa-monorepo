@@ -8,10 +8,11 @@ belong to the future BrowserManager and must not leak into business apps.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
+from uuid import uuid4
 
 from DrissionPage.common import Keys
 from DrissionPage.errors import ContextLostError, ElementLostError, GetDocumentError
@@ -27,6 +28,7 @@ from .browser import (
     SecretLike,
     SecretValue,
     Locator,
+    ScopeLocator,
 )
 
 _SAFE_FILENAME_PATTERN = re.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
@@ -60,6 +62,10 @@ class DrissionBrowserActions:
     action_timeout: float = 10.0
     download_timeout: float = 120.0
     download_dir: Path | None = None
+    _live: dict = field(default_factory=dict, init=False, repr=False)
+    _aliases: dict = field(default_factory=dict, init=False, repr=False)
+    _serial: int = field(default=0, init=False)
+    _reference_session: str = field(default_factory=lambda: uuid4().hex[:12], init=False)
 
     def __post_init__(self) -> None:
         self.run_dir = Path(self.run_dir)
@@ -162,7 +168,7 @@ class DrissionBrowserActions:
                 wait_moved=True, timeout=self.action_timeout, raise_err=False
             ):
                 raise ElementActionError(f"element is not clickable: {element.id}")
-            target.click(by_js=False)
+            self._click_target(target, timeout=self.action_timeout)
         except ElementActionError:
             raise
         except Exception as error:
@@ -349,6 +355,467 @@ class DrissionBrowserActions:
         except Exception as error:
             raise ElementActionError("browser screenshot failed") from error
 
+    def recovery_capabilities(self) -> dict:
+        return {"protocol": 2, "features": ["live_refs", "query", "observe_fields", "act_expect_read", "scope_path"],
+                "drissionpage": "4.1.1.4"}
+
+    def release_recovery(self) -> None:
+        self._live.clear()
+        self._aliases.clear()
+
+    @staticmethod
+    def _object_key(node):
+        owner = getattr(node, "owner", None)
+        owner_id = getattr(owner, "_frame_id", None) or getattr(owner, "tab_id", None) or id(owner)
+        return (getattr(node, "_type", type(node).__name__), owner_id,
+                getattr(node, "_backend_id", id(node)))
+
+    @staticmethod
+    def _identity(node):
+        # Exclude value, checked, class and other state changed by normal actions.
+        tag = getattr(node, "tag", "")
+        attrs = getattr(node, "attrs", {})
+        stable = {key: value for key, value in attrs.items()
+                  if key in {"id", "name", "type", "role", "aria-label", "href", "src"}
+                  or key.startswith("data-")}
+        text = "" if tag in {"input", "textarea", "select", "iframe", "frame"} else str(node.property("innerText") or "")
+        return {"tag": tag, "attributes": stable, "text": text}
+
+    def _document_key(self):
+        return (id(self.tab), self._object_key(self.tab.doc_ele))
+
+    def _remember(self, node, scope="page", *, kind="element", path=None):
+        if getattr(node, "_type", "") == "ChromiumFrame":
+            kind = "frame"
+            if path is None:
+                parent_path = [] if scope == "page" else self._live[scope]["path"]
+                if parent_path is not None:
+                    path = [*parent_path, {"kind": "frame", "locator": "xpath:" + node.xpath}]
+        identity = self._identity(node) if kind != "shadow" else {"tag": "shadow-root"}
+        document = self._document_key()
+        key = self._object_key(node)
+        for ref, record in self._live.items():
+            if (record["key"], record["scope"], record["identity"], record["document"], record["scope_document"]) == (key, scope, identity, document, self._object_key(node.doc_ele) if kind == "frame" else None):
+                return ref
+        self._serial += 1
+        ref = f"@{self._reference_session}:{self._serial}"
+        self._live[ref] = {"node": node, "scope": scope, "kind": kind,
+                           "path": path, "identity": identity, "document": document, "key": key,
+                           "scope_document": self._object_key(node.doc_ele) if kind == "frame" else None}
+        return ref
+
+    def _live_record(self, ref, elements):
+        if ref in self._aliases:
+            ref = self._aliases[ref]
+        if ref not in self._live:
+            if ref not in elements:
+                raise ElementLookupError("unknown reference; use query, not a locator in target")
+            spec = elements[ref]
+            scope = self._recovery_scope(spec)
+            scope_ref = self._scope_ref(scope, spec)
+            matches = list(scope.eles(spec.require_locator().value, timeout=0))
+            if len(matches) != 1:
+                raise ElementLookupError(f"formal target requires one match; found {len(matches)}; use query")
+            resolved = self._remember(matches[0], scope_ref)
+            self._aliases[ref] = resolved
+            ref = resolved
+        record = self._live[ref]
+        if record["document"] != self._document_key():
+            raise ElementLookupError("stale_reference: document changed; query again")
+        if record["scope"] != "page":
+            self._live_record(record["scope"], elements)
+        node = record["node"]
+        if not node.states.is_alive:
+            raise ElementLookupError("stale_reference: element detached; query again")
+        if record["kind"] == "frame" and record["scope_document"] != self._object_key(node.doc_ele):
+            raise ElementLookupError("stale_reference: frame document changed; query again")
+        if record["kind"] != "shadow" and self._identity(node) != record["identity"]:
+            raise ElementLookupError("target_changed: live node represents different content; query again")
+        return ref, record
+
+    def _recovery_scope(self, spec):
+        parts = spec.scope_path or ((ScopeLocator("frame", spec.frame_locator),) if spec.frame_locator else ())
+        scope = self.tab
+        for part in parts:
+            matches = list(scope.eles(part.locator.value, timeout=0))
+            if len(matches) != 1:
+                raise ElementLookupError(f"scope requires exactly one match; found {len(matches)}")
+            scope = scope.get_frame(part.locator.value, timeout=0) if part.kind == "frame" else matches[0].shadow_root
+            if not scope:
+                raise ElementLookupError("scope unavailable")
+        return scope
+
+    def _scope_ref(self, scope, spec=None):
+        if scope is self.tab:
+            return "page"
+        # Preserve the complete reproducible path when resolving a formal ID.
+        path = None
+        if spec:
+            path = [{"kind": part.kind, "locator": part.locator.value} for part in spec.scope_path]
+            if spec.frame_locator:
+                path = [{"kind": "frame", "locator": spec.frame_locator.value}]
+        parent = getattr(scope, "_target_page", None)
+        parent_ref = self._scope_ref(parent) if parent is not None and parent is not self.tab else "page"
+        return self._remember(scope, parent_ref, kind="shadow" if getattr(scope, "_type", "") == "ShadowRoot" else "frame", path=path)
+
+    def _query_scope(self, ref, elements):
+        if not ref or ref == "page":
+            return self.tab, "page"
+        resolved, record = self._live_record(ref, elements)
+        return record["node"], resolved
+
+    def recovery_query(self, params, elements) -> dict:
+        started = monotonic()
+        limit, offset = params.get("limit", 50), params.get("offset", 0)
+        if not isinstance(limit, int) or not 1 <= limit <= 500 or not isinstance(offset, int) or offset < 0:
+            raise ValueError("invalid query pagination")
+        root, scope = self._query_scope(params.get("scope"), elements)
+        relation = params.get("relation", "descendants")
+        locator = params.get("locator", "")
+        if relation == "document":
+            if scope == "page":
+                return {"scope": "page", "nodes": [], "count": 0, "truncated": False}
+            scope = self._live[scope]["scope"] if self._live[scope]["kind"] == "element" else scope
+            return {"scope": scope, "nodes": [], "count": 0, "truncated": False}
+        kind, path = "element", None
+        if relation in {"frame", "shadow"}:
+            if scope == "page":
+                raise ValueError("frame/shadow requires a queried host reference")
+            record = self._live[scope]
+            parent = record["scope"]
+            parent_path = [] if parent == "page" else self._live[parent]["path"]
+            host_locator = "xpath:" + root.xpath if relation == "frame" else "css:" + root.css_path
+            path = [*parent_path, {"kind": relation, "locator": host_locator}] if parent_path is not None else None
+            node = root if relation == "frame" and getattr(root, "_type", "") == "ChromiumFrame" else (
+                self._query_scope(parent, elements)[0].get_frame(host_locator, timeout=0) if relation == "frame" else root.shadow_root)
+            nodes, kind, scope = ([node] if node else []), relation, parent
+        elif relation == "descendants":
+            if not isinstance(locator, str) or not locator.strip():
+                raise ValueError("query requires a locator")
+            nodes = list(root.eles(locator, timeout=0))
+            if scope != "page" and self._live[scope]["kind"] == "element":
+                scope = self._live[scope]["scope"]
+        elif relation in {"children", "next", "prev", "parent", "over", "offset"}:
+            if scope == "page":
+                raise ValueError("relative query requires an element reference")
+            if relation == "parent":
+                node = root.parent(locator or 1, timeout=0)
+                nodes = [node] if node else []
+            elif relation == "over":
+                node = root.over(timeout=0)
+                nodes = [node] if node else []
+            elif relation == "offset":
+                node = root.offset(locator or None, x=params.get("x"), y=params.get("y"), timeout=0)
+                nodes = [node] if node else []
+            else:
+                nodes = list(getattr(root, {"next": "nexts", "prev": "prevs"}.get(relation, relation))(locator, timeout=0))
+            scope = self._live[scope]["scope"]
+        else:
+            raise ValueError("unsupported query relation")
+        queried = monotonic()
+        result = []
+        for node in nodes[offset:offset + limit]:
+            owner = getattr(node, "owner", None)
+            actual_scope = scope
+            # SDK may return an element from a frame during a cross-layer search.
+            if owner is not None and owner is not self.tab and getattr(owner, "_type", "") == "ChromiumFrame":
+                actual_scope = self._scope_ref(owner)
+            ref = self._remember(node, actual_scope, kind=kind, path=path)
+            identity = self._live[ref]["identity"]
+            result.append({"target": ref, "scope": actual_scope, "kind": kind, "tag": identity["tag"],
+                           "text": identity.get("text", "")[:300], "text_truncated": len(identity.get("text", "")) > 300,
+                           "attributes": identity.get("attributes", {})})
+        return {"nodes": result, "scope": scope, "count": len(nodes), "offset": offset,
+                "truncated": offset + limit < len(nodes), "next_offset": offset + limit if offset + limit < len(nodes) else None,
+                "timings_ms": {"query": (queried - started) * 1000, "state": (monotonic() - queried) * 1000}}
+
+    @staticmethod
+    def _validate_fields(fields):
+        allowed = {"value", "text", "attrs", "alive", "displayed", "enabled", "clickable", "checked", "covered", "rect"}
+        if not isinstance(fields, list) or any(not isinstance(name, str) or
+                (name not in allowed and not (name.startswith("attr:") and len(name) > 5)) for name in fields):
+            raise ValueError("unsupported read fields")
+
+    def _read_live(self, node, fields):
+        self._validate_fields(fields)
+        result = {}
+        for name in fields:
+            if name == "value":
+                result[name] = "<redacted>" if node.attr("type") == "password" else (node.value if node.tag in {"input", "textarea", "select", "option"} else None)
+            elif name == "text":
+                result[name] = str(node.property("innerText") or "")
+            elif name == "attrs":
+                result[name] = {k: v for k, v in node.attrs.items() if k != "value"}
+            elif name in {"alive", "displayed", "enabled", "clickable", "checked", "covered"}:
+                result[name] = getattr(node.states, "is_" + name)
+            elif name == "rect":
+                result[name] = {"location": node.rect.location, "size": node.rect.size}
+            elif name.startswith("attr:"):
+                result[name] = "<redacted>" if name == "attr:value" else node.attr(name[5:])
+            else:
+                raise ValueError(f"unsupported read property: {name}")
+        return result
+
+    def recovery_observe(self, params, elements):
+        started = monotonic()
+        target = params.get("target")
+        if not target or target == "page":
+            result = self.recovery_query({"scope": params.get("scope", "page"),
+                "locator": "css:button,a,input,textarea,select,option,[role],iframe,frame,label",
+                "limit": params.get("limit", 50), "offset": params.get("offset", 0)}, elements)
+            result["url"] = self.current_url
+            return result
+        ref, record = self._live_record(target, elements)
+        if record["kind"] in {"frame", "shadow"} and "fields" not in params:
+            result = self.recovery_query({"scope": ref, "locator": "css:button,a,input,textarea,select,option,[role],iframe,frame,label",
+                "limit": params.get("limit", 50), "offset": params.get("offset", 0)}, elements)
+            return {**result, "target": ref, "kind": record["kind"]}
+        result = {"target": ref, "scope": record["scope"], "kind": record["kind"],
+                  **self._read_live(record["node"], params.get("fields", ["value", "text", "displayed", "enabled"]))}
+        if params.get("include_locators"):
+            scope_path = [] if record["scope"] == "page" else self._live[record["scope"]]["path"]
+            if scope_path is None:
+                raise ElementLookupError("scope path unavailable; query each frame/shadow host before exporting")
+            result["locator"] = "css:" + record["node"].css_path
+            result["scope_path"] = scope_path
+        result["timings_ms"] = {"state": (monotonic() - started) * 1000}
+        return result
+
+    def validate_recovery_overrides(self, elements, overrides):
+        from .elements import override_element_locators
+        replaced = override_element_locators(elements, overrides)
+        for element_id, changes in overrides.items():
+            spec = replaced[element_id]
+            scope = self._recovery_scope(spec)
+            for field_name, expression in changes.items():
+                if field_name in {"frame", "scope_path"} or expression is None:
+                    continue
+                matches = list(scope.eles(expression, timeout=0))
+                if len(matches) != 1:
+                    raise ElementLookupError("override requires exactly one current match")
+                candidates = [ref for ref, rec in self._live.items() if rec["key"] == self._object_key(matches[0])
+                    and rec["identity"] == self._identity(matches[0]) and rec["document"] == self._document_key()]
+                if not candidates:
+                    raise ElementLookupError("locator override lacks actual DOM evidence")
+                valid = False
+                for ref in candidates:
+                    try:
+                        self._live_record(ref, elements)
+                        valid = True
+                        break
+                    except ElementLookupError:
+                        continue
+                if not valid:
+                    raise ElementLookupError("override target changed")
+            # Scope-only overrides must also identify an observed live target.
+            matches = list(scope.eles(spec.require_locator().value, timeout=0))
+            if len(matches) != 1 or not any(rec["key"] == self._object_key(matches[0]) and
+                    rec["identity"] == self._identity(matches[0]) and rec["document"] == self._document_key()
+                    for rec in self._live.values()):
+                raise ElementLookupError("override scope/target lacks current unique DOM evidence")
+        return replaced
+
+    def recovery_act(self, params, elements, check=lambda: None):
+        started = monotonic()
+        deadline = started + min(15, max(0.1, float(params.get("seconds", self.action_timeout))))
+        operation = params["operation"]
+        expected = params.get("expect")
+        target = params.get("target")
+        result = {"issued": False, "condition_met": None, "phase": "precondition", "operation": operation}
+        node = None
+        def remaining():
+            check()
+            return max(0, deadline - monotonic())
+        def poll(predicate):
+            while True:
+                remaining()
+                value = predicate()
+                if value or remaining() <= 0:
+                    return bool(value)
+                sleep(min(0.05, remaining()))
+        try:
+            check()
+            self._validate_fields(params.get("read", []))
+            if operation in {"input", "select", "key"} and not isinstance(params.get("value"), (str, SecretValue)):
+                raise ValueError("operation requires value")
+            if expected:
+                prop = expected.get("property")
+                if prop not in {"exists", "url_changed", "new_tab"}:
+                    self._validate_fields([prop])
+                if expected.get("query") is not None and (not isinstance(expected["query"], str) or not expected["query"].strip()):
+                    raise ValueError("expect query must be a non-empty locator")
+                if prop not in {"url_changed", "new_tab"} and not (expected.get("target") or expected.get("query") or target):
+                    raise ValueError("expect requires target or query")
+            if target:
+                ref, record = self._live_record(target, elements)
+                node = record["node"]
+                result.update(target=ref, scope=record["scope"])
+            elif operation != "wait":
+                raise ValueError("operation requires a reference")
+            if operation not in {"read", "wait"}:
+                if not poll(lambda: node.states.is_clickable):
+                    raise ElementActionError("not_clickable")
+                if not poll(lambda: node.wait.stop_moving(timeout=min(0.15, remaining()), gap=0.05, raise_err=False)):
+                    raise ElementActionError("still_moving")
+                node.scroll.to_see()
+                if node.states.is_covered:
+                    cover = node.over(timeout=0)
+                    result["cover"] = self._remember(cover, record["scope"]) if cover else None
+                    raise ElementActionError("covered")
+                self._live_record(target, elements)
+            before_tabs = set(self.tab.browser.tab_ids) if operation == "new_tab" or (expected and expected.get("property") == "new_tab") else set()
+            before_url = self.current_url
+            result["phase"] = "action"
+            if operation in {"click", "new_tab"}:
+                result["issued"] = True
+                result["method"] = "js" if params.get("by_js", False) else "simulated"
+                if self._click_target(node, timeout=remaining(), by_js=params.get("by_js", False)) is False:
+                    raise ElementActionError("click_returned_false")
+            elif operation == "input":
+                result["issued"] = True
+                # Same input primitive as the formal BrowserActions path.
+                self._enter_value(node, _reveal(params["value"]))
+            elif operation == "select":
+                if node.tag != "select":
+                    raise ElementActionError("native select required; custom controls use query/click/input")
+                result["issued"] = True
+                if node.select.by_text(params["value"], timeout=remaining()) is False:
+                    raise ElementActionError("option_not_found")
+            elif operation == "check":
+                result["issued"] = True
+                node.check(uncheck=not params.get("checked", True), by_js=False)
+            elif operation == "hover":
+                result["issued"] = True
+                node.hover()
+            elif operation == "scroll":
+                direction = params.get("direction", "down")
+                if direction not in {"up", "down", "left", "right"}:
+                    raise ValueError("unsupported scroll direction")
+                result["issued"] = True
+                getattr(node.scroll, direction)(int(params.get("pixels", 300)))
+            elif operation == "key":
+                key = params.get("value")
+                if key not in {"ENTER", "TAB", "ESC", "UP", "DOWN", "LEFT", "RIGHT", "BACKSPACE", "DELETE", "HOME", "END"}:
+                    raise ValueError("unsupported key")
+                result["issued"] = True
+                node.input(getattr(Keys, key), clear=False, by_js=False)
+            elif operation == "download":
+                filename = params.get("filename")
+                if filename:
+                    _validate_filename(filename)
+                folder = Path(self.download_dir or self._artifact_directory("downloads"))
+                folder.mkdir(parents=True, exist_ok=True)
+                self.tab.set.when_download_file_exists("rename")
+                # Arm the pinned SDK download manager before clicking. Its public
+                # to_download() waits without a cancellation hook; polling the
+                # same mission flag keeps all browser work on this Worker thread.
+                self.tab.set.download_path(str(folder))
+                self.tab.set.download_file_name(filename)
+                manager = self.tab.browser._dl_mgr
+                tab_id = self.tab.tab_id
+                manager.set_flag(tab_id, True)
+                mission = None
+                try:
+                    result["issued"] = True
+                    if self._click_target(node, timeout=remaining()) is False:
+                        raise DownloadError("download_click_returned_false")
+                    result["phase"] = "wait"
+                    if not poll(lambda: not isinstance(manager.get_flag(tab_id), (bool, type(None)))):
+                        raise DownloadError("download_begin_timeout; click may already have taken effect")
+                    mission = manager.get_flag(tab_id)
+                finally:
+                    pending_mission = manager.get_flag(tab_id)
+                    manager.set_flag(tab_id, None)
+                    if mission is None:
+                        if not isinstance(pending_mission, (bool, type(None))) and not pending_mission.is_done:
+                            pending_mission.cancel()
+                        self.tab.set.download_file_name(None)
+                try:
+                    result["phase"] = "wait"
+                    if not poll(lambda: mission.is_done):
+                        raise DownloadError("download_timeout")
+                    if mission.state != "completed" or not mission.final_path or not _is_within(Path(mission.final_path), folder):
+                        raise DownloadError("download_not_completed")
+                    result["download"] = DownloadRef.from_path(mission.final_path).to_dict()
+                finally:
+                    if not mission.is_done:
+                        mission.cancel()
+            elif operation not in {"read", "wait"}:
+                raise ValueError("unsupported browser operation")
+            result["phase"] = "wait"
+            if operation == "new_tab" and not expected:
+                expected = {"property": "new_tab"}
+            if expected:
+                prop = expected["property"]
+                def condition():
+                    if prop == "new_tab":
+                        actual = [item for item in self.tab.browser.tab_ids if item not in before_tabs]
+                        result["actual"] = actual
+                        if len(actual) == 1:
+                            self.tab = self.tab.browser.get_tab(actual[0])
+                            self.release_recovery()
+                            return True
+                        return False
+                    if prop == "url_changed":
+                        result["actual"] = self.current_url
+                        return self.current_url != before_url
+                    other = expected.get("target", target)
+                    if expected.get("query"):
+                        found = self.recovery_query({"scope": expected.get("scope", "page"), "locator": expected["query"], "limit": 1}, elements)
+                        result["match_count"] = found["count"]
+                        if prop == "exists":
+                            result["actual"] = found["count"] > 0
+                            return result["actual"] == expected.get("equals", True)
+                        if found["count"] != 1:
+                            result["actual"] = None
+                            return False
+                        other = found["nodes"][0]["target"]
+                    try:
+                        _, rec = self._live_record(other, elements)
+                        result["actual"] = True if prop == "exists" else self._read_live(rec["node"], [prop])[prop]
+                    except ElementLookupError as error:
+                        if prop != "exists" or "detached" not in str(error):
+                            raise
+                        result["actual"] = False
+                    return result["actual"] == expected.get("equals", True)
+                result["condition_met"] = poll(condition)
+                if not result["condition_met"]:
+                    result["error"] = "condition_timeout"
+                    if node is not None and params.get("read"):
+                        result["state"] = self._read_live(node, params["read"])
+                    return result
+            elif operation == "wait":
+                poll(lambda: False)
+                result["waited_seconds"] = monotonic() - started
+            result["phase"] = "read"
+            if target and operation != "new_tab" and not (expected and expected.get("property") == "new_tab"):
+                _, rec = self._live_record(target, elements)
+                result["state"] = self._read_live(rec["node"], params.get("read", ["value", "text", "displayed", "enabled"]))
+            result["phase"] = "complete"
+        except Exception as error:
+            check()  # Cancellation propagates; never turn it into a successful fact.
+            result["effect_uncertain"] = result["issued"] and result["phase"] == "action"
+            result["error"] = str(error)
+            result["error_type"] = type(error).__name__
+        finally:
+            result["timings_ms"] = {"action_total": (monotonic() - started) * 1000}
+        return result
+
+    @staticmethod
+    def _click_target(target, *, timeout, by_js=False):
+        target.scroll.to_see()
+        if target.states.is_covered:
+            raise ElementActionError("covered")
+        if target.click(by_js=by_js, timeout=timeout, wait_stop=False) is False:
+            raise ElementActionError("click_returned_false")
+        return True
+
+    @staticmethod
+    def _enter_value(target, value):
+        target.clear(by_js=True)
+        target.focus()
+        target.input(value, clear=False, by_js=False)
+
     def observe_dom(self, element: ElementSpec | None = None, *, limit: int = 200) -> dict:
         """Bounded visible DOM evidence. No HTML, script execution or input values.
 
@@ -401,29 +868,54 @@ class DrissionBrowserActions:
         return {"url": self.current_url, "text": str(body.property("innerText") or "")[:16000] if body else "",
                 "nodes": items, "frames": frames, "truncated": truncated, "skipped_nodes": skipped}
 
-    def screenshot_redacted(self, *, name: str, sensitive_values: tuple[str, ...] = ()) -> ArtifactRef:
+    def screenshot_redacted(self, *, name: str, sensitive_values: tuple[str, ...] = (), target_ref=None, elements=None) -> ArtifactRef:
         """Hide editable fields in all accessible frames before capturing evidence."""
-        scopes = [self.tab, *self.tab.get_frames()]
+        scopes, pending, seen = [], [self.tab], set()
+        while pending:
+            scope = pending.pop(0)
+            key = getattr(scope, "_frame_id", None) or id(scope)
+            if key in seen:
+                continue
+            seen.add(key)
+            scopes.append(scope)
+            pending.extend(scope.get_frames())
         masked = []
         try:
             for scope in scopes:
                 scope.run_js("""const values=Array.from(arguments);
-                    const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
-                    while(walk.nextNode()) {
-                        const node=walk.currentNode;
-                        if(values.some(v=>v && node.nodeValue.includes(v)))
-                            node.parentElement?.setAttribute('data-rpa-secret-mask','true');
-                    }
-                    const s=document.createElement('style');
-                    s.id='rpa-evidence-redaction';
-                    s.textContent='input,textarea,[contenteditable=true],[data-rpa-secret-mask]{visibility:hidden!important}';
-                    document.documentElement.appendChild(s);""", *sensitive_values)
+                    const mask=(root)=>{
+                        const walk=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+                        while(walk.nextNode()) {
+                            const node=walk.currentNode;
+                            if(values.some(v=>v && node.nodeValue.includes(v)))
+                                node.parentElement?.setAttribute('data-rpa-secret-mask','true');
+                        }
+                        const s=document.createElement('style');
+                        s.id='rpa-evidence-redaction';
+                        s.textContent='input,textarea,[contenteditable=true],[data-rpa-secret-mask]'+(root instanceof ShadowRoot?',iframe,frame':'')+'{visibility:hidden!important}';
+                        (root.head || root).appendChild(s);
+                        root.querySelectorAll('*').forEach(e=>{if(e.shadowRoot) mask(e.shadowRoot)});
+                    }; mask(document);""", *sensitive_values)
                 masked.append(scope)
+            if target_ref and target_ref != "page":
+                _, record = self._live_record(target_ref, elements or {})
+                target = record["node"]
+                if record["kind"] == "shadow":
+                    target = target.parent()
+                _validate_filename(name)
+                folder = self._artifact_directory("evidence")
+                path = Path(target.get_screenshot(path=str(folder), name=name))
+                if not _is_within(path, folder):
+                    raise ElementActionError("screenshot escaped evidence directory")
+                return ArtifactRef.from_path(path)
             return self.screenshot(name=name)
         finally:
             for scope in masked:
-                scope.run_js("""document.getElementById('rpa-evidence-redaction')?.remove();
-                    document.querySelectorAll('[data-rpa-secret-mask]').forEach(e=>e.removeAttribute('data-rpa-secret-mask'));""")
+                scope.run_js("""const clean=(root)=>{
+                    root.querySelector('#rpa-evidence-redaction')?.remove();
+                    root.querySelectorAll('[data-rpa-secret-mask]').forEach(e=>e.removeAttribute('data-rpa-secret-mask'));
+                    root.querySelectorAll('*').forEach(e=>{if(e.shadowRoot) clean(e.shadowRoot)});
+                    }; clean(document);""")
 
     def _find(self, element: ElementSpec) -> _LocatedElement:
         located = self._locate(element, timeout=self.action_timeout, required=True)
@@ -469,6 +961,19 @@ class DrissionBrowserActions:
         return None
 
     def _scope(self, element: ElementSpec, *, timeout: float) -> Any:
+        if element.scope_path:
+            scope = self.tab
+            deadline = monotonic() + timeout
+            for part in element.scope_path:
+                remaining = max(0, deadline - monotonic())
+                if part.kind == "frame":
+                    scope = scope.get_frame(part.locator.value, timeout=remaining)
+                else:
+                    host = scope.ele(part.locator.value, timeout=remaining)
+                    scope = host.shadow_root if host else None
+                if not scope:
+                    raise _TransientScopeUnavailable(element.id)
+            return scope
         if element.frame_locator is None:
             return self.tab
         try:
@@ -488,9 +993,7 @@ class DrissionBrowserActions:
             wait_moved=False, timeout=self.action_timeout, raise_err=False
         ):
             raise ElementActionError(f"element is not ready for input: {element.id}")
-        target.clear(by_js=True)
-        target.focus()
-        target.input(value, clear=False, by_js=False)
+        self._enter_value(target, value)
 
     def _click_exact_option(self, element: ElementSpec, value: str) -> None:
         option_locator = element.option_locator

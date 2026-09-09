@@ -24,7 +24,7 @@ import re
 import tomllib
 from typing import Any, Mapping
 
-from .browser import ElementSpec, Locator
+from .browser import ElementSpec, Locator, ScopeLocator
 
 
 _COUNT_PATTERN = re.compile(r"^(?:(>=|>|<=|<|=)\s*)?(\d+)$")
@@ -127,6 +127,7 @@ def load_element_catalog(path: str | Path) -> dict[str, ElementEntry]:
             "page",
             "locator",
             "frame",
+            "scope_path",
             "expect_count",
             "check_at",
             "assertion_strength",
@@ -161,6 +162,7 @@ def load_element_catalog(path: str | Path) -> dict[str, ElementEntry]:
             "page": str(raw["page"]),
             "locator": _locator(raw.get("locator")),
             "frame_locator": _locator(raw.get("frame")),
+            "scope_path": _scope_path(raw.get("scope_path", [])),
         }
         for source_key, spec_key in _SUB_LOCATORS:
             kwargs[spec_key] = _locator(raw.get(source_key))
@@ -188,7 +190,7 @@ def override_element_locators(
     elements: Mapping[str, ElementSpec], overrides: Mapping[str, Any]
 ) -> dict[str, ElementSpec]:
     """Copy locators for one attempt; keep element identity and assertions intact."""
-    fields = {"locator": "locator", "frame": "frame_locator", **dict(_SUB_LOCATORS)}
+    fields = {"scope_path": "scope_path", "locator": "locator", "frame": "frame_locator", **dict(_SUB_LOCATORS)}
     result = dict(elements)
     for element_id, changes in overrides.items():
         if element_id not in elements:
@@ -199,7 +201,7 @@ def override_element_locators(
             raise ElementCatalogError("overrides may change locator fields only")
         result[element_id] = replace(
             elements[element_id],
-            **{fields[key]: _locator(value) for key, value in changes.items()},
+            **{fields[key]: _scope_path(value) if key == "scope_path" else _locator(value) for key, value in changes.items()},
         )
     return result
 
@@ -285,6 +287,20 @@ def check_element_expectations(
             ElementCheck(element_id, str(entry.expect), actual, ok, entry.weak_assertion, detail)
         )
     return checks
+
+
+def _scope_path(value: Any) -> tuple[ScopeLocator, ...]:
+    if not isinstance(value, list) or len(value) > 16:
+        raise ElementCatalogError("scope_path must be an array of at most 16 scopes")
+    result = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"kind", "locator"}:
+            raise ElementCatalogError("scope_path entries require kind and locator")
+        locator = _locator(item["locator"])
+        if locator is None:
+            raise ElementCatalogError("scope locator cannot be null")
+        result.append(ScopeLocator(item["kind"], locator))
+    return tuple(result)
 
 
 def _locator(value: Any) -> Locator | None:
