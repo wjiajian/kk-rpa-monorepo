@@ -358,33 +358,48 @@ class DrissionBrowserActions:
         if not 1 <= limit <= 500:
             raise ValueError("DOM observation limit must be between 1 and 500")
         root = self._find(element).target if element else self.tab
-        nodes = root.eles("css:button,a,input,select,option,[role],iframe,label,[id],[class]", timeout=self.action_timeout)
+        nodes = root.eles("css:button,a,input,textarea,select,option,[role],iframe,label,[id],[class]", timeout=self.action_timeout)
         if element is not None and getattr(root, "tag", None) not in {"iframe", "frame"}:
             nodes = [root, *nodes]
-        items = []
+        # SVG definitions may report displayed=True; they are not controls.
+        decorative = {"symbol", "defs", "svg", "path", "use", "g", "style", "script"}
+        controls = {"button", "a", "input", "textarea", "select", "option", "label"}
+        nodes = [node for node in nodes if node.tag not in decorative]
+        nodes.sort(key=lambda node: 0 if node.tag in {"iframe", "frame"} else
+                   1 if node.tag in controls or node.attr("role") else 2)
+        items, frames = [], []
         skipped = 0
+        truncated = False
         for node in nodes:
             if not node.states.is_displayed:
                 continue
+            tag = node.tag
+            if len(items) >= limit and tag not in {"iframe", "frame"}:
+                truncated = True
+                break
             xpath = node.xpath
             if not isinstance(xpath, str) or not xpath:
                 # A detached node can lose its path between lookup and reading.
                 # It cannot be offered as an actionable target.
                 skipped += 1
                 continue
-            attributes = {key: node.attr(key) for key in ("id", "class", "name", "type", "role", "aria-label", "title")}
+            attributes = {key: node.attr(key) for key in ("id", "class", "name", "type", "role", "aria-label", "title", "placeholder")}
             tag = node.tag
             # ChromiumFrame exposes the frame element, not an element.text API.
             # Its document is observed separately using frame_target.
             text = "" if tag in {"input", "textarea", "iframe", "frame"} else str(node.property("innerText") or "")[:500]
-            items.append({"tag": tag, "text": text,
+            item = {"tag": tag, "text": text,
                           "attributes": attributes, "locator": "xpath:" + xpath,
-                          "frame_locator": element.frame_locator.value if element and element.frame_locator else None})
-            if len(items) == limit:
-                break
+                          "frame_locator": element.frame_locator.value if element and element.frame_locator else None}
+            if tag in {"iframe", "frame"}:
+                frames.append(item)
+            if len(items) < limit:
+                items.append(item)
+            else:
+                truncated = True
         body = root.ele("tag:body", timeout=0.2) if element is None or getattr(root, "tag", None) in {"iframe", "frame"} else root
         return {"url": self.current_url, "text": str(body.property("innerText") or "")[:16000] if body else "",
-                "nodes": items, "truncated": len(items) == limit, "skipped_nodes": skipped}
+                "nodes": items, "frames": frames, "truncated": truncated, "skipped_nodes": skipped}
 
     def screenshot_redacted(self, *, name: str, sensitive_values: tuple[str, ...] = ()) -> ArtifactRef:
         """Hide editable fields in all accessible frames before capturing evidence."""

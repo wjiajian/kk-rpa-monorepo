@@ -186,3 +186,33 @@ def test_recovery_profile_and_original_inputs_must_match(monkeypatch):
     record["account_id"] = "RUN_OTHER"
     with pytest.raises(ValueError, match="original runtime parameters"):
         w.source()
+
+
+def test_frame_observation_preserves_requested_element_and_registers_all_frames():
+    w, _ = worker()
+    w.screenshot = lambda: {}
+    w.temporary["frame"] = ElementSpec("frame", "框架", "页面", locator=Locator("css:iframe"))
+    captured = []
+    def observe(element, **kwargs):
+        captured.append(element)
+        frame = {"tag": "iframe", "locator": "xpath:/iframe", "frame_locator": None}
+        return {"text": "", "nodes": [frame], "frames": [dict(frame),
+            {"tag": "iframe", "locator": "xpath:/iframe[2]", "frame_locator": None}]}
+    w.recovery.context.browser.observe_dom = observe
+    result = w.execute(command("observe", target="button", frame_target="frame"))
+    assert captured[0].locator == Locator("css:button")
+    assert captured[0].frame_locator == Locator("css:iframe")
+    assert result["nodes"][0]["target"] == result["frames"][0]["target"]
+    assert w.element(result["frames"][1]["target"]).locator == Locator("xpath:/iframe[2]")
+    w.execute(command("observe", frame_target="frame"))
+    assert captured[1].locator == Locator("tag:body")
+
+
+def test_frame_target_cannot_silently_move_an_element_from_another_frame():
+    w, _ = worker()
+    w.screenshot = lambda: {}
+    w.temporary["frame"] = ElementSpec("frame", "框架", "页面", locator=Locator("css:iframe"))
+    w.temporary["inside"] = ElementSpec("inside", "按钮", "页面", locator=Locator("css:button"), frame_locator=Locator("css:other"))
+    result = w.execute(command("observe", target="inside", frame_target="frame"))
+    assert result["observation_error"] == "ValueError"
+    assert w.needs_observation

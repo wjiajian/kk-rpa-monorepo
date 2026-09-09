@@ -5,7 +5,7 @@ The module and Python executable come from local deployment configuration.
 """
 import argparse
 import base64
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import importlib
 import importlib.metadata
 import json
@@ -165,23 +165,34 @@ class Worker:
                 element = self.element(params["target"]) if params.get("target") else None
                 if params.get("frame_target"):
                     frame = self.element(params["frame_target"]).require_locator()
-                    element = ElementSpec("frame_body", "当前框架", "recovery", locator=Locator("tag:body"), frame_locator=frame)
+                    if element is not None:
+                        if element.frame_locator and element.frame_locator != frame:
+                            raise ValueError("target belongs to a different frame")
+                        element = replace(element, frame_locator=frame)
+                    else:
+                        element = ElementSpec("frame_body", "当前框架", "recovery", locator=Locator("tag:body"), frame_locator=frame)
                 stage = "dom"
                 dom = ctx.browser.observe_dom(element, limit=params.get("limit", 200))
             except Exception as error:
                 self.needs_observation = True
                 location = extract_tb(error.__traceback__)[-1]
-                hint = ("观察目标不存在，请先观察整页，再使用返回的 target 指定元素或 iframe。"
+                hint = ("target / frame_target 只接受正式元素 ID 或观察返回的 target，不能传 CSS、XPath 或 DOM id。请先观察整页，从 frames 获取 iframe target，再仅传 frame_target 观察框架。"
                         if stage == "target" and isinstance(error, KeyError)
                         else "页面读取失败，请重新观察；若同样错误持续出现，应结束接管并交由开发者处理。")
                 return {**screenshot, "observation_error": type(error).__name__,
                         "observation_stage": stage, "observation_hint": hint,
                         "observation_location": f"{Path(location.filename).name}:{location.lineno} ({location.name})"}
-            for node in dom["nodes"]:
+            registered = {}
+            for node in [*dom["nodes"], *dom.get("frames", [])]:
+                key = (node["locator"], node.get("frame_locator"))
+                if key in registered:
+                    node["target"] = registered[key]
+                    continue
                 target_id = "observed_" + uuid4().hex[:12]
                 self.temporary[target_id] = ElementSpec(target_id, node["tag"], "recovery",
                     locator=Locator(node["locator"]), frame_locator=Locator(node["frame_locator"]) if node.get("frame_locator") else None)
                 node["target"] = target_id
+                registered[key] = target_id
                 self.observed.add(node["locator"])
                 if node.get("frame_locator"):
                     self.observed.add(node["frame_locator"])

@@ -72,3 +72,20 @@ def test_scoped_observation_includes_the_selected_node_for_locator_repairs(tmp_p
     result = DrissionBrowserActions(tab, tmp_path).observe_dom(spec)
     assert result["nodes"][0]["locator"] == "xpath:/html/body/input[1]"
     assert result["nodes"][0]["text"] == ""
+
+
+def test_svg_definitions_and_layout_do_not_hide_business_controls(tmp_path):
+    nodes = [node(f"/symbol[{i}]", tag="symbol") for i in range(250)]
+    nodes += [node(f"/div[{i}]", tag="div") for i in range(250)]
+    nodes += [node("/brand", tag="input"), node("/frame", tag="iframe")]
+    result = observe(tmp_path, nodes, limit=2)
+    assert [n["tag"] for n in result["nodes"]] == ["iframe", "input"]
+    assert result["frames"][0]["locator"] == "xpath:/frame"
+    assert result["truncated"]
+
+
+def test_frames_remain_discoverable_beyond_node_limit(tmp_path):
+    result = observe(tmp_path, [node(f"/frame[{i}]", tag="iframe") for i in range(3)], limit=1)
+    assert len(result["nodes"]) == 1
+    assert len(result["frames"]) == 3
+    assert result["truncated"]
