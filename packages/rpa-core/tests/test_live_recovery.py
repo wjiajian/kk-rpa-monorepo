@@ -401,3 +401,72 @@ def test_frame_navigation_with_locator_queries_inside_instead_of_ignoring_select
     assert result['count'] == 1 and result['nodes'][0]['tag'] == 'input'
     assert result['scope'] == scope
     assert b.recovery_query({'scope': scope, 'relation': 'frame', 'locator': 'missing'}, e)['count'] == 0
+
+
+@pytest.mark.parametrize('responds', [True, False])
+def test_explicit_dom_click_uses_pinned_sdk_without_pointer_checks_and_verifies_effect(setup, responds):
+    from DrissionPage._units.clicker import Clicker
+    b,p,n,e = setup
+    n.states.is_covered = 9
+    n.cover = Node(9, 'div', 'reminder')
+    n.states.is_clickable = False
+    def pointer_check(*args, **kwargs):
+        pytest.fail('DOM click must not use scrolling, motion waits or hit testing')
+    n.scroll.to_see = pointer_check
+    n.wait.stop_moving = pointer_check
+    n.over = pointer_check
+    scripts = []
+    def run_js(script):
+        scripts.append(script)
+        if responds:
+            n.value = 'selected'
+    n._run_js = run_js
+    n.click = Clicker(n)  # Exercise the SDK's real JS dispatch path.
+    result = b.recovery_act({'operation': 'click', 'target': 'field', 'by_js': True,
+        'seconds': 0.1, 'expect': {'property': 'value', 'equals': 'selected'}, 'read': ['value']}, e)
+    assert scripts == ['this.click();']
+    assert result['issued'] and result['method'] == 'js'
+    assert result['condition_met'] is responds
+    if responds:
+        assert result['state']['value'] == 'selected'
+    else:
+        assert result['phase'] == 'wait' and result['actual'] == ''
+
+
+@pytest.mark.parametrize('reason', ['disabled', 'detached', 'changed'])
+def test_dom_click_does_not_act_on_disabled_detached_or_changed_target(setup, reason):
+    b,p,n,e = setup
+    target = b.recovery_query({'locator': 'css:input'}, e)['nodes'][0]['target']
+    if reason == 'disabled':
+        n.states.is_enabled = False
+    elif reason == 'detached':
+        n.states.is_alive = False
+    else:
+        n.attrs['id'] = 'different-target'
+    result = b.recovery_act({'operation': 'click', 'target': target, 'by_js': True, 'seconds': 0.1}, e)
+    assert not result['issued'] and result['error']
+    assert n.clicks == 0
+
+
+def test_dom_click_can_open_new_tab_from_covered_element(setup):
+    b,p,n,e = setup
+    tabs = ['original']
+    new = Page({})
+    p.browser = NS(tab_ids=tabs, get_tab=lambda tab_id: new)
+    n.states.is_covered = 9
+    n.cover = Node(9, 'div', 'reminder')
+    def click(**kwargs):
+        assert kwargs['by_js'] is True
+        tabs.append('new')
+        return True
+    n.click = click
+    result = b.recovery_act({'operation': 'new_tab', 'target': 'field', 'by_js': True}, e)
+    assert result['issued'] and result['condition_met'] and result['method'] == 'js'
+    assert b.tab is new
+
+
+def test_by_js_is_not_silently_ignored_on_other_operations(setup):
+    b,p,n,e = setup
+    result = b.recovery_act({'operation': 'input', 'target': 'field', 'value': 'new', 'by_js': True}, e)
+    assert not result['issued'] and 'only for click/new_tab' in result['error']
+    assert n.value == ''

@@ -661,6 +661,9 @@ class DrissionBrowserActions:
         try:
             check()
             self._validate_fields(params.get("read", []))
+            by_js = params.get("by_js", False)
+            if not isinstance(by_js, bool) or (by_js and operation not in {"click", "new_tab"}):
+                raise ValueError("by_js is supported only for click/new_tab")
             if operation in {"input", "select", "key"} and not isinstance(params.get("value"), (str, SecretValue)):
                 raise ValueError("operation requires value")
             if expected:
@@ -678,15 +681,21 @@ class DrissionBrowserActions:
             elif operation != "wait":
                 raise ValueError("operation requires a reference")
             if operation not in {"read", "wait"}:
-                if not poll(lambda: node.states.is_clickable):
-                    raise ElementActionError("not_clickable")
-                if not poll(lambda: node.wait.stop_moving(timeout=min(0.15, remaining()), gap=0.05, raise_err=False)):
-                    raise ElementActionError("still_moving")
-                node.scroll.to_see()
-                cover = self._covering_node(node)
-                if cover:
-                    result["cover"] = self._remember(cover, record["scope"]) if cover else None
-                    raise ElementActionError("covered")
+                if by_js:
+                    # DOM click does not need a mouse hit point. It still needs
+                    # a live, enabled target; successful effects are read below.
+                    if not poll(lambda: node.states.is_enabled):
+                        raise ElementActionError("not_enabled")
+                else:
+                    if not poll(lambda: node.states.is_clickable):
+                        raise ElementActionError("not_clickable")
+                    if not poll(lambda: node.wait.stop_moving(timeout=min(0.15, remaining()), gap=0.05, raise_err=False)):
+                        raise ElementActionError("still_moving")
+                    node.scroll.to_see()
+                    cover = self._covering_node(node)
+                    if cover:
+                        result["cover"] = self._remember(cover, record["scope"])
+                        raise ElementActionError("covered")
                 self._live_record(target, elements)
             before_tabs = set(self.tab.browser.tab_ids) if operation == "new_tab" or (expected and expected.get("property") == "new_tab") else set()
             before_url = self.current_url
@@ -839,9 +848,13 @@ class DrissionBrowserActions:
 
     @staticmethod
     def _click_target(target, *, timeout, by_js=False):
-        target.scroll.to_see()
-        if DrissionBrowserActions._covering_node(target):
-            raise ElementActionError("covered")
+        if by_js:
+            if not target.states.is_alive or not target.states.is_enabled:
+                raise ElementActionError("DOM click target must be alive and enabled")
+        else:
+            target.scroll.to_see()
+            if DrissionBrowserActions._covering_node(target):
+                raise ElementActionError("covered")
         if target.click(by_js=by_js, timeout=timeout, wait_stop=False) is False:
             raise ElementActionError("click_returned_false")
         return True
