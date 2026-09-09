@@ -888,7 +888,14 @@ def test_redacted_screenshot_uses_supported_drission_arguments_and_cleans_frames
             self.states = SimpleNamespace(has_alert=False)
             self.scripts = []
 
-        def get_frames(self):
+        def get_frames(self, locator=None, timeout=None):
+            from DrissionPage._pages.chromium_base import ChromiumBase
+            return ChromiumBase.get_frames(self, locator, timeout)
+
+        def _ele(self, locator, *, timeout, index, raise_err):
+            # Exercise SDK timeout propagation for both populated and leaf
+            # documents. The default None would wait at every empty leaf.
+            assert timeout == 0 and index is None and raise_err is False
             return list(self.frames.values())
 
         def run_js(self, script, *args):
@@ -901,7 +908,7 @@ def test_redacted_screenshot_uses_supported_drission_arguments_and_cleans_frames
             return {"result": {"type": "undefined"}}
 
         def get_screenshot(self, **kwargs):
-            assert all(len(scope.scripts) == 1 for scope in [self, *self.get_frames()])
+            assert all(len(scope.scripts) == 1 for scope in [self, *self.frames.values()])
             if capture_fails:
                 raise OSError("fixture capture failed")
             return super().get_screenshot(**kwargs)

@@ -35,8 +35,8 @@ def recovery_context(source, requirement, elements, *, step=None, full=False):
     stop = selected.end() + end.start() if end else len(requirement)
     # Preserve all output fields, success conditions and recovery instructions.
     excerpt = requirement[:headings[0].start()] + requirement[selected.start():stop]
-    selected_elements = {key: value for key, value in elements.items()
-                         if value.get("check_at", "").split("-", 1)[0] == step}
+    # check_at is an assertion stage, not an element's usage/dependency list.
+    # Keep the registry: a later step can operate controls checked earlier.
     error = source.get("error") or {}
     root = (error.get("diagnostics") or {}).get("root_cause") or {}
     brief_source = {**source, "error": {key: value for key, value in {
@@ -44,7 +44,7 @@ def recovery_context(source, requirement, elements, *, step=None, full=False):
         "message": root.get("message", error.get("message")), "location": root.get("location"),
     }.items() if value is not None}}
     return {"source": brief_source, "requirement": excerpt,
-            "elements": selected_elements or elements, "scope": "step", "step_id": step,
+            "elements": elements, "scope": "step", "step_id": step,
             "available_steps": [heading[0].removeprefix("### ").strip() for heading in headings],
             "more_context": "context(step=步骤ID) 可读其他步骤；context(full=true) 可读完整需求、元素和诊断。"}
 

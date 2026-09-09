@@ -504,6 +504,11 @@ class DrissionBrowserActions:
             node = root if relation == "frame" and getattr(root, "_type", "") == "ChromiumFrame" else (
                 self._query_scope(parent, elements)[0].get_frame(host_locator, timeout=0) if relation == "frame" else root.shadow_root)
             nodes, kind, scope = ([node] if node else []), relation, parent
+            if locator:
+                if not node:
+                    raise ElementLookupError("requested frame/shadow scope unavailable")
+                scope_ref = self._remember(node, parent, kind=kind, path=path)
+                return self.recovery_query({**params, "scope": scope_ref, "relation": "descendants"}, elements)
         elif relation == "descendants":
             if not isinstance(locator, str) or not locator.strip():
                 raise ValueError("query requires a locator")
@@ -517,7 +522,7 @@ class DrissionBrowserActions:
                 node = root.parent(locator or 1, timeout=0)
                 nodes = [node] if node else []
             elif relation == "over":
-                node = root.over(timeout=0)
+                node = self._covering_node(root)
                 nodes = [node] if node else []
             elif relation == "offset":
                 node = root.offset(locator or None, x=params.get("x"), y=params.get("y"), timeout=0)
@@ -546,7 +551,7 @@ class DrissionBrowserActions:
 
     @staticmethod
     def _validate_fields(fields):
-        allowed = {"value", "text", "attrs", "alive", "displayed", "enabled", "clickable", "checked", "covered", "rect"}
+        allowed = {"tag", "value", "text", "attrs", "alive", "displayed", "enabled", "clickable", "checked", "covered", "rect"}
         if not isinstance(fields, list) or any(not isinstance(name, str) or
                 (name not in allowed and not (name.startswith("attr:") and len(name) > 5)) for name in fields):
             raise ValueError("unsupported read fields")
@@ -555,13 +560,18 @@ class DrissionBrowserActions:
         self._validate_fields(fields)
         result = {}
         for name in fields:
-            if name == "value":
+            if name == "tag":
+                result[name] = node.tag
+            elif name == "value":
                 result[name] = "<redacted>" if node.attr("type") == "password" else (node.value if node.tag in {"input", "textarea", "select", "option"} else None)
             elif name == "text":
                 result[name] = str(node.property("innerText") or "")
             elif name == "attrs":
                 result[name] = {k: v for k, v in node.attrs.items() if k != "value"}
-            elif name in {"alive", "displayed", "enabled", "clickable", "checked", "covered"}:
+            elif name == "covered":
+                cover = self._covering_node(node)
+                result[name] = cover._backend_id if cover else False
+            elif name in {"alive", "displayed", "enabled", "clickable", "checked"}:
                 result[name] = getattr(node.states, "is_" + name)
             elif name == "rect":
                 result[name] = {"location": node.rect.location, "size": node.rect.size}
@@ -673,8 +683,8 @@ class DrissionBrowserActions:
                 if not poll(lambda: node.wait.stop_moving(timeout=min(0.15, remaining()), gap=0.05, raise_err=False)):
                     raise ElementActionError("still_moving")
                 node.scroll.to_see()
-                if node.states.is_covered:
-                    cover = node.over(timeout=0)
+                cover = self._covering_node(node)
+                if cover:
                     result["cover"] = self._remember(cover, record["scope"]) if cover else None
                     raise ElementActionError("covered")
                 self._live_record(target, elements)
@@ -817,9 +827,20 @@ class DrissionBrowserActions:
         return result
 
     @staticmethod
+    def _covering_node(target):
+        if not target.states.is_covered:
+            return None
+        cover = target.over(timeout=0)
+        # The SDK compares backend IDs: a button's own span/SVG therefore
+        # counts as a cover. Descendants receive the same bubbling click.
+        if cover and not target.run_js("return this.contains(arguments[0]);", cover):
+            return cover
+        return None
+
+    @staticmethod
     def _click_target(target, *, timeout, by_js=False):
         target.scroll.to_see()
-        if target.states.is_covered:
+        if DrissionBrowserActions._covering_node(target):
             raise ElementActionError("covered")
         if target.click(by_js=by_js, timeout=timeout, wait_stop=False) is False:
             raise ElementActionError("click_returned_false")
@@ -893,7 +914,9 @@ class DrissionBrowserActions:
                 continue
             seen.add(key)
             scopes.append(scope)
-            pending.extend(scope.get_frames())
+            # Capture existing documents; do not wait for hypothetical children
+            # in every leaf frame (the SDK otherwise uses the base timeout).
+            pending.extend(scope.get_frames(timeout=0))
         masked = []
         try:
             for scope in scopes:

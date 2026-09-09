@@ -33,6 +33,9 @@ class Node:
     def focus(self): pass
     def input(self, value, **kw): self.value += value
     def over(self, **kw): return self.cover
+    def run_js(self, script, child):
+        assert script == 'return this.contains(arguments[0]);'
+        return child in self.children_nodes
     def check(self, uncheck, by_js): self.states.is_checked = not uncheck
 
 class Page:
@@ -338,3 +341,63 @@ def test_missing_document_root_is_read_failure_not_empty_page(setup):
     p.document_element = None
     with pytest.raises(ElementLookupError, match='document root unavailable'):
         b.recovery_query({'locator': 'css:input'}, e)
+
+
+@pytest.mark.parametrize('inside', [True, False])
+def test_button_child_is_not_a_cover_but_external_overlay_still_blocks(setup, inside):
+    b,p,n,e = setup
+    child = Node(9, 'span', '确定')
+    n.cover = child
+    n.states.is_covered = child._backend_id
+    n.children_nodes = [child] if inside else []
+    state = b.recovery_observe({'target': 'field', 'fields': ['tag', 'covered']}, e)
+    assert state['tag'] == 'input'
+    assert state['covered'] == (False if inside else 9)
+    cover = b.recovery_query({'scope': 'field', 'relation': 'over'}, e)
+    assert cover['count'] == (0 if inside else 1)
+    result = b.recovery_act({'operation': 'click', 'target': 'field'}, e)
+    assert result['issued'] is inside
+    assert n.clicks == int(inside)
+    if not inside:
+        assert result['error'] == 'covered' and result['cover']
+
+
+@pytest.mark.parametrize('inside', [True, False])
+def test_formal_click_checks_containment_when_pinned_sdk_reports_different_backend_id(inside):
+    from DrissionPage._elements.chromium_element import ChromiumElement
+    from DrissionPage._units.states import ElementStates
+    from rpa_core.browser import ElementActionError
+    target = object.__new__(ChromiumElement)
+    target._backend_id = 1
+    target._rect = NS(click_point=(100, 20))
+    target.owner = NS(_run_cdp=lambda *a, **k: {'backendNodeId': 2})
+    target._states = ElementStates(target)
+    cover = object.__new__(ChromiumElement)
+    target.over = lambda **kw: cover
+    def script(js, *args, **kwargs):
+        assert js == 'return this.contains(arguments[0]);' and args == (cover,)
+        return inside
+    target._run_js = script
+    target._scroll = NS(to_see=lambda: None)
+    clicks = []
+    target._clicker = lambda **kw: clicks.append(kw) or True
+    assert target.states.is_covered == 2  # Actual SDK misclassifies the child.
+    if inside:
+        assert DrissionBrowserActions._click_target(target, timeout=1)
+        assert clicks[0]['by_js'] is False
+    else:
+        with pytest.raises(ElementActionError, match='covered'):
+            DrissionBrowserActions._click_target(target, timeout=1)
+        assert not clicks
+
+
+def test_frame_navigation_with_locator_queries_inside_instead_of_ignoring_selector(setup):
+    b,p,n,e = setup
+    frame = Frame(20, p)
+    frame.mapping = {'css:input': [n]}
+    p.nodes['iframe'] = [frame]
+    scope = b.recovery_query({'locator': 'iframe'}, e)['nodes'][0]['target']
+    result = b.recovery_query({'scope': scope, 'relation': 'frame', 'locator': 'css:input'}, e)
+    assert result['count'] == 1 and result['nodes'][0]['tag'] == 'input'
+    assert result['scope'] == scope
+    assert b.recovery_query({'scope': scope, 'relation': 'frame', 'locator': 'missing'}, e)['count'] == 0

@@ -26,10 +26,10 @@ def test_step_context_preserves_complete_contract_original_inputs_and_outputs():
     assert "固定原日期" in context["requirement"]
     assert "完整的登录要求" not in context["requirement"]
     assert "验收历史" not in context["requirement"]
-    assert set(context["elements"]) == {"download", "dialog"}
+    assert context["elements"] == elements
     assert "traceback" not in str(context["source"])
     assert context["source"]["error"]["message"] == "missing"
-    assert recovery_context(source, REQUIREMENT, elements, step="S001")["elements"] == {"login": elements["login"]}
+    assert recovery_context(source, REQUIREMENT, elements, step="S001")["elements"] == elements
     full = recovery_context(source, REQUIREMENT, elements, full=True)
     assert full["requirement"] == REQUIREMENT
     assert full["elements"] == elements
@@ -38,3 +38,18 @@ def test_step_context_preserves_complete_contract_original_inputs_and_outputs():
 
 def test_unrecognized_requirement_format_keeps_full_baseline():
     assert recovery_context({"failed_step": "S1"}, "plain requirements", {})["requirement"] == "plain requirements"
+
+
+def test_brand_recovery_retains_reset_and_selector_checked_before_failed_step():
+    from pathlib import Path
+    import tomllib
+    app = Path(__file__).resolve().parents[3] / 'apps' / 'inventory_jushuitan_export_stock'
+    elements = tomllib.loads((app / 'elements.toml').read_text())['elements']
+    requirement = (app / 'requirement.md').read_text()
+    context = recovery_context({'failed_step': 'S003'}, requirement, elements)
+    reset = next(key for key, value in elements.items() if value['name'] == '重置筛选按钮')
+    selector = next(key for key, value in elements.items() if value['name'] == '商品品牌选择器')
+    assert elements[reset]['check_at'] == 'S002'
+    assert context['elements'][reset] == elements[reset]
+    assert context['elements'][selector] == elements[selector]
+    assert context['step_id'] == 'S003' and context['scope'] == 'step'
