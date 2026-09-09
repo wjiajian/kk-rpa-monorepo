@@ -382,7 +382,13 @@ class DrissionBrowserActions:
         return {"tag": tag, "attributes": stable, "text": text}
 
     def _document_key(self):
-        return (id(self.tab), self._object_key(self.tab.doc_ele))
+        # doc_ele belongs to ChromiumFrame, not ChromiumTab. Resolve the current
+        # document element through the public tab API; its backend ID changes
+        # when the document is replaced, including reloads at the same URL.
+        root = self.tab.ele("xpath:/html", timeout=0)
+        if not root:
+            raise ElementLookupError("document root unavailable; query again")
+        return (id(self.tab), self._object_key(root))
 
     def _remember(self, node, scope="page", *, kind="element", path=None):
         if getattr(node, "_type", "") == "ChromiumFrame":
@@ -472,11 +478,20 @@ class DrissionBrowserActions:
         root, scope = self._query_scope(params.get("scope"), elements)
         relation = params.get("relation", "descendants")
         locator = params.get("locator", "")
+        if not isinstance(locator, str):
+            raise ValueError("query locator must be a string")
+        locator = locator.strip()
+        # The SDK treats bare XPath strings as text selectors.
+        if locator.startswith(("/", "./", "../")):
+            locator = "xpath:" + locator
         if relation == "document":
-            if scope == "page":
-                return {"scope": "page", "nodes": [], "count": 0, "truncated": False}
-            scope = self._live[scope]["scope"] if self._live[scope]["kind"] == "element" else scope
-            return {"scope": scope, "nodes": [], "count": 0, "truncated": False}
+            if scope != "page" and self._live[scope]["kind"] == "element":
+                scope = self._live[scope]["scope"]
+            if not locator:
+                # Navigation is not a DOM search and says nothing about matches.
+                return {"scope": scope, "queried": False}
+            root, scope = self._query_scope(scope, elements)
+            relation = "descendants"
         kind, path = "element", None
         if relation in {"frame", "shadow"}:
             if scope == "page":

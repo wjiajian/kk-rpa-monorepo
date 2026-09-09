@@ -1,5 +1,6 @@
 from types import SimpleNamespace as NS
 import pytest
+from DrissionPage._pages.chromium_tab import ChromiumTab
 from rpa_core.drission_browser import DrissionBrowserActions
 from rpa_core.browser import ElementSpec, Locator, ScopeLocator, ElementLookupError
 from rpa_core.elements import override_element_locators
@@ -37,8 +38,11 @@ class Node:
 class Page:
     def __init__(self, nodes):
         self.nodes = nodes
-        self.doc_ele = Node(10000, 'html')
+        self.document_element = Node(10000, 'html')
         self.url = 'https://business.test'
+    def ele(self, locator, timeout):
+        assert locator == 'xpath:/html' and timeout == 0
+        return self.document_element
     def eles(self, locator, timeout):
         assert timeout == 0
         return self.nodes.get(locator, [])
@@ -83,7 +87,7 @@ def test_recycled_node_detached_node_and_new_document_never_click(setup):
     n.states.is_alive=False
     assert not b.recovery_act({'operation':'click','target':fresh},e)['issued']
     n.states.is_alive=True
-    p.doc_ele=Node(20000)
+    p.document_element=Node(20000)
     assert not b.recovery_act({'operation':'click','target':fresh},e)['issued']
     assert n.clicks == 0
 
@@ -265,3 +269,72 @@ def test_reference_from_an_ended_adapter_cannot_alias_new_session_object(setup, 
     assert current!=old
     assert not fresh.recovery_act({'operation':'click','target':old},e)['issued']
     assert n.clicks==0
+
+
+def test_live_recovery_uses_real_chromium_tab_api_and_rejects_reloaded_document(tmp_path):
+    # Use the pinned SDK class, with only browser I/O replaced. In particular,
+    # never invent ChromiumFrame's doc_ele attribute on a tab fixture.
+    tab = object.__new__(ChromiumTab)
+    assert not hasattr(tab, 'doc_ele')
+    document = Node(1000, 'html', '')
+    field = Node(1, 'input', '', {'id': 'login_id'})
+    def lookup(locator, *, timeout, index, **kwargs):
+        assert timeout == 0
+        if locator == 'xpath:/html':
+            assert index == 1
+            return document
+        assert index is None
+        return [field]
+    tab._ele = lookup
+    browser = DrissionBrowserActions(tab, tmp_path)
+    result = browser.recovery_query({'locator': 'css:#login_id'}, {})
+    assert result['count'] == 1
+    target = result['nodes'][0]['target']
+    assert browser.recovery_observe({'target': target, 'fields': ['value']}, {})['value'] == ''
+    document = Node(2000, 'html', '')
+    result = browser.recovery_act({'operation': 'click', 'target': target}, {})
+    assert not result['issued'] and 'document changed' in result['error']
+    assert field.clicks == 0
+
+
+@pytest.mark.parametrize('locator', ['//body', 'xpath://body'])
+def test_document_query_executes_locator_and_navigation_does_not_claim_zero_matches(setup, locator):
+    b,p,n,e = setup
+    body = Node(2, 'body')
+    p.nodes['xpath://body'] = [body]
+    target = b.recovery_query({'locator': 'css:input'}, e)['nodes'][0]['target']
+    for scope in ('page', target):
+        result = b.recovery_query({'scope': scope, 'relation': 'document', 'locator': locator}, e)
+        assert result['count'] == 1 and result['nodes'][0]['tag'] == 'body'
+        assert result['scope'] == 'page'
+        assert b.recovery_query({'scope': scope, 'relation': 'document'}, e) == {'scope': 'page', 'queried': False}
+
+
+def test_document_query_stays_in_owning_frame(setup):
+    b,p,n,e = setup
+    frame = Frame(20, p)
+    frame.mapping = {'css:input': [n]}
+    p.nodes['iframe'] = [frame]
+    frame_ref = b.recovery_query({'locator': 'iframe'}, e)['nodes'][0]['target']
+    child_ref = b.recovery_query({'scope': frame_ref, 'locator': 'css:input'}, e)['nodes'][0]['target']
+    p.eles = lambda *a, **k: pytest.fail('document navigation must not escape frame')
+    result = b.recovery_query({'scope': child_ref, 'relation': 'document', 'locator': 'css:input'}, e)
+    assert result['scope'] == frame_ref and result['count'] == 1
+
+
+@pytest.mark.parametrize('locator', ['//*', './button', '../button'])
+def test_bare_xpath_is_not_passed_to_sdk_as_text(setup, locator):
+    from DrissionPage._functions.locator import get_loc
+    b,p,n,e = setup
+    def lookup(value, timeout):
+        assert get_loc(value) == ('xpath', locator)
+        return [n]
+    p.eles = lookup
+    assert b.recovery_query({'locator': locator}, e)['count'] == 1
+
+
+def test_missing_document_root_is_read_failure_not_empty_page(setup):
+    b,p,n,e = setup
+    p.document_element = None
+    with pytest.raises(ElementLookupError, match='document root unavailable'):
+        b.recovery_query({'locator': 'css:input'}, e)

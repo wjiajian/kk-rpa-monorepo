@@ -173,6 +173,26 @@ def test_dom_failure_keeps_screenshot_for_dashboard_and_requires_fresh_observati
     assert w.needs_observation
 
 
+def test_dom_attribute_failure_keeps_api_location_without_exception_message():
+    w, _ = worker()
+    w.screenshot = lambda: {}
+    def observe(*args):
+        # The object's repr and exception text must not become model evidence.
+        secret = SimpleNamespace(password='fixture-private-password')
+        return secret.doc_ele
+    w.recovery.context.browser.recovery_observe = observe
+    result = w.execute(command('observe'))
+    assert result['observation_error'] == 'AttributeError'
+    location = result['observation_location']
+    assert location['file'] == 'test_worker.py'
+    assert location['function'] == 'observe'
+    assert location['attribute'] == 'doc_ele'
+    assert isinstance(location['line'], int)
+    assert 'fixture-private-password' not in str(result)
+    assert '不代表页面为空' in result['observation_hint']
+    assert w.needs_observation
+
+
 def test_unknown_observation_target_requires_new_query():
     w, _ = worker()
     w.screenshot = lambda: {}

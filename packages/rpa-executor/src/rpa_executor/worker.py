@@ -15,6 +15,7 @@ import sys
 from threading import Event, Lock, Thread
 from time import monotonic, sleep
 import tomllib
+import traceback
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -168,8 +169,15 @@ class Worker:
                 result = (browser.recovery_query if action == "query" else browser.recovery_observe)(params, ctx.service("elements"))
             except Exception as error:
                 self.needs_observation = True
+                last = traceback.extract_tb(error.__traceback__)[-1]
+                diagnostic = {"file": Path(last.filename).name, "function": last.name, "line": last.lineno}
+                # Keep the failing API identifiable without dumping messages,
+                # source lines, object reprs or locals containing credentials.
+                if isinstance(error, AttributeError) and error.name:
+                    diagnostic["attribute"] = error.name
                 return {**self.screenshot(), "observation_error": type(error).__name__, "observation_stage": "query" if action == "query" else "read",
-                    "observation_hint": "目标或作用域读取失败；用 query 重新获取候选，持续失败则 give_up。",
+                    "observation_location": diagnostic,
+                    "observation_hint": "DOM 读取失败不代表页面为空；结合截图和错误位置判断，用 query 重新获取候选，持续失败则报告接管读取故障并 give_up。",
                     "collection_order": ["failed_dom_state", "screenshot"]}
             result["collection_order"] = ["dom_state"]
             if action == "observe" and params.get("screenshot", not self.observed):
